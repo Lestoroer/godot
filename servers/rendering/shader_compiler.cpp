@@ -41,6 +41,11 @@ static String _mktab(int p_level) {
 }
 
 static String _typestr(SL::DataType p_type) {
+	if (p_type == SL::TYPE_SAMPLER2DARRAYSHADOW && !RS::get_singleton()->is_low_end()) {
+		// Fork(Lestoroer): the separate-texture form is a plain texture2DArray; the shadow/compare
+		// semantics only exist in the combined constructor emitted at the sampling site.
+		return "texture2DArray";
+	}
 	String type = ShaderLanguage::get_datatype_name(p_type);
 	if (!RS::get_singleton()->is_low_end() && ShaderLanguage::is_sampler_type(p_type)) {
 		type = type.replace("sampler", "texture"); //we use textures instead of samplers in Vulkan GLSL
@@ -113,6 +118,8 @@ static int _get_datatype_alignment(SL::DataType p_type) {
 		case SL::TYPE_SAMPLERCUBEARRAY:
 			return 16;
 		case SL::TYPE_SAMPLEREXT:
+			return 16;
+		case SL::TYPE_SAMPLER2DARRAYSHADOW: // Fork(Lestoroer)
 			return 16;
 		case SL::TYPE_STRUCT:
 			return 0;
@@ -1319,12 +1326,23 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 										} else if (u.hint == ShaderLanguage::ShaderNode::Uniform::HINT_NORMAL_ROUGHNESS_TEXTURE) {
 											is_normal_roughness_texture = true;
 										}
-										sampler_name = _get_sampler_name(u.filter, u.repeat);
+										if (u.type == ShaderLanguage::TYPE_SAMPLER2DARRAYSHADOW) {
+											// Fork(Lestoroer): compare sampler lives in the scene uniform set (spatial shaders only).
+											sampler_name = "shadow_sampler";
+										} else {
+											sampler_name = _get_sampler_name(u.filter, u.repeat);
+										}
 									} else {
 										bool found = false;
 
 										for (int j = 0; j < function->arguments.size(); j++) {
 											if (function->arguments[j].name == texture_uniform) {
+												if (function->arguments[j].type == ShaderLanguage::TYPE_SAMPLER2DARRAYSHADOW) {
+													// Fork(Lestoroer): shadow sampler passed as a function argument.
+													sampler_name = "shadow_sampler";
+													found = true;
+													break;
+												}
 												if (function->arguments[j].tex_builtin_check) {
 													ERR_CONTINUE(!actions.custom_samplers.has(function->arguments[j].tex_builtin));
 													sampler_name = actions.custom_samplers[function->arguments[j].tex_builtin];
