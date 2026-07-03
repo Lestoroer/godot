@@ -204,6 +204,11 @@ void ShaderGlobalsOverride::_get_property_list(List<PropertyInfo> *p_list) const
 				pinfo.hint = PROPERTY_HINT_RESOURCE_TYPE;
 				pinfo.hint_string = "ExternalTexture";
 			} break;
+			case RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAYSHADOW: { // Fork(Lestoroer)
+				pinfo.type = Variant::OBJECT;
+				pinfo.hint = PROPERTY_HINT_RESOURCE_TYPE;
+				pinfo.hint_string = "TextureLayered";
+			} break;
 			default: {
 			} break;
 		}

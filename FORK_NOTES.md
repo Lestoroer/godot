@@ -191,8 +191,14 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    (`_texture_format_from_rd`, identity-swizzle — обязателен для Dref).
 
 2. **sampler2DArrayShadow в gdshader** | `lestoroer/feat-vu-shadows` | `shader_language.{h,cpp}`,
-   `shader_compiler.cpp`, `storage_rd/material_storage.cpp`, `gles3/storage/material_storage.cpp`
-   | Новый сэмплер-тип шейдерного языка: аппаратный depth-compare семпл (2x2 PCF бесплатно на
+   `shader_compiler.cpp`, `storage_rd/material_storage.cpp`, `gles3/storage/material_storage.cpp`;
+   global-тип: `rendering_server_enums.h`, `rendering_server.cpp`, три таблицы
+   `global_var_type_names` (storage_rd/dummy/gles3 material_storage), `shader_globals_editor.cpp`,
+   `shader_globals_override.cpp`
+   | Новый сэмплер-тип шейдерного языка + одноимённый тип Shader Globals
+   (`GLOBAL_VAR_TYPE_SAMPLER2DARRAYSHADOW`, добавлен В КОНЕЦ enum'а — ничего не сдвигает;
+   сэмплер-глобалы в хранении идут диапазоном `>= GLOBAL_VAR_TYPE_SAMPLER2D`, поэтому значение
+   работает без доп. правок): аппаратный depth-compare семпл (2x2 PCF бесплатно на
    Adreno/Apple). Использует ГОТОВЫЙ immutable `shadow_sampler` сцены (set0/binding2, GREATER,
    linear) — работает только в spatial-шейдерах (в canvas/sky/particles GLSL-ошибка «undeclared
    shadow_sampler»; ок для нашего использования). В Compatibility (GLES3) тип не поддержан
