@@ -4140,6 +4140,13 @@
 				Returns the render target for the viewport.
 			</description>
 		</method>
+		<method name="viewport_get_depth_texture_rd" qualifiers="const">
+			<return type="RID" />
+			<param index="0" name="viewport" type="RID" />
+			<description>
+				Fork(Lestoroer): Returns the raw [RenderingDevice] RID of the viewport's 3D depth texture (e.g. to [method RenderingDevice.texture_copy] it into a custom shadow atlas, or to wrap it in a [Texture2DArrayRD]). Returns an empty RID until the viewport has rendered 3D content at least once, or when the renderer has no retrievable depth (headless). The texture is owned by the viewport's render buffers — do not free it, and re-query after the viewport is resized.
+			</description>
+		</method>
 		<method name="viewport_get_texture" qualifiers="const">
 			<return type="RID" />
 			<param index="0" name="viewport" type="RID" />

@@ -114,4 +114,8 @@ public:
 	virtual void set_texture_mipmap_bias(float p_texture_mipmap_bias) = 0;
 	virtual void set_anisotropic_filtering_level(RSE::ViewportAnisotropicFiltering p_anisotropic_filtering_level) = 0;
 	virtual void set_use_debanding(bool p_use_debanding) = 0;
+
+	// Fork(Lestoroer): raw RenderingDevice RID of the 3D depth texture; RID() when the
+	// backend has none (dummy) or the buffers were never rendered. See viewport_get_depth_texture_rd.
+	virtual RID get_depth_texture_rd() { return RID(); }
 };
