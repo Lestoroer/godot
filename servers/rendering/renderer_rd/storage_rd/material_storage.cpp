@@ -1138,6 +1138,11 @@ RID MaterialStorage::MaterialData::get_default_texture_id(ShaderLanguage::DataTy
 			}
 		} break;
 
+		case ShaderLanguage::TYPE_SAMPLER2DARRAYSHADOW: {
+			// Fork(Lestoroer): compare sampling requires a depth-format view; color defaults are illegal for Dref.
+			rd_texture = texture_storage->texture_rd_get_default(TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_DEPTH);
+		} break;
+
 		default: {
 		}
 	}

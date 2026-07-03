@@ -3290,6 +3290,24 @@ void TextureStorage::_texture_format_from_rd(RD::DataFormat p_rd_format, Texture
 			r_format.swizzle_a = RD::TEXTURE_SWIZZLE_A;
 		} break;
 
+		// Fork(Lestoroer): packed depth(+stencil) formats, so TextureXDRD wrappers can expose
+		// depth textures (e.g. a custom shadow atlas sampled via sampler2DArrayShadow).
+		// Image::Format has no depth equivalents — report RF metadata; CPU get_data of such
+		// wrappers is unsupported. Unlike the D16/D32F cases above, swizzle stays identity:
+		// Vulkan forbids non-identity swizzle with Dref (compare) sampling.
+		case RD::DATA_FORMAT_X8_D24_UNORM_PACK32: {
+			r_format.image_format = Image::FORMAT_RF;
+			r_format.rd_format = RD::DATA_FORMAT_X8_D24_UNORM_PACK32;
+		} break;
+		case RD::DATA_FORMAT_D24_UNORM_S8_UINT: {
+			r_format.image_format = Image::FORMAT_RF;
+			r_format.rd_format = RD::DATA_FORMAT_D24_UNORM_S8_UINT;
+		} break;
+		case RD::DATA_FORMAT_D32_SFLOAT_S8_UINT: {
+			r_format.image_format = Image::FORMAT_RF;
+			r_format.rd_format = RD::DATA_FORMAT_D32_SFLOAT_S8_UINT;
+		} break;
+
 		default: {
 			ERR_FAIL_MSG("Unsupported image format");
 		}

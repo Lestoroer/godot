@@ -560,6 +560,9 @@ public:
 
 	virtual RID viewport_get_render_target(RID p_viewport) const = 0;
 	virtual RID viewport_get_texture(RID p_viewport) const = 0;
+	// Fork(Lestoroer): raw RenderingDevice RID of the viewport's 3D depth texture (for RD::texture_copy
+	// into custom shadow atlases etc.). RID() until the viewport has rendered 3D at least once.
+	virtual RID viewport_get_depth_texture_rd(RID p_viewport) const = 0;
 
 	virtual void viewport_set_environment_mode(RID p_viewport, RSE::ViewportEnvironmentMode p_mode) = 0;
 	virtual void viewport_set_disable_3d(RID p_viewport, bool p_disable) = 0;

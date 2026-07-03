@@ -91,6 +91,7 @@ public:
 		TK_TYPE_SAMPLERCUBE,
 		TK_TYPE_SAMPLERCUBEARRAY,
 		TK_TYPE_SAMPLEREXT,
+		TK_TYPE_SAMPLER2DARRAYSHADOW, // Fork(Lestoroer): keep in sync with DataType (get_token_datatype is arithmetic).
 		TK_INTERPOLATION_FLAT,
 		TK_INTERPOLATION_SMOOTH,
 		TK_CONST,
@@ -242,6 +243,7 @@ public:
 		TYPE_SAMPLERCUBE,
 		TYPE_SAMPLERCUBEARRAY,
 		TYPE_SAMPLEREXT,
+		TYPE_SAMPLER2DARRAYSHADOW, // Fork(Lestoroer): hardware-compare (PCF) array sampler; must stay before TYPE_STRUCT (is_sampler_type is a range check).
 		TYPE_STRUCT,
 		TYPE_MAX
 	};

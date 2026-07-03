@@ -1231,6 +1231,17 @@ RID RendererViewport::viewport_get_texture(RID p_viewport) const {
 	return RSG::texture_storage->render_target_get_texture(viewport->render_target);
 }
 
+// Fork(Lestoroer): raw RD depth texture of the viewport's 3D render buffers.
+RID RendererViewport::viewport_get_depth_texture_rd(RID p_viewport) const {
+	const Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL_V(viewport, RID());
+
+	if (viewport->render_buffers.is_null()) {
+		return RID();
+	}
+	return viewport->render_buffers->get_depth_texture_rd();
+}
+
 RID RendererViewport::viewport_get_occluder_debug_texture(RID p_viewport) const {
 	const Viewport *viewport = viewport_owner.get_or_null(p_viewport);
 	ERR_FAIL_NULL_V(viewport, RID());

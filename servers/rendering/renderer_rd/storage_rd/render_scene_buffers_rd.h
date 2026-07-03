@@ -279,6 +279,9 @@ public:
 	RID get_depth_texture();
 	RID get_depth_texture(const uint32_t p_layer);
 
+	// Fork(Lestoroer): base-class hook used by RenderingServer.viewport_get_depth_texture_rd.
+	virtual RID get_depth_texture_rd() override { return has_depth_texture() ? get_depth_texture() : RID(); }
+
 	RID get_depth_msaa() const {
 		return get_texture(RB_SCOPE_BUFFERS, RB_TEX_DEPTH_MSAA);
 	}

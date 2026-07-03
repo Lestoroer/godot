@@ -837,6 +837,9 @@ uint32_t RenderSceneBuffersRD::get_depth_usage_bits(bool p_resolve, bool p_msaa,
 		}
 	} else {
 		usage_bits |= RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+		// Fork(Lestoroer): let the depth texture be copied out (viewport_get_depth_texture_rd ->
+		// RD::texture_copy into custom shadow atlases). TRANSFER_SRC is harmless on tilers.
+		usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 	}
 
 	return usage_bits;

@@ -1,9 +1,11 @@
 # Lestoroer Godot Fork — обслуживание и обновление движка
 
-Личный форк Godot Engine. **Ноль патчей движка** — дерево ветки `lestoroer/main` побайтово
-совпадает с upstream-исходником релиза, на котором мы стоим. Этот файл — рабочая инструкция:
-вышел новый релиз → подтянуть его в форк. Писано так, чтобы агент **без контекста** сделал это
-быстро и не наступил на грабли.
+Личный форк Godot Engine. С 03.07.2026 в дереве есть **свои патчи** (см. «Инвентарь патчей»
+внизу) — дерево `lestoroer/main` НЕ равно upstream, при апгрейде вместо read-tree-трюка (шаг 3)
+нужен **честный merge** с разруливанием конфликтов по каждому патчу. Все патч-строки помечены
+маркером `Fork(Lestoroer)` в комментариях — `grep -rn "Fork(Lestoroer)"` показывает весь дифф.
+Этот файл — рабочая инструкция: вышел новый релиз → подтянуть его в форк. Писано так, чтобы
+агент **без контекста** сделал это быстро и не наступил на грабли.
 
 Инструкция — для **Windows** (основная машина). Где на **🍎 macOS** иначе — врезка `🍎 MACOS:`.
 Сами git-шаги на обеих машинах идентичны; различается только сборка (шаги 5–6).
@@ -66,16 +68,18 @@ git tag -f fork-pre-update lestoroer/main     # откат при беде: git 
 git branch -f 4.7-base <REF>                  # REF = upstream/4.7  (или коммит — для пре-релиза)
 ```
 
-### 3. Влить в `lestoroer/main` (форк без патчей → берём дерево как есть)
+### 3. Влить в `lestoroer/main`
+> ⚠️ С появлением патчей (см. «Инвентарь патчей») старый read-tree-трюк ЗАПРЕЩЁН — он
+> молча выкинет наши патчи. Теперь только честный merge:
 ```bash
 git checkout lestoroer/main
-git merge --no-ff --no-commit 4.7-base || true   # конфликты ожидаемы и неважны
-git read-tree -u --reset 4.7-base                # дерево := 4.7-base точь-в-точь
-git commit --no-edit -m "Merge 4.7-base into lestoroer/main: 4.7-rc3 -> 4.7-stable (<REF>)"
+git merge --no-ff 4.7-base      # конфликты разруливать РУКАМИ, сверяясь с «Инвентарём патчей»
 ```
-Так origin потом fast-forward-ится (без force-push), а дерево гарантированно равно upstream.
-> Если когда-нибудь появятся реальные патчи форка — этот трюк перестанет работать: тогда честный
-> `git merge 4.7-base` и руками разрулить конфликты по каждому патчу (см. «Инвентарь патчей»).
+Конфликт в файле из инвентаря → сохранить и upstream-изменение, и наш `Fork(Lestoroer)`-блок.
+После merge: `grep -rn "Fork(Lestoroer)" servers/ drivers/ doc/ | wc -l` — число строк-маркеров
+не должно уменьшиться против инвентаря.
+> Историческая справка: пока патчей не было, дерево бралось точь-в-точь read-tree-трюком
+> (`git merge --no-commit || true` + `git read-tree -u --reset 4.7-base`).
 
 ### 4. Проверить, что дерево = upstream
 ```bash
@@ -175,5 +179,25 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 Якоря отката: теги `fork-pre-4.7-stable`, `fork-pre-4.7-upgrade`.
 
 ## Инвентарь патчей
-Пока нет — дерево идентично upstream. Заводя `[Lestoroer]`-патч, записать сюда строкой:
-ветка | файлы | зачем. Появление патчей ломает read-tree-трюк из шага 3 (тогда честный merge).
+Все строки патчей помечены `Fork(Lestoroer)` в комментарии — greppable. Формат: ветка | файлы | зачем.
+
+1. **viewport depth-доступ** | `lestoroer/feat-vu-shadows` | `rendering_server.{h,cpp}`,
+   `rendering_server_default.h`, `renderer_viewport.{h,cpp}`, `storage/render_scene_buffers.h`,
+   `storage_rd/render_scene_buffers_rd.{h,cpp}`, `storage_rd/texture_storage.cpp`,
+   `doc/classes/RenderingServer.xml` | `RenderingServer.viewport_get_depth_texture_rd(viewport)`
+   — сырой RD-RID depth-текстуры 3D-рендера вьюпорта (кастомные тени Voxel Underworld: копия
+   depth-тайла в свой атлас). Плюс: depth получает `CAN_COPY_FROM` usage (attachment-ветка
+   `get_depth_usage_bits`), packed depth(+stencil) форматы поддержаны в `TextureXDRD`-обёртках
+   (`_texture_format_from_rd`, identity-swizzle — обязателен для Dref).
+
+2. **sampler2DArrayShadow в gdshader** | `lestoroer/feat-vu-shadows` | `shader_language.{h,cpp}`,
+   `shader_compiler.cpp`, `storage_rd/material_storage.cpp`, `gles3/storage/material_storage.cpp`
+   | Новый сэмплер-тип шейдерного языка: аппаратный depth-compare семпл (2x2 PCF бесплатно на
+   Adreno/Apple). Использует ГОТОВЫЙ immutable `shadow_sampler` сцены (set0/binding2, GREATER,
+   linear) — работает только в spatial-шейдерах (в canvas/sky/particles GLSL-ошибка «undeclared
+   shadow_sampler»; ок для нашего использования). В Compatibility (GLES3) тип не поддержан
+   (ERR_PRINT_ONCE, как samplerCubeArray). ВАЖНО про enum: тип вставлен между `TYPE_SAMPLEREXT`
+   и `TYPE_STRUCT` СИНХРОННО в TokenType/DataType/token_names (get_token_datatype — арифметика,
+   is_sampler_type — диапазон); DataType-индексированные таблицы (`scalar_types`,
+   `cardinality_table`, gles3 `target_from_type`) дополнены — при апгрейде свежедобавленные
+   upstream'ом таблицы ловятся их же static_assert'ами.
