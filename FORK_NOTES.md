@@ -223,6 +223,23 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    теней Voxel Underworld (вариант D: RD depth-only пасс) семплится через Texture2DArrayRD +
    sampler2DArrayShadow и требует identity (как packed depth-форматы патча №1).
 
+4. **usampler2D в Shader Globals + uint-формат RD-обёрток** | `lestoroer/feat-vu-uint-globals` |
+   global-тип: `rendering_server_enums.h`, `rendering_server.cpp`, три таблицы
+   `global_var_type_names` (storage_rd/dummy/gles3 material_storage), `shader_globals_editor.cpp`,
+   `shader_globals_override.cpp`; формат: `storage_rd/texture_storage.cpp`
+   (`_texture_format_from_rd`, кейс `R32G32B32A32_UINT`)
+   | Тип `usampler2D` для Shader Globals (`GLOBAL_VAR_TYPE_USAMPLER2D`, добавлен В КОНЕЦ enum'а;
+   сам язык шейдеров usampler2D знает апстримно — патч лишь проводит тип через глобалы) +
+   маппинг `DATA_FORMAT_R32G32B32A32_UINT` в `_texture_format_from_rd` (метаданные RGBAF,
+   те же 16 Б/тексель; CPU get_data не поддержан). Без формата RS-обёртка
+   `texture_rd_create` над uint-текстурой МОЛЧА остаётся неинициализированной (ERR в
+   ОТЛОЖЕННОЙ инициализации не всплывает к вызывающему), и глобал-семплер вечно
+   резолвится в движковый 4x4-дефолт — ловили сутки 06.07.2026. Потребитель:
+   `vu_cull_data` (упакованные half-слоты света). NB для потребителей: RS-обёртку для
+   глобала создавать синхронным `RenderingServer.texture_rd_create(rd_rid)`, НЕ через
+   `Texture2DRD.get_rid()` — тот до исполнения отложенного колбэка отдаёт
+   placeholder-RID, который никогда не станет настоящей текстурой.
+
 ### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
 Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом
 мёрже upstream проверить:

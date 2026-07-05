@@ -1878,6 +1878,8 @@ int RenderingServer::global_shader_uniform_type_get_shader_datatype(RSE::GlobalS
 			return ShaderLanguage::TYPE_SAMPLEREXT;
 		case RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAYSHADOW: // Fork(Lestoroer)
 			return ShaderLanguage::TYPE_SAMPLER2DARRAYSHADOW;
+		case RSE::GLOBAL_VAR_TYPE_USAMPLER2D: // Fork(Lestoroer)
+			return ShaderLanguage::TYPE_USAMPLER2D;
 		default:
 			return ShaderLanguage::TYPE_MAX; // Invalid or not found.
 	}
@@ -3503,6 +3505,7 @@ void RenderingServer::_bind_methods() {
 	BIND_ENUM_CONSTANT(RSE::GLOBAL_VAR_TYPE_SAMPLERCUBE);
 	BIND_ENUM_CONSTANT(RSE::GLOBAL_VAR_TYPE_SAMPLEREXT);
 	BIND_ENUM_CONSTANT(RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAYSHADOW); // Fork(Lestoroer)
+	BIND_ENUM_CONSTANT(RSE::GLOBAL_VAR_TYPE_USAMPLER2D); // Fork(Lestoroer)
 	BIND_ENUM_CONSTANT(RSE::GLOBAL_VAR_TYPE_MAX);
 
 	/* Free */

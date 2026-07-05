@@ -3308,6 +3308,18 @@ void TextureStorage::_texture_format_from_rd(RD::DataFormat p_rd_format, Texture
 			r_format.rd_format = RD::DATA_FORMAT_D32_SFLOAT_S8_UINT;
 		} break;
 
+		// Fork(Lestoroer): 128-bit uint texel data (usampler2D globals, e.g. packed-half
+		// light slots). Image::Format has no 4x32 uint equivalent — report RGBAF metadata
+		// (same 16 B/texel); CPU get_data of such wrappers is unsupported.
+		case RD::DATA_FORMAT_R32G32B32A32_UINT: {
+			r_format.image_format = Image::FORMAT_RGBAF;
+			r_format.rd_format = RD::DATA_FORMAT_R32G32B32A32_UINT;
+			r_format.swizzle_r = RD::TEXTURE_SWIZZLE_R;
+			r_format.swizzle_g = RD::TEXTURE_SWIZZLE_G;
+			r_format.swizzle_b = RD::TEXTURE_SWIZZLE_B;
+			r_format.swizzle_a = RD::TEXTURE_SWIZZLE_A;
+		} break;
+
 		default: {
 			ERR_FAIL_MSG("Unsupported image format");
 		}
