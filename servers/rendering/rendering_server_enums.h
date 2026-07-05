@@ -897,6 +897,7 @@ enum GlobalShaderParameterType {
 	GLOBAL_VAR_TYPE_SAMPLERCUBE,
 	GLOBAL_VAR_TYPE_SAMPLEREXT,
 	GLOBAL_VAR_TYPE_SAMPLER2DARRAYSHADOW, // Fork(Lestoroer)
+	GLOBAL_VAR_TYPE_USAMPLER2D, // Fork(Lestoroer): uint texel data (e.g. packed-half light slots)
 	GLOBAL_VAR_TYPE_MAX,
 };
 
