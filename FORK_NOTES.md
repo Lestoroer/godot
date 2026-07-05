@@ -131,11 +131,20 @@ git push origin 4.7-base
 
 ### 8. Обновить строку «Текущая база» внизу этого файла и закоммитить FORK_NOTES.
 
-### (если деплоишь на Quest) Экспорт-темплейты тоже устаревают
-После бампа версии Android-темплейты для Quest всё ещё старой версии → собранный APK будет
-рапортовать старую версию (те же грабли, но на шлеме). Пересобрать их через флоу `/deploy-quest`
-(только Windows — на маке нет Android-тулчейна). Симптом: приложение на шлеме показывает старую
-версию движка.
+### (если деплоишь на Quest) Android-библиотека движка тоже устаревает
+Движок в APK приходит НЕ из редактора, а из `godot-lib.template_release.aar` в gradle-шаблоне
+проекта (`<проект>/android/build/libs/release/`) — после ЛЮБОГО форк-патча движка пересобрать,
+иначе APK живёт без патчей. Симптомы: старая версия движка на шлеме; SCRIPT ERROR
+`viewport_get_depth_texture_rd() not found` на шлеме при живом десктопе (поймали 05.07.2026).
+Рецепт (Windows, ~5 мин; NDK 29.0.14206865 через sdkmanager, cmdline-tools лежат как `11.0`):
+```bash
+cd /d/Godot/godot
+ANDROID_HOME="C:/Users/Sergey/AppData/Local/Android/Sdk"   python -m SCons platform=android target=template_release arch=arm64 -j16
+cd platform/android/java   # gradle сам дособерёт debug-вариант; scons.exe обязан быть в PATH
+PATH="/c/Users/Sergey/AppData/Roaming/Python/Python310/Scripts:$PATH"   ANDROID_HOME="C:/Users/Sergey/AppData/Local/Android/Sdk" ./gradlew generateGodotTemplates
+cp /d/Godot/godot/bin/godot-lib.template_release.aar <проект>/android/build/libs/release/
+cp /d/Godot/godot/bin/godot-lib.template_debug.aar   <проект>/android/build/libs/debug/
+```
 
 ---
 
@@ -207,3 +216,19 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    is_sampler_type — диапазон); DataType-индексированные таблицы (`scalar_types`,
    `cardinality_table`, gles3 `target_from_type`) дополнены — при апгрейде свежедобавленные
    upstream'ом таблицы ловятся их же static_assert'ами.
+
+3. **identity-swizzle для D16** | `lestoroer/fix-d16-swizzle` | `storage_rd/texture_storage.cpp`
+   (`_texture_format_from_rd`, кейс `DATA_FORMAT_D16_UNORM`) | Upstream задавал swizzle
+   R,ZERO,ZERO,ONE — Vulkan запрещает non-identity swizzle при Dref (compare) семпле; D16-атлас
+   теней Voxel Underworld (вариант D: RD depth-only пасс) семплится через Texture2DArrayRD +
+   sampler2DArrayShadow и требует identity (как packed depth-форматы патча №1).
+
+### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
+Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом
+мёрже upstream проверить:
+1. Сигнатуры `draw_list_begin` (флаговый API, DrawFlags), `render_pipeline_create`,
+   `draw_list_set_push_constant`, `texture_create_shared_from_slice` не поехали.
+2. Порядок кадра сохранён: `call_on_render_thread` Callable исполняется в FIFO command_queue
+   ДО `_draw` того же кадра (rendering_server_default: sync/draw).
+3. Барьеры RD всё ещё автоматические (RenderingDeviceGraph; ручные barrier() — no-op).
+4. Кейс D16 в `_texture_format_from_rd` остался identity (патч №3 не потерялся в конфликте).

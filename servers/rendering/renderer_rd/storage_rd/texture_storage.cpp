@@ -3212,10 +3212,10 @@ void TextureStorage::_texture_format_from_rd(RD::DataFormat p_rd_format, Texture
 		case RD::DATA_FORMAT_D16_UNORM: {
 			r_format.image_format = Image::FORMAT_R16;
 			r_format.rd_format = RD::DATA_FORMAT_D16_UNORM;
-			r_format.swizzle_r = RD::TEXTURE_SWIZZLE_R;
-			r_format.swizzle_g = RD::TEXTURE_SWIZZLE_ZERO;
-			r_format.swizzle_b = RD::TEXTURE_SWIZZLE_ZERO;
-			r_format.swizzle_a = RD::TEXTURE_SWIZZLE_ONE;
+			// Fork(Lestoroer): swizzle stays identity (upstream had R,ZERO,ZERO,ONE):
+			// Vulkan forbids non-identity swizzle with Dref (compare) sampling, and a
+			// D16 shadow atlas is sampled through Texture2DArrayRD + sampler2DArrayShadow
+			// (same reasoning as the packed depth formats below).
 		} break;
 		case RD::DATA_FORMAT_D32_SFLOAT: {
 			r_format.image_format = Image::FORMAT_RF;
