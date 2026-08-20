@@ -5379,7 +5379,11 @@ Error RenderingDevice::screen_prepare_for_drawing(DisplayServerEnums::WindowID p
 
 	// After submitting work, acquire the swapchain image(s).
 	HashMap<DisplayServerEnums::WindowID, RDD::SwapChainID>::ConstIterator it = screen_swap_chains.find(p_screen);
-	ERR_FAIL_COND_V_MSG(it == screen_swap_chains.end(), ERR_CANT_CREATE, "A swap chain was not created for the screen.");
+	if (it == screen_swap_chains.end()) {
+		// Fork(Lestoroer): a display server may intentionally have no swap chain
+		// (offscreen). Both callers already treat this as "skip presenting".
+		return ERR_CANT_CREATE;
+	}
 
 	// Erase the framebuffer corresponding to this screen from the map in case any of the operations fail.
 	screen_framebuffers.erase(p_screen);

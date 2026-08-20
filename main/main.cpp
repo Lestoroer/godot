@@ -298,6 +298,7 @@ bool profile_gpu = false;
 // Constants.
 
 static const String NULL_DISPLAY_DRIVER("headless");
+static const String OFFSCREEN_DISPLAY_DRIVER("offscreen"); // Fork(Lestoroer): surfaceless Vulkan test mode.
 static const String EMBEDDED_DISPLAY_DRIVER("embedded");
 static const String NULL_AUDIO_DRIVER("Dummy");
 
@@ -624,6 +625,7 @@ void Main::print_help(const char *p_binary) {
 	print_help_option("--text-driver <driver>", "Text driver (used for font rendering, bidirectional support and shaping).\n");
 	print_help_option("--tablet-driver <driver>", "Pen tablet input driver.\n");
 	print_help_option("--headless", "Enable headless mode (--display-driver headless --audio-driver Dummy). Useful for servers and with --script.\n");
+	print_help_option("--offscreen", "Enable real Vulkan rendering without an OS window, audio, or XR. Useful for unattended visual tests.\n");
 	print_help_option("--log-file <file>", "Write output/error log to the specified path instead of the default location defined by the project.\n");
 	print_help_option("", "<file> path should be absolute or relative to the project directory.\n");
 	print_help_option("--write-movie <file>", "Write a video to the specified path (usually with .avi or .png extension).\n");
@@ -1507,6 +1509,10 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 			audio_driver = NULL_AUDIO_DRIVER;
 			display_driver = NULL_DISPLAY_DRIVER;
 
+		} else if (arg == "--offscreen") { // Fork(Lestoroer): real GPU rendering without OS-facing output.
+
+			display_driver = OFFSCREEN_DISPLAY_DRIVER;
+
 		} else if (arg == "--embedded") { // Enable embedded mode.
 #ifdef MACOS_ENABLED
 			display_driver = EMBEDDED_DISPLAY_DRIVER;
@@ -2073,6 +2079,28 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 		}
 
 		I = N;
+	}
+
+	// Fork(Lestoroer): these guarantees belong to the offscreen display mode,
+	// including when selected with --display-driver. Validate immediately after
+	// CLI parsing, before project extensions or OS-facing servers are loaded.
+	if (display_driver == OFFSCREEN_DISPLAY_DRIVER) {
+		if (editor || project_manager) {
+			OS::get_singleton()->print("The offscreen display server only supports running a project, not the editor or project manager.\n");
+			goto error;
+		}
+		if (!audio_driver.is_empty() && audio_driver != NULL_AUDIO_DRIVER) {
+			OS::get_singleton()->print("The offscreen display server requires the Dummy audio driver. Remove the conflicting --audio-driver option.\n");
+			goto error;
+		}
+#ifndef XR_DISABLED
+		if (XRServer::get_xr_mode() == XRServer::XRMODE_ON) {
+			OS::get_singleton()->print("The offscreen display server does not support XR. Remove the conflicting --xr-mode on option.\n");
+			goto error;
+		}
+		XRServer::set_xr_mode(XRServer::XRMODE_OFF);
+#endif
+		audio_driver = NULL_AUDIO_DRIVER;
 	}
 
 #ifdef TOOLS_ENABLED
@@ -3247,6 +3275,9 @@ Error Main::setup2(bool p_show_boot_logo) {
 
 		if (display_driver.is_empty()) {
 			display_driver = GLOBAL_GET("display/display_server/driver");
+			// Fork(Lestoroer): project settings cannot safely select this mode,
+			// because its audio/XR invariants are applied during CLI setup.
+			ERR_FAIL_COND_V_MSG(display_driver == OFFSCREEN_DISPLAY_DRIVER, ERR_UNAVAILABLE, "The offscreen display server must be requested explicitly with --offscreen.");
 		}
 
 		int display_driver_idx = -1;
@@ -3263,6 +3294,10 @@ Error Main::setup2(bool p_show_boot_logo) {
 			}
 
 			if (display_driver_idx < 0) {
+				if (display_driver == OFFSCREEN_DISPLAY_DRIVER) {
+					ERR_PRINT("The offscreen display server is unavailable in this build. It requires Windows, RenderingDevice, and Vulkan support.");
+					return ERR_UNAVAILABLE;
+				}
 				// If the requested driver wasn't found, pick the first entry.
 				// If all else failed it would be the headless server.
 				display_driver_idx = 0;
@@ -3321,7 +3356,7 @@ Error Main::setup2(bool p_show_boot_logo) {
 				accessibility_driver_name = "accesskit";
 			}
 		}
-		if (display_driver == NULL_DISPLAY_DRIVER || display_driver == EMBEDDED_DISPLAY_DRIVER || accessibility_mode == AccessibilityServerEnums::AccessibilityMode::ACCESSIBILITY_DISABLED) {
+		if (display_driver == NULL_DISPLAY_DRIVER || display_driver == OFFSCREEN_DISPLAY_DRIVER || display_driver == EMBEDDED_DISPLAY_DRIVER || accessibility_mode == AccessibilityServerEnums::AccessibilityMode::ACCESSIBILITY_DISABLED) {
 			accessibility_driver_name = "dummy";
 		}
 		int accessibility_driver_idx = -1;
@@ -3366,7 +3401,7 @@ Error Main::setup2(bool p_show_boot_logo) {
 
 		String rendering_driver = OS::get_singleton()->get_current_rendering_driver_name();
 		display_server = DisplayServer::create(display_driver_idx, rendering_driver, window_mode, window_vsync_mode, window_flags, window_position, window_size, init_screen, context, init_embed_parent_window_id, err);
-		if (err != OK || display_server == nullptr) {
+		if ((err != OK || display_server == nullptr) && display_driver != OFFSCREEN_DISPLAY_DRIVER) {
 			String last_name = DisplayServer::get_create_function_name(display_driver_idx);
 
 			// We can't use this display server, try other ones as fallback.
@@ -3377,6 +3412,9 @@ Error Main::setup2(bool p_show_boot_logo) {
 					continue; // Don't try the same twice.
 				}
 				String name = DisplayServer::get_create_function_name(i);
+				if (name == OFFSCREEN_DISPLAY_DRIVER) {
+					continue; // Fork(Lestoroer): offscreen is opt-in, never an automatic fallback.
+				}
 				WARN_PRINT(vformat("Display driver %s failed, falling back to %s.", last_name, name));
 
 				display_server = DisplayServer::create(i, rendering_driver, window_mode, window_vsync_mode, window_flags, window_position, window_size, init_screen, context, init_embed_parent_window_id, err);

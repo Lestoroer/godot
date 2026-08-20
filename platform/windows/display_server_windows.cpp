@@ -53,6 +53,9 @@
 #include "main/main.h"
 #include "scene/resources/texture.h"
 #include "servers/display/accessibility_server.h"
+#if defined(RD_ENABLED) && defined(VULKAN_ENABLED)
+#include "servers/display/display_server_offscreen.h"
+#endif
 #include "servers/rendering/dummy/rasterizer_dummy.h"
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
 
@@ -8455,6 +8458,11 @@ DisplayServer *DisplayServerWindows::create_func(const String &p_rendering_drive
 
 void DisplayServerWindows::register_windows_driver() {
 	register_create_function("windows", create_func, get_rendering_drivers_func);
+#if defined(RD_ENABLED) && defined(VULKAN_ENABLED)
+	// Fork(Lestoroer): keep the opt-in offscreen server after the native Windows
+	// server and before the always-last headless server.
+	DisplayServerOffscreen::register_offscreen_driver();
+#endif
 }
 
 DisplayServerWindows::~DisplayServerWindows() {

@@ -1,5 +1,10 @@
 # Lestoroer Godot Fork — обслуживание и обновление движка
 
+Краткая карта пользовательских отличий от upstream находится в `FORK_OVERVIEW.md`.
+Перед любым изменением движка агент обязан прочитать этот файл, записать изменение
+в инвентарь и связанные инструкции ниже, а при изменении доступных возможностей
+или поведения также обновить `FORK_OVERVIEW.md`.
+
 Личный форк Godot Engine. С 03.07.2026 в дереве есть **свои патчи** (см. «Инвентарь патчей»
 внизу) — дерево `lestoroer/main` НЕ равно upstream, при апгрейде вместо read-tree-трюка (шаг 3)
 нужен **честный merge** с разруливанием конфликтов по каждому патчу. Все патч-строки помечены
@@ -242,6 +247,25 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    `Texture2DRD.get_rid()` — тот до исполнения отложенного колбэка отдаёт
    placeholder-RID, который никогда не станет настоящей текстурой.
 
+5. **offscreen Vulkan для агентных тестов на Windows** | `lestoroer/feat-offscreen-display` |
+   `servers/display/display_server_offscreen.{h,cpp}`, `platform/windows/display_server_windows.cpp`,
+   `main/main.cpp`, `servers/rendering/rendering_device.cpp`,
+   `tests/servers/test_display_server_registration.cpp` | Опциональный CLI-режим `--offscreen`:
+   настоящий Mobile/Forward Vulkan-рендер и чтение viewport/screenshot без игрового/видимого
+   HWND, display surface, swapchain,
+   taskbar/Alt-Tab, системного фокуса, захвата физической мыши, звукового устройства и XR.
+   Основан на идее draft PR [godotengine/godot#94530](https://github.com/godotengine/godot/pull/94530),
+   но перенесён на современную архитектуру 4.7 как компактный наследник
+   `DisplayServerHeadless`; код устаревшего PoC не cherry-pick'ался. Windows-only, только Vulkan,
+   только запуск проекта; editor/project manager, XR и OS-subwindows намеренно запрещены.
+   Режим выбирается только явно через CLI и никогда не участвует в fallback. Конфликтующий
+   живой audio driver или `--xr-mode on` приводит к явной ошибке, а не к тихому небезопасному
+   запуску. При отсутствии surface `RenderingDevice` использует `frame_count = 1`: режим
+   проверяет корректность GPU-рендера и изображения, но его frame timing нельзя сравнивать с
+   оконным запуском или Quest. Windows IME и GPU-драйвер могут создавать собственные невидимые
+   служебные HWND; они не являются окном Godot, не видны, не получают foreground и не входят в
+   taskbar/Alt-Tab.
+
 ### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
 Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом
 мёрже upstream проверить:
@@ -251,3 +275,19 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    ДО `_draw` того же кадра (rendering_server_default: sync/draw).
 3. Барьеры RD всё ещё автоматические (RenderingDeviceGraph; ручные barrier() — no-op).
 4. Кейс D16 в `_texture_format_from_rd` остался identity (патч №3 не потерялся в конфликте).
+
+### Чеклист апгрейда offscreen-режима
+1. `DisplayServer::register_create_function()` всё ещё оставляет headless последним;
+   порядок на Windows после регистрации — native Windows, offscreen, затем headless.
+2. Offscreen по-прежнему пропускается по имени в автоматическом fallback, а ошибка создания
+   явно запрошенного offscreen не открывает native Windows server.
+3. Dummy accessibility, Dummy audio и XR-off остаются обязательными инвариантами режима;
+   выбор через project settings запрещён.
+4. Базовый `RenderingContextDriverVulkan` остаётся конкретным и пригодным для initialize без
+   platform surface (контрольный upstream-путь — `DisplayServer::is_rendering_device_supported`).
+5. `RenderingDevice::initialize(context, INVALID_WINDOW_ID)` остаётся поддержанным путём.
+6. `screen_prepare_for_drawing()` по-прежнему тихо возвращает ошибку при отсутствии swapchain;
+   оба compositor caller'а должны продолжать трактовать её как «не презентовать».
+7. При новых методах `DisplayServerHeadless` перепроверить virtual window size, screen list,
+   `can_any_window_draw`, mouse-mode state и запрет subwindows в offscreen-наследнике.
+8. PR #94530 остаётся историческим источником требований, а не кодом для повторного merge.
