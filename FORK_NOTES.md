@@ -249,7 +249,7 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 
 5. **offscreen Vulkan для агентных тестов на Windows** | `lestoroer/feat-offscreen-display` |
    `servers/display/display_server_offscreen.{h,cpp}`, `platform/windows/display_server_windows.cpp`,
-   `main/main.cpp`, `servers/rendering/rendering_device.cpp`,
+   `main/main.cpp`, `servers/rendering/rendering_device.{h,cpp}`,
    `tests/servers/test_display_server_registration.cpp` | Опциональный CLI-режим `--offscreen`:
    настоящий Mobile/Forward Vulkan-рендер и чтение viewport/screenshot без игрового/видимого
    HWND, display surface, swapchain,
@@ -260,9 +260,12 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    только запуск проекта; editor/project manager, XR и OS-subwindows намеренно запрещены.
    Режим выбирается только явно через CLI и никогда не участвует в fallback. Конфликтующий
    живой audio driver или `--xr-mode on` приводит к явной ошибке, а не к тихому небезопасному
-   запуску. При отсутствии surface `RenderingDevice` использует `frame_count = 1`: режим
-   проверяет корректность GPU-рендера и изображения, но его frame timing нельзя сравнивать с
-   оконным запуском или Quest. Windows IME и GPU-драйвер могут создавать собственные невидимые
+   запуску. Явный CLI-выбор также имеет приоритет над project feature `dedicated_server`, чтобы
+   тот не подменял offscreen на headless после проверки инвариантов. При отсутствии surface
+   `RenderingDevice` остаётся главным singleton-устройством (включая PSO cache и запрет local
+   `submit/sync`), но использует `frame_count = 1`: режим проверяет корректность GPU-рендера и
+   изображения, однако его frame timing нельзя сравнивать с оконным запуском или Quest.
+   Windows IME и GPU-драйвер могут создавать собственные невидимые
    служебные HWND; они не являются окном Godot, не видны, не получают foreground и не входят в
    taskbar/Alt-Tab.
 
@@ -285,9 +288,12 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    выбор через project settings запрещён.
 4. Базовый `RenderingContextDriverVulkan` остаётся конкретным и пригодным для initialize без
    platform surface (контрольный upstream-путь — `DisplayServer::is_rendering_device_supported`).
-5. `RenderingDevice::initialize(context, INVALID_WINDOW_ID)` остаётся поддержанным путём.
-6. `screen_prepare_for_drawing()` по-прежнему тихо возвращает ошибку при отсутствии swapchain;
-   оба compositor caller'а должны продолжать трактовать её как «не презентовать».
+5. Offscreen вызывает `RenderingDevice::initialize(context, INVALID_WINDOW_ID, true)`, чтобы
+   только его windowless singleton сохранял main-instance инварианты; общий RD-support probe и
+   local device при `INVALID_WINDOW_ID` должны оставаться не-main.
+6. `screen_prepare_for_drawing()` тихо возвращает ошибку только для главного windowless RD;
+   отсутствие swapchain у обычного оконного RD должно оставаться громкой ошибкой. Оба
+   compositor caller'а должны продолжать трактовать non-OK как «не презентовать».
 7. При новых методах `DisplayServerHeadless` перепроверить virtual window size, screen list,
    `can_any_window_draw`, mouse-mode state и запрет subwindows в offscreen-наследнике.
 8. PR #94530 остаётся историческим источником требований, а не кодом для повторного merge.

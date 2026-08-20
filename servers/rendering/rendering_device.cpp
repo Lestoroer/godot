@@ -5380,9 +5380,12 @@ Error RenderingDevice::screen_prepare_for_drawing(DisplayServerEnums::WindowID p
 	// After submitting work, acquire the swapchain image(s).
 	HashMap<DisplayServerEnums::WindowID, RDD::SwapChainID>::ConstIterator it = screen_swap_chains.find(p_screen);
 	if (it == screen_swap_chains.end()) {
-		// Fork(Lestoroer): a display server may intentionally have no swap chain
-		// (offscreen). Both callers already treat this as "skip presenting".
-		return ERR_CANT_CREATE;
+		// Fork(Lestoroer): the offscreen main instance intentionally has no swap
+		// chain. Keep missing swap chains loud for all regular windowed instances.
+		if (main_instance_is_windowless && p_screen == DisplayServerEnums::MAIN_WINDOW_ID) {
+			return ERR_CANT_CREATE;
+		}
+		ERR_FAIL_V_MSG(ERR_CANT_CREATE, "A swap chain was not created for the screen.");
 	}
 
 	// Erase the framebuffer corresponding to this screen from the map in case any of the operations fail.
@@ -8321,12 +8324,13 @@ void RenderingDevice::_flush_and_stall_for_all_frames(bool p_begin_frame) {
 	}
 }
 
-Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServerEnums::WindowID p_main_window) {
+Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServerEnums::WindowID p_main_window, bool p_main_instance_without_window) {
 	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
 
 	Error err;
 	RenderingContextDriver::SurfaceID main_surface = 0;
-	is_main_instance = (singleton == this) && (p_main_window != DisplayServerEnums::INVALID_WINDOW_ID);
+	is_main_instance = (singleton == this) && (p_main_window != DisplayServerEnums::INVALID_WINDOW_ID || p_main_instance_without_window);
+	main_instance_is_windowless = is_main_instance && p_main_window == DisplayServerEnums::INVALID_WINDOW_ID;
 	if (p_main_window != DisplayServerEnums::INVALID_WINDOW_ID) {
 		// Retrieve the surface from the main window if it was specified.
 		main_surface = p_context->surface_get_from_window(p_main_window);
@@ -8380,7 +8384,7 @@ Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServ
 	ERR_FAIL_COND_V_MSG(err != OK, FAILED, "Failed to initialize driver for device.");
 
 	if (is_main_instance) {
-		// Only the singleton instance with a display should print this information.
+		// Only the singleton instance should print this information.
 		String rendering_method;
 		if (OS::get_singleton()->get_current_rendering_method() == "mobile") {
 			rendering_method = "Forward Mobile";

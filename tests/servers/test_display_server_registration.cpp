@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  test_display_server_registration.cpp                                 */
+/*  test_display_server_registration.cpp                                  */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -33,6 +33,7 @@
 TEST_FORCE_LINK(test_display_server_registration)
 
 #include "servers/display/display_server.h"
+#include "servers/display/display_server_offscreen.h"
 
 namespace TestDisplayServerRegistration {
 
@@ -42,14 +43,16 @@ TEST_CASE("[DisplayServer] Headless stays last and offscreen stays opt-in") {
 	CHECK(String(DisplayServer::get_create_function_name(DisplayServer::get_create_function_count() - 1)) == "headless");
 
 #if defined(WINDOWS_ENABLED) && defined(RD_ENABLED) && defined(VULKAN_ENABLED)
+	CHECK(String(DisplayServer::get_create_function_name(0)) == "windows");
+
 	int offscreen_index = -1;
 	for (int i = 0; i < DisplayServer::get_create_function_count(); i++) {
-		if (String(DisplayServer::get_create_function_name(i)) == "offscreen") {
+		if (String(DisplayServer::get_create_function_name(i)) == DisplayServerOffscreen::DRIVER_NAME) {
 			offscreen_index = i;
 			break;
 		}
 	}
-	CHECK(offscreen_index > 0);
+	CHECK(offscreen_index == 1);
 #endif
 }
 

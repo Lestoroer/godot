@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  display_server_offscreen.h                                           */
+/*  display_server_offscreen.h                                            */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -54,9 +54,11 @@ private:
 	static Vector<String> get_rendering_drivers_func();
 
 public:
+	static constexpr const char *DRIVER_NAME = "offscreen";
+
 	static void register_offscreen_driver();
 
-	String get_name() const override { return "offscreen"; }
+	String get_name() const override { return DRIVER_NAME; }
 
 	int get_screen_count() const override { return 1; }
 	Size2i screen_get_size(int p_screen = DisplayServerEnums::SCREEN_OF_MAIN_WINDOW) const override { return window_size; }

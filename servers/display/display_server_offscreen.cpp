@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  display_server_offscreen.cpp                                         */
+/*  display_server_offscreen.cpp                                          */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -58,7 +58,7 @@ Vector<String> DisplayServerOffscreen::get_rendering_drivers_func() {
 void DisplayServerOffscreen::register_offscreen_driver() {
 	// Fork(Lestoroer): offscreen is opt-in and must stay between the native
 	// Windows server and the always-last headless server.
-	register_create_function("offscreen", create_func, get_rendering_drivers_func);
+	register_create_function(DRIVER_NAME, create_func, get_rendering_drivers_func);
 }
 
 Vector<DisplayServerEnums::WindowID> DisplayServerOffscreen::get_window_list() const {
@@ -94,7 +94,7 @@ DisplayServerOffscreen::DisplayServerOffscreen(const String &p_rendering_driver,
 	ERR_FAIL_COND_MSG(rendering_context->initialize() != OK, "Failed to initialize the surfaceless Vulkan context for offscreen rendering.");
 
 	rendering_device = memnew(RenderingDevice);
-	ERR_FAIL_COND_MSG(rendering_device->initialize(rendering_context, DisplayServerEnums::INVALID_WINDOW_ID) != OK, "Failed to initialize the Vulkan rendering device for offscreen rendering.");
+	ERR_FAIL_COND_MSG(rendering_device->initialize(rendering_context, DisplayServerEnums::INVALID_WINDOW_ID, true) != OK, "Failed to initialize the Vulkan rendering device for offscreen rendering.");
 
 	RendererCompositorRD::make_current();
 	r_error = OK;

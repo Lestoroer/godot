@@ -88,6 +88,7 @@ private:
 
 	bool local_device_processing = false;
 	bool is_main_instance = false;
+	bool main_instance_is_windowless = false;
 
 protected:
 	static void _bind_methods();
@@ -1889,7 +1890,7 @@ public:
 #endif
 
 public:
-	Error initialize(RenderingContextDriver *p_context, DisplayServerEnums::WindowID p_main_window = DisplayServerEnums::INVALID_WINDOW_ID);
+	Error initialize(RenderingContextDriver *p_context, DisplayServerEnums::WindowID p_main_window = DisplayServerEnums::INVALID_WINDOW_ID, bool p_main_instance_without_window = false);
 	void finalize();
 
 	void _set_max_fps(int p_max_fps);
