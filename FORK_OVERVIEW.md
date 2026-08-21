@@ -53,6 +53,21 @@
   сравнивать с обычным оконным запуском или Quest. Перф проекта по-прежнему
   измеряется на устройстве.
 
+### Renderer-integrated outline в Forward Mobile
+
+- Добавлен `RenderingServer.instance_geometry_set_highlighted(instance, enabled)`.
+- При включённой возможности обычный geometry pass записывает бинарное покрытие
+  подсвеченных instance во второе `R8_UNORM` color attachment, а Mobile tonemap
+  строит белый внешний screen-space контур.
+- Меш не рисуется второй раз: подсветка не добавляет draw calls и треугольники.
+  Кадры без видимой подсветки используют штатный framebuffer без mask attachment.
+- Возможность включается до старта renderer через
+  `rendering/renderer/highlight_outline/enabled`; ширина задаётся в пикселях через
+  `rendering/renderer/highlight_outline/width`.
+- Реализация предназначена для Forward Mobile. Она depth-tested, не является
+  x-ray; несколько мешей и соприкасающиеся подсвеченные объекты образуют общий
+  силуэт. Первый контракт использует одну бинарную маску и один белый стиль.
+
 ## Что не изменено
 
 В форке нет собственных патчей физики, физических запросов, collision data или

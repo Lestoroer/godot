@@ -98,7 +98,9 @@ private:
 		TONEMAP_MOBILE_FLAG_GLOW_MODE_SOFTLIGHT = (1 << 15),
 		TONEMAP_MOBILE_FLAG_GLOW_MODE_REPLACE = (1 << 16),
 		TONEMAP_MOBILE_FLAG_GLOW_MODE_MIX = (1 << 17),
-		TONEMAP_MOBILE_ADRENO_BUG = (1 << 18), // Needs to be last so we force the pipeline cache to specify specializations for all variants.
+		// Fork(Lestoroer): Screen-space highlight outline for Forward Mobile.
+		TONEMAP_MOBILE_FLAG_USE_HIGHLIGHT_OUTLINE = (1 << 18),
+		TONEMAP_MOBILE_ADRENO_BUG = (1 << 19), // Needs to be last so we force the pipeline cache to specify specializations for all variants.
 	};
 
 	struct TonemapPushConstant {
@@ -138,7 +140,8 @@ private:
 
 		float tonemapper_params[4]; //  16 - 64
 		float output_max_value; //  4 - 68
-		float pad[3]; //  12 - 80
+		float highlight_outline_width; //  4 - 72, Fork(Lestoroer).
+		float pad[2]; //  8 - 80
 	};
 
 	/* tonemap actually writes to a framebuffer, which is
@@ -207,6 +210,11 @@ public:
 		bool bilinear_filtering = true;
 
 		bool convert_to_srgb = false;
+
+		// Fork(Lestoroer): Optional resolved R8 coverage mask for Forward Mobile.
+		bool use_highlight_outline = false;
+		RID highlight_outline_texture;
+		float highlight_outline_width = 1.5f;
 	};
 
 	void tonemapper(RID p_source_color, RID p_dst_framebuffer, const TonemapSettings &p_settings);

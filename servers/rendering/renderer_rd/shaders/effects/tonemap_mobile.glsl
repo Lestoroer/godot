@@ -60,6 +60,9 @@ layout(set = 0, binding = 3) uniform sampler2D source_color_correction;
 layout(set = 0, binding = 3) uniform sampler3D source_color_correction;
 #endif
 
+// Fork(Lestoroer): Resolved Forward Mobile highlight coverage mask.
+layout(set = 0, binding = 4) uniform SAMPLER_FORMAT source_highlight_outline;
+
 layout(constant_id = 0) const bool use_bcs = false;
 layout(constant_id = 1) const bool use_glow = false;
 layout(constant_id = 2) const bool use_glow_map = false;
@@ -78,6 +81,7 @@ layout(constant_id = 14) const bool glow_mode_screen = false;
 layout(constant_id = 15) const bool glow_mode_softlight = false;
 layout(constant_id = 16) const bool glow_mode_replace = false;
 layout(constant_id = 17) const bool glow_mode_mix = false;
+layout(constant_id = 18) const bool use_highlight_outline = false;
 
 layout(push_constant, std430) uniform Params {
 	vec3 bcs;
@@ -94,7 +98,8 @@ layout(push_constant, std430) uniform Params {
 	vec4 tonemapper_params;
 
 	float output_max_value;
-	float pad[3];
+	float highlight_outline_width;
+	float pad[2];
 }
 params;
 
@@ -819,6 +824,29 @@ void main() {
 		}
 	} else if (convert_to_srgb) {
 		color.rgb = linear_to_srgb(color.rgb); // Regular linear -> SRGB conversion.
+	}
+
+	// Fork(Lestoroer): Four bilinear diagonal taps produce a stable outward-only
+	// silhouette without another geometry pass. Touching highlighted surfaces form
+	// one silhouette by design.
+	if (use_highlight_outline) {
+#ifdef USE_MULTIVIEW
+		vec3 highlight_uv = vec3(uv_interp, ViewIndex);
+		float center = textureLod(source_highlight_outline, highlight_uv, 0.0).r;
+		vec3 offset_x = vec3(params.src_pixel_size.x * params.highlight_outline_width, 0.0, 0.0);
+		vec3 offset_y = vec3(0.0, params.src_pixel_size.y * params.highlight_outline_width, 0.0);
+#else
+		vec2 highlight_uv = uv_interp;
+		float center = textureLod(source_highlight_outline, highlight_uv, 0.0).r;
+		vec2 offset_x = vec2(params.src_pixel_size.x * params.highlight_outline_width, 0.0);
+		vec2 offset_y = vec2(0.0, params.src_pixel_size.y * params.highlight_outline_width);
+#endif
+		float neighbor = textureLod(source_highlight_outline, highlight_uv - offset_x - offset_y, 0.0).r;
+		neighbor = max(neighbor, textureLod(source_highlight_outline, highlight_uv + offset_x - offset_y, 0.0).r);
+		neighbor = max(neighbor, textureLod(source_highlight_outline, highlight_uv - offset_x + offset_y, 0.0).r);
+		neighbor = max(neighbor, textureLod(source_highlight_outline, highlight_uv + offset_x + offset_y, 0.0).r);
+		float outline = clamp(neighbor - center, 0.0, 1.0);
+		color.rgb = mix(color.rgb, vec3(1.0), outline);
 	}
 
 	// Debanding should be done at the end of tonemapping, but before writing to the LDR buffer.

@@ -74,6 +74,9 @@ private:
 
 	SceneShaderForwardMobile scene_shader;
 	bool disable_ubershaders = false;
+	// Fork(Lestoroer): Static capability plus visual tuning read at renderer startup.
+	bool highlight_outline_enabled = false;
+	float highlight_outline_width = 1.5f;
 
 	/* Render Buffer */
 
@@ -87,7 +90,8 @@ private:
 			FB_CONFIG_MAX
 		};
 
-		RID get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth = false);
+		RID get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth = false, bool p_use_highlight = false);
+		RID get_highlight_texture() const;
 		virtual void free_data() override;
 		virtual void configure(RenderSceneBuffersRD *p_render_buffers) override;
 
@@ -139,6 +143,8 @@ private:
 		RD::FramebufferFormatID framebuffer_format = 0;
 		uint32_t element_offset = 0;
 		uint32_t subpass = 0;
+		// Fork(Lestoroer): Select the matching two-output scene shader family.
+		bool use_highlight_variant = false;
 
 		RenderListParameters(GeometryInstanceSurfaceDataCache **p_elements, RenderElementInfo *p_element_info, int p_element_count, bool p_reverse_cull, PassMode p_pass_mode, RID p_render_pass_uniform_set, SceneShaderForwardMobile::ShaderSpecialization p_base_specialization, bool p_force_wireframe = false, const Vector2 &p_uv_offset = Vector2(), float p_lod_distance_multiplier = 0.0, float p_screen_mesh_lod_threshold = 0.0, uint32_t p_view_count = 1, uint32_t p_element_offset = 0) {
 			elements = p_elements;
@@ -301,6 +307,7 @@ private:
 		bool used_depth_texture = false;
 		bool used_lightmap = false;
 		bool used_opaque_stencil = false;
+		bool used_highlight = false; // Fork(Lestoroer): Visible scene list contains an outlined geometry instance.
 
 		struct ShadowPass {
 			uint32_t element_from;
@@ -442,6 +449,7 @@ protected:
 
 	// When changing any of these enums, remember to change the corresponding enums in the shader files as well.
 	enum {
+		INSTANCE_DATA_FLAG_HIGHLIGHTED = 1 << 0, // Fork(Lestoroer): Writes into the optional outline coverage attachment.
 		INSTANCE_DATA_FLAG_MULTIMESH_INDIRECT = 1 << 2,
 		INSTANCE_DATA_FLAGS_DYNAMIC = 1 << 3,
 		INSTANCE_DATA_FLAGS_NON_UNIFORM_SCALE = 1 << 4,
@@ -689,6 +697,7 @@ public:
 				uint32_t use_separate_post_pass : 1;
 				uint32_t use_hdr_render_target : 1;
 				uint32_t use_ldr_render_target : 1;
+				uint32_t use_highlight_outline : 1;
 			};
 		};
 	};

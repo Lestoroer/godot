@@ -1961,6 +1961,14 @@
 				[b]Note:[/b] [param transparency] is clamped between [code]0.0[/code] and [code]1.0[/code], so this property cannot be used to make transparent materials more opaque than they originally are.
 			</description>
 		</method>
+		<method name="instance_geometry_set_highlighted">
+			<return type="void" />
+			<param index="0" name="instance" type="RID" />
+			<param index="1" name="enabled" type="bool" />
+			<description>
+				Enables the Lestoroer Forward Mobile outline mask for the geometry [param instance]. The method has no visual effect in other rendering methods. Multiple highlighted meshes contribute to the same binary mask.
+			</description>
+		</method><!-- Fork(Lestoroer) -->
 		<method name="instance_geometry_set_visibility_range">
 			<return type="void" />
 			<param index="0" name="instance" type="RID" />

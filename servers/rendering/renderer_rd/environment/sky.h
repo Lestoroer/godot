@@ -92,6 +92,10 @@ private:
 		SKY_VERSION_HALF_RES_MULTIVIEW,
 		SKY_VERSION_QUARTER_RES_MULTIVIEW,
 
+		// Fork(Lestoroer): Background variants matching the Forward Mobile R8 mask framebuffer.
+		SKY_VERSION_BACKGROUND_HIGHLIGHT,
+		SKY_VERSION_BACKGROUND_MULTIVIEW_HIGHLIGHT,
+
 		SKY_VERSION_MAX
 	};
 
@@ -306,7 +310,7 @@ public:
 	void setup_sky(const RenderDataRD *p_render_data, const Size2i p_screen_size);
 	void update_radiance_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_env, const Vector3 &p_global_pos, double p_time, float p_luminance_multiplier = 1.0, float p_brightness_multiplier = 1.0);
 	void update_res_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_env, double p_time, float p_luminance_multiplier = 1.0, float p_brightness_multiplier = 1.0);
-	void draw_sky(RD::DrawListID p_draw_list, Ref<RenderSceneBuffersRD> p_render_buffers, RID p_env, RID p_fb, double p_time, float p_luminance_multiplier = 1.0, float p_brightness_multiplier = 1.0);
+	void draw_sky(RD::DrawListID p_draw_list, Ref<RenderSceneBuffersRD> p_render_buffers, RID p_env, RID p_fb, double p_time, float p_luminance_multiplier = 1.0, float p_brightness_multiplier = 1.0, bool p_use_highlight_framebuffer = false);
 
 	void invalidate_sky(Sky *p_sky);
 	void update_dirty_skys();

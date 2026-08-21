@@ -83,6 +83,11 @@ public:
 	bool transparent_bg = false;
 	Rect2i render_region;
 
+	// Fork(Lestoroer): Forward Mobile highlight mask consumed by the mobile tonemapper.
+	bool use_highlight_outline = false;
+	RID highlight_outline_texture;
+	float highlight_outline_width = 1.5f;
+
 	/* Shadow data */
 	const RendererSceneRender::RenderShadowData *render_shadows = nullptr;
 	int render_shadow_count = 0;

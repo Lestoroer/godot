@@ -306,6 +306,9 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 	RD::PipelineColorBlendState blend_state_opaque_specular = RD::PipelineColorBlendState::create_disabled(2);
 	RD::PipelineColorBlendState blend_state_depth_normal_roughness = RD::PipelineColorBlendState::create_disabled(1);
 	RD::PipelineColorBlendState blend_state_depth_normal_roughness_giprobe = RD::PipelineColorBlendState::create_disabled(2);
+	// Fork(Lestoroer): Highlight variants must match the two color attachments exactly.
+	const bool highlight_variant = p_pipeline_key.version == SHADER_VERSION_COLOR_PASS_HIGHLIGHT || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS_HIGHLIGHT || p_pipeline_key.version == SHADER_VERSION_COLOR_PASS_MULTIVIEW_HIGHLIGHT || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW_HIGHLIGHT;
+	const bool color_variant = p_pipeline_key.version == SHADER_VERSION_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_MOTION_VECTORS_MULTIVIEW || highlight_variant;
 
 	//update pipelines
 
@@ -396,7 +399,7 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 			multisample_state.enable_alpha_to_one = true;
 		}
 
-		if (p_pipeline_key.version == SHADER_VERSION_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_MOTION_VECTORS_MULTIVIEW) {
+		if (color_variant) {
 			blend_state = blend_state_blend;
 			if (depth_draw == DEPTH_DRAW_OPAQUE && !uses_alpha_clip) {
 				// Alpha does not write to depth.
@@ -411,7 +414,7 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 			// Do not use this version (error case).
 		}
 	} else {
-		if (p_pipeline_key.version == SHADER_VERSION_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_MOTION_VECTORS_MULTIVIEW) {
+		if (color_variant) {
 			blend_state = blend_state_opaque;
 		} else if (p_pipeline_key.version == SHADER_VERSION_SHADOW_PASS || p_pipeline_key.version == SHADER_VERSION_SHADOW_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_SHADOW_PASS_DP) {
 			// Contains nothing.
@@ -421,6 +424,29 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 		} else {
 			// Unknown pipeline version.
 		}
+	}
+
+	if (highlight_variant) {
+		RD::PipelineColorBlendState::Attachment highlight_attachment;
+		highlight_attachment.write_g = false;
+		highlight_attachment.write_b = false;
+		highlight_attachment.write_a = false;
+
+		if (depth_test == DEPTH_TEST_DISABLED || depth_draw == DEPTH_DRAW_DISABLED) {
+			highlight_attachment.write_r = false;
+		} else if (uses_blend_alpha || (uses_alpha && !uses_alpha_clip && !uses_alpha_antialiasing)) {
+			// Preserve coverage from transparent layers instead of erasing a visible
+			// highlighted surface behind them.
+			highlight_attachment.enable_blend = true;
+			highlight_attachment.src_color_blend_factor = RD::BLEND_FACTOR_ONE;
+			highlight_attachment.dst_color_blend_factor = RD::BLEND_FACTOR_ONE;
+			highlight_attachment.color_blend_op = RD::BLEND_OP_MAX;
+			highlight_attachment.src_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
+			highlight_attachment.dst_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
+			highlight_attachment.alpha_blend_op = RD::BLEND_OP_MAX;
+		}
+
+		blend_state.attachments.push_back(highlight_attachment);
 	}
 
 	// Convert the specialization from the key to pipeline specialization constants.
@@ -598,6 +624,7 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 
 	{
 		Vector<ShaderRD::VariantDefine> shader_versions;
+		const bool highlight_outline_enabled = GLOBAL_GET("rendering/renderer/highlight_outline/enabled");
 		for (uint32_t fp16 = 0; fp16 < 2; fp16++) {
 			for (uint32_t ubershader = 0; ubershader < 2; ubershader++) {
 				String base_define = fp16 ? "\n#define EXPLICIT_FP16\n" : "";
@@ -617,6 +644,13 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 				shader_versions.push_back(ShaderRD::VariantDefine(shader_group_multiview, base_define + "\n#define USE_MULTIVIEW\n#define USE_LIGHTMAP\n", false)); // SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW
 				shader_versions.push_back(ShaderRD::VariantDefine(shader_group_multiview, base_define + "\n#define USE_MULTIVIEW\n#define MODE_RENDER_DEPTH\n#define SHADOW_PASS\n", false)); // SHADER_VERSION_SHADOW_PASS_MULTIVIEW
 				shader_versions.push_back(ShaderRD::VariantDefine(shader_group_multiview, base_define + "\n#define USE_MULTIVIEW\n#define MODE_RENDER_MOTION_VECTORS\n", false)); // SHADER_VERSION_MOTION_VECTORS_MULTIVIEW
+
+				// Fork(Lestoroer): Opt-in variants keep the upstream shader set unchanged
+				// when the renderer capability is disabled.
+				shader_versions.push_back(ShaderRD::VariantDefine(shader_group, base_define + "\n#define MODE_RENDER_HIGHLIGHT\n", default_enabled)); // SHADER_VERSION_COLOR_PASS_HIGHLIGHT
+				shader_versions.push_back(ShaderRD::VariantDefine(shader_group, base_define + "\n#define USE_LIGHTMAP\n#define MODE_RENDER_HIGHLIGHT\n", default_enabled)); // SHADER_VERSION_LIGHTMAP_COLOR_PASS_HIGHLIGHT
+				shader_versions.push_back(ShaderRD::VariantDefine(shader_group_multiview, base_define + "\n#define USE_MULTIVIEW\n#define MODE_RENDER_HIGHLIGHT\n", false)); // SHADER_VERSION_COLOR_PASS_MULTIVIEW_HIGHLIGHT
+				shader_versions.push_back(ShaderRD::VariantDefine(shader_group_multiview, base_define + "\n#define USE_MULTIVIEW\n#define USE_LIGHTMAP\n#define MODE_RENDER_HIGHLIGHT\n", false)); // SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW_HIGHLIGHT
 			}
 		}
 
@@ -630,6 +664,15 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(RenderForwardMobile::RENDER_PASS_UNIFORM_SET, 0));
 		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(RenderForwardMobile::RENDER_PASS_UNIFORM_SET, 1));
 		shader.initialize(shader_versions, p_defines, immutable_samplers, dynamic_buffers);
+		if (!highlight_outline_enabled) {
+			for (uint32_t variant_group = 0; variant_group < 4; variant_group++) {
+				const uint32_t variant_offset = variant_group * SHADER_VERSION_MAX;
+				shader.set_variant_enabled(variant_offset + SHADER_VERSION_COLOR_PASS_HIGHLIGHT, false);
+				shader.set_variant_enabled(variant_offset + SHADER_VERSION_LIGHTMAP_COLOR_PASS_HIGHLIGHT, false);
+				shader.set_variant_enabled(variant_offset + SHADER_VERSION_COLOR_PASS_MULTIVIEW_HIGHLIGHT, false);
+				shader.set_variant_enabled(variant_offset + SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW_HIGHLIGHT, false);
+			}
+		}
 
 		if (RendererCompositorRD::get_singleton()->is_xr_enabled()) {
 			enable_multiview_shader_group();

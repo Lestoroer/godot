@@ -1022,6 +1022,10 @@ layout(location = 1) out vec4 specular_buffer; //specular and SSS (subsurface sc
 #else
 
 layout(location = 0) out vec4 frag_color;
+#ifdef MODE_RENDER_HIGHLIGHT
+// Fork(Lestoroer): Binary/coverage output resolved to the post-process mask.
+layout(location = 1) out float highlight_mask;
+#endif
 #endif // MODE_MULTIPLE_RENDER_TARGETS
 
 #endif // RENDER DEPTH
@@ -1981,10 +1985,10 @@ void main() {
 					hvec3 light_dir = hvec3(directional_lights.data[i].direction);
 					hvec3 base_normal_bias = geo_normal * (half(1.0) - max(half(0.0), dot(light_dir, -geo_normal)));
 
-#define BIAS_FUNC(m_var, m_idx)                                                                        \
+#define BIAS_FUNC(m_var, m_idx) \
 	hvec3 normal_bias = base_normal_bias * half(directional_lights.data[i].shadow_normal_bias[m_idx]); \
-	normal_bias -= light_dir * dot(light_dir, normal_bias);                                            \
-	normal_bias += light_dir * half(directional_lights.data[i].shadow_bias[m_idx]);                    \
+	normal_bias -= light_dir * dot(light_dir, normal_bias); \
+	normal_bias += light_dir * half(directional_lights.data[i].shadow_bias[m_idx]); \
 	m_var.xyz += vec3(normal_bias);
 
 					if (depth_z < directional_lights.data[i].shadow_split_offsets.x) {
@@ -2359,6 +2363,15 @@ void main() {
 #endif
 
 	frag_color = out_color;
+
+#ifdef MODE_RENDER_HIGHLIGHT
+	bool instance_highlighted = bool(instances.data[draw_call.instance_index].flags & INSTANCE_FLAGS_HIGHLIGHTED);
+#if defined(ALPHA_USED) && !defined(ALPHA_SCISSOR_USED) && !defined(ALPHA_HASH_USED) && !defined(ALPHA_ANTIALIASING_EDGE_USED)
+	highlight_mask = instance_highlighted ? float(alpha) : 0.0;
+#else
+	highlight_mask = instance_highlighted ? 1.0 : 0.0;
+#endif
+#endif
 
 	if (sc_use_material_debanding()) {
 		// From https://alex.vlachos.com/graphics/Alex_Vlachos_Advanced_VR_Rendering_GDC2015.pdf

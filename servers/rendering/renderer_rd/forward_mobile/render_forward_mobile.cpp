@@ -171,6 +171,72 @@ void RenderForwardMobile::fill_push_constant_instance_indices(SceneState::Instan
 
 /* Render buffer */
 
+// Fork(Lestoroer): One semantic attachment layout feeds both runtime
+// framebuffers and startup pipeline formats, preventing the two paths from
+// silently drifting apart.
+enum MobileColorAttachmentKind {
+	MOBILE_ATTACHMENT_COLOR,
+	MOBILE_ATTACHMENT_DEPTH,
+	MOBILE_ATTACHMENT_VRS,
+	MOBILE_ATTACHMENT_HIGHLIGHT,
+	MOBILE_ATTACHMENT_COLOR_RESOLVE,
+	MOBILE_ATTACHMENT_HIGHLIGHT_RESOLVE,
+	MOBILE_ATTACHMENT_DEPTH_RESOLVE,
+	MOBILE_ATTACHMENT_TARGET,
+};
+
+struct MobileColorFramebufferLayout {
+	Vector<MobileColorAttachmentKind> attachments;
+	Vector<RD::FramebufferPass> passes;
+	int32_t vrs_attachment = RD::ATTACHMENT_UNUSED;
+};
+
+static MobileColorFramebufferLayout _build_mobile_color_framebuffer_layout(bool p_use_msaa, bool p_resolve_depth, bool p_use_vrs, bool p_use_highlight, bool p_post_pass) {
+	MobileColorFramebufferLayout layout;
+	auto add_attachment = [&layout](MobileColorAttachmentKind p_kind) {
+		const int32_t index = layout.attachments.size();
+		layout.attachments.push_back(p_kind);
+		return index;
+	};
+
+	const int32_t color = add_attachment(MOBILE_ATTACHMENT_COLOR);
+	const int32_t depth = add_attachment(MOBILE_ATTACHMENT_DEPTH);
+	if (p_use_vrs) {
+		layout.vrs_attachment = add_attachment(MOBILE_ATTACHMENT_VRS);
+	}
+	const int32_t highlight = p_use_highlight ? add_attachment(MOBILE_ATTACHMENT_HIGHLIGHT) : RD::ATTACHMENT_UNUSED;
+	const int32_t color_resolve = p_use_msaa ? add_attachment(MOBILE_ATTACHMENT_COLOR_RESOLVE) : color;
+	const int32_t highlight_resolve = p_use_highlight && p_use_msaa ? add_attachment(MOBILE_ATTACHMENT_HIGHLIGHT_RESOLVE) : highlight;
+	const int32_t depth_resolve = p_use_msaa && p_resolve_depth ? add_attachment(MOBILE_ATTACHMENT_DEPTH_RESOLVE) : RD::ATTACHMENT_UNUSED;
+
+	RD::FramebufferPass scene_pass;
+	scene_pass.color_attachments.push_back(color);
+	if (p_use_highlight) {
+		scene_pass.color_attachments.push_back(highlight);
+	}
+	scene_pass.depth_attachment = depth;
+	if (p_use_msaa) {
+		scene_pass.resolve_attachments.push_back(color_resolve);
+		if (p_use_highlight) {
+			scene_pass.resolve_attachments.push_back(highlight_resolve);
+		}
+		if (p_resolve_depth) {
+			scene_pass.depth_resolve_attachment = depth_resolve;
+		}
+	}
+	layout.passes.push_back(scene_pass);
+
+	if (p_post_pass) {
+		const int32_t target = add_attachment(MOBILE_ATTACHMENT_TARGET);
+		RD::FramebufferPass blit_pass;
+		blit_pass.input_attachments.push_back(color_resolve);
+		blit_pass.color_attachments.push_back(target);
+		layout.passes.push_back(blit_pass);
+	}
+
+	return layout;
+}
+
 void RenderForwardMobile::RenderBufferDataForwardMobile::free_data() {
 	// this should already be done but JIC..
 	if (render_buffers) {
@@ -216,7 +282,7 @@ RID RendererSceneRenderImplementation::RenderForwardMobile::RenderBufferDataForw
 	return RID();
 }
 
-RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth) {
+RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth, bool p_use_highlight) {
 	ERR_FAIL_NULL_V(render_buffers, RID());
 
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
@@ -245,102 +311,72 @@ RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(Framebuffe
 		vrs_texture = render_buffers->get_texture(RB_SCOPE_VRS, RB_TEXTURE);
 	}
 
+	const bool use_post_pass = p_config_type == FB_CONFIG_RENDER_AND_POST_PASS;
+	if (use_post_pass) {
+		Size2i target_size = render_buffers->get_target_size();
+		Size2i internal_size = render_buffers->get_internal_size();
+		ERR_FAIL_COND_V(target_size != internal_size, RID());
+	}
+
+	MobileColorFramebufferLayout layout = _build_mobile_color_framebuffer_layout(use_msaa, p_resolve_depth, vrs_texture.is_valid(), p_use_highlight, use_post_pass);
 	Vector<RID> textures;
-	int color_buffer_id = 0;
-	int depth_buffer_id = 1;
-	if (p_config_type == FB_CONFIG_RENDER_AND_POST_PASS && vrs_texture.is_valid() && texture_storage->render_target_is_subsampled_enabled(render_buffers->get_render_target())) {
-		textures.push_back(use_msaa ? render_buffers->get_color_msaa_subsampled() : render_buffers->get_color_subsampled()); // 0 - color buffer.
-		textures.push_back(use_msaa ? render_buffers->get_depth_msaa_subsampled() : render_buffers->get_depth_subsampled()); // 1 - depth buffer.
-	} else {
-		textures.push_back(use_msaa ? render_buffers->get_color_msaa() : render_buffers->get_internal_texture()); // 0 - color buffer.
-		textures.push_back(use_msaa ? render_buffers->get_depth_msaa() : render_buffers->get_depth_texture()); // 1 - depth buffer.
-	}
-	if (vrs_texture.is_valid()) {
-		textures.push_back(vrs_texture); // 2 - vrs texture.
-	}
-	if (use_msaa) {
-		color_buffer_id = textures.size();
-		textures.push_back(render_buffers->get_internal_texture()); // Color buffer for resolve.
-	}
-	if (use_msaa && p_resolve_depth) {
-		depth_buffer_id = textures.size();
-		textures.push_back(render_buffers->get_depth_texture()); // Depth buffer for resolve.
-	}
-
-	// Now define our subpasses.
-	Vector<RD::FramebufferPass> passes;
-
-	switch (p_config_type) {
-		case FB_CONFIG_RENDER_PASS: {
-			RD::FramebufferPass pass;
-			pass.color_attachments.push_back(0);
-			pass.depth_attachment = 1;
-
-			if (use_msaa) {
-				// Add color resolve.
-				pass.resolve_attachments.push_back(color_buffer_id);
-
-				if (p_resolve_depth) {
-					// Add depth resolve.
-					pass.depth_resolve_attachment = depth_buffer_id;
+	for (MobileColorAttachmentKind kind : layout.attachments) {
+		switch (kind) {
+			case MOBILE_ATTACHMENT_COLOR: {
+				if (use_post_pass && vrs_texture.is_valid() && texture_storage->render_target_is_subsampled_enabled(render_buffers->get_render_target())) {
+					textures.push_back(use_msaa ? render_buffers->get_color_msaa_subsampled() : render_buffers->get_color_subsampled());
+				} else {
+					textures.push_back(use_msaa ? render_buffers->get_color_msaa() : render_buffers->get_internal_texture());
 				}
-			}
-			passes.push_back(pass);
-
-			return FramebufferCacheRD::get_singleton()->get_cache_multipass(textures, passes, view_count);
-		} break;
-
-		case FB_CONFIG_RENDER_AND_POST_PASS: {
-			Size2i target_size = render_buffers->get_target_size();
-			Size2i internal_size = render_buffers->get_internal_size();
-
-			// Can't do our blit pass if resolutions don't match, this should already have been checked.
-			ERR_FAIL_COND_V(target_size != internal_size, RID());
-
-			RD::FramebufferPass pass;
-			pass.color_attachments.push_back(0);
-			pass.depth_attachment = 1;
-
-			if (use_msaa) {
-				// Add color resolve.
-				pass.resolve_attachments.push_back(color_buffer_id);
-
-				if (p_resolve_depth) {
-					// Add depth resolve.
-					pass.depth_resolve_attachment = depth_buffer_id;
+			} break;
+			case MOBILE_ATTACHMENT_DEPTH: {
+				if (use_post_pass && vrs_texture.is_valid() && texture_storage->render_target_is_subsampled_enabled(render_buffers->get_render_target())) {
+					textures.push_back(use_msaa ? render_buffers->get_depth_msaa_subsampled() : render_buffers->get_depth_subsampled());
+				} else {
+					textures.push_back(use_msaa ? render_buffers->get_depth_msaa() : render_buffers->get_depth_texture());
 				}
-			}
+			} break;
+			case MOBILE_ATTACHMENT_VRS:
+				textures.push_back(vrs_texture);
+				break;
+			case MOBILE_ATTACHMENT_HIGHLIGHT: {
+				if (use_msaa) {
+					textures.push_back(render_buffers->create_texture(RB_SCOPE_MOBILE, SNAME("highlight_mask_msaa"), RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT, render_buffers->get_texture_samples(), Size2i(), 0, 1, true, true));
+				} else {
+					textures.push_back(render_buffers->create_texture(RB_SCOPE_MOBILE, SNAME("highlight_mask"), RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT));
+				}
+			} break;
+			case MOBILE_ATTACHMENT_COLOR_RESOLVE:
+				textures.push_back(render_buffers->get_internal_texture());
+				break;
+			case MOBILE_ATTACHMENT_HIGHLIGHT_RESOLVE:
+				textures.push_back(render_buffers->create_texture(RB_SCOPE_MOBILE, SNAME("highlight_mask"), RD::DATA_FORMAT_R8_UNORM, RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT));
+				break;
+			case MOBILE_ATTACHMENT_DEPTH_RESOLVE:
+				textures.push_back(render_buffers->get_depth_texture());
+				break;
+			case MOBILE_ATTACHMENT_TARGET: {
+				RID render_target = render_buffers->get_render_target();
+				ERR_FAIL_COND_V(render_target.is_null(), RID());
+				RID target_buffer;
+				if (view_count > 1 || texture_storage->render_target_get_msaa(render_target) == RSE::VIEWPORT_MSAA_DISABLED) {
+					target_buffer = texture_storage->render_target_get_rd_texture(render_target);
+				} else {
+					target_buffer = texture_storage->render_target_get_rd_texture_msaa(render_target);
+					texture_storage->render_target_set_msaa_needs_resolve(render_target, true); // Make sure this gets resolved.
+				}
+				ERR_FAIL_COND_V(target_buffer.is_null(), RID());
+				textures.push_back(target_buffer);
+			} break;
+		}
+	}
 
-			passes.push_back(pass);
+	return FramebufferCacheRD::get_singleton()->get_cache_multipass(textures, layout.passes, view_count);
+}
 
-			// Add blit to 2D pass.
-			RID render_target = render_buffers->get_render_target();
-			ERR_FAIL_COND_V(render_target.is_null(), RID());
-			RID target_buffer;
-			if (view_count > 1 || texture_storage->render_target_get_msaa(render_target) == RSE::VIEWPORT_MSAA_DISABLED) {
-				target_buffer = texture_storage->render_target_get_rd_texture(render_target);
-			} else {
-				target_buffer = texture_storage->render_target_get_rd_texture_msaa(render_target);
-				texture_storage->render_target_set_msaa_needs_resolve(render_target, true); // Make sure this gets resolved.
-			}
-			ERR_FAIL_COND_V(target_buffer.is_null(), RID());
-
-			int target_buffer_id = textures.size();
-			textures.push_back(target_buffer); // Target buffer.
-
-			RD::FramebufferPass blit_pass;
-			blit_pass.input_attachments.push_back(color_buffer_id); // Read from our (resolved) color buffer.
-			blit_pass.color_attachments.push_back(target_buffer_id); // Write into our target buffer.
-			// This doesn't need VRS or depth.
-			passes.push_back(blit_pass);
-
-			return FramebufferCacheRD::get_singleton()->get_cache_multipass(textures, passes, view_count);
-		} break;
-		default:
-			break;
-	};
-
-	return RID();
+RID RenderForwardMobile::RenderBufferDataForwardMobile::get_highlight_texture() const {
+	ERR_FAIL_NULL_V(render_buffers, RID());
+	return render_buffers->has_texture(RB_SCOPE_MOBILE, SNAME("highlight_mask")) ? render_buffers->get_texture(RB_SCOPE_MOBILE, SNAME("highlight_mask")) : RID();
 }
 
 RID RenderForwardMobile::reflection_probe_create_framebuffer(RID p_color, RID p_depth) {
@@ -829,6 +865,9 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 
 	ERR_FAIL_NULL(p_render_data);
+	// Fork(Lestoroer): RenderDataRD is reused; never leak a previous frame's mask.
+	p_render_data->use_highlight_outline = false;
+	p_render_data->highlight_outline_texture = RID();
 
 	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
 	ERR_FAIL_COND(rb.is_null());
@@ -943,6 +982,14 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 	_fill_instance_data(RENDER_LIST_OPAQUE);
 	_fill_instance_data(RENDER_LIST_ALPHA);
 
+	// Fork(Lestoroer): Canvas background is copied by a shader that only emits the
+	// base color, so this uncommon mode deliberately falls back for the frame.
+	const bool canvas_background = p_render_data->environment.is_valid() && environment_get_background(p_render_data->environment) == RSE::ENV_BG_CANVAS;
+	const bool use_highlight_outline = highlight_outline_enabled && scene_state.used_highlight && !is_reflection_probe && !canvas_background;
+	if (use_highlight_outline) {
+		using_subpass_post_process = false;
+	}
+
 	if (p_render_data->render_info) {
 		p_render_data->render_info->info[RSE::VIEWPORT_RENDER_INFO_TYPE_VISIBLE][RSE::VIEWPORT_RENDER_INFO_DRAW_CALLS_IN_FRAME] = p_render_data->instances->size();
 		p_render_data->render_info->info[RSE::VIEWPORT_RENDER_INFO_TYPE_VISIBLE][RSE::VIEWPORT_RENDER_INFO_OBJECTS_IN_FRAME] = p_render_data->instances->size();
@@ -1001,12 +1048,17 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 
 		if (using_subpass_post_process) {
 			// We can do all in one go.
-			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_RENDER_AND_POST_PASS, resolve_depth_buffer && supports_depth_resolve);
+			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_RENDER_AND_POST_PASS, resolve_depth_buffer && supports_depth_resolve, false);
 			global_pipeline_data_required.use_subpass_post_pass = true;
 		} else {
 			// We separate things out.
-			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_RENDER_PASS, resolve_depth_buffer && supports_depth_resolve);
+			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_RENDER_PASS, resolve_depth_buffer && supports_depth_resolve, use_highlight_outline);
 			global_pipeline_data_required.use_separate_post_pass = true;
+		}
+		if (use_highlight_outline) {
+			p_render_data->use_highlight_outline = true;
+			p_render_data->highlight_outline_texture = rb_data->get_highlight_texture();
+			p_render_data->highlight_outline_width = highlight_outline_width;
 		}
 		samplers = rb->get_samplers();
 
@@ -1241,16 +1293,30 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 
 			c.push_back(cc); // Our render buffer.
 			if (rb_data.is_valid()) {
+				if (use_highlight_outline) {
+					c.push_back(Color()); // Fork(Lestoroer): MSAA/source highlight mask.
+				}
 				if (use_msaa) {
 					c.push_back(clear_color.srgb_to_linear() * inverse_luminance_multiplier); // Our resolve buffer.
+					if (use_highlight_outline) {
+						c.push_back(Color()); // Resolved highlight mask.
+					}
 				}
 				if (using_subpass_post_process) {
 					c.push_back(Color()); // Our 2D buffer we're copying into.
 				}
 			}
+		} else if (use_highlight_outline) {
+			// Color index 0 is loaded for BG_KEEP; index 1 must still start empty.
+			c.push_back(Color());
+			c.push_back(Color());
 		}
 
-		RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(framebuffer, load_color ? RD::DRAW_CLEAR_DEPTH : (RD::DRAW_CLEAR_COLOR_0 | RD::DRAW_CLEAR_DEPTH), c, 0.0f, 0, p_render_data->render_region, breadcrumb);
+		BitField<RD::DrawFlags> draw_flags = load_color ? BitField<RD::DrawFlags>(RD::DRAW_CLEAR_DEPTH) : BitField<RD::DrawFlags>(RD::DRAW_CLEAR_COLOR_0 | RD::DRAW_CLEAR_DEPTH);
+		if (use_highlight_outline) {
+			draw_flags.set_flag(RD::DRAW_CLEAR_COLOR_1);
+		}
+		RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(framebuffer, draw_flags, c, 0.0f, 0, p_render_data->render_region, breadcrumb);
 		RD::FramebufferFormatID fb_format = RD::get_singleton()->framebuffer_get_format(framebuffer);
 
 		if (copy_canvas) {
@@ -1268,6 +1334,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 			RenderListParameters render_list_params(render_list[RENDER_LIST_OPAQUE].elements.ptr(), render_list[RENDER_LIST_OPAQUE].element_info.ptr(), render_list[RENDER_LIST_OPAQUE].elements.size(), reverse_cull, PASS_MODE_COLOR, rp_uniform_set, base_specialization, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count);
 			render_list_params.framebuffer_format = fb_format;
 			render_list_params.subpass = RD::get_singleton()->draw_list_get_current_pass(); // Should now always be 0.
+			render_list_params.use_highlight_variant = use_highlight_outline;
 
 			_render_list(draw_list, fb_format, &render_list_params, 0, render_list_params.element_count);
 		}
@@ -1279,7 +1346,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 
 			// Note, sky.setup should have been called up above and setup stuff we need.
 
-			sky.draw_sky(draw_list, rb, p_render_data->environment, framebuffer, time, inverse_luminance_multiplier, sky_brightness_multiplier);
+			sky.draw_sky(draw_list, rb, p_render_data->environment, framebuffer, time, inverse_luminance_multiplier, sky_brightness_multiplier, use_highlight_outline);
 
 			RD::get_singleton()->draw_command_end_label(); // Draw Sky
 		}
@@ -1295,6 +1362,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 				RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR_TRANSPARENT, rp_uniform_set, base_specialization, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count);
 				render_list_params.framebuffer_format = fb_format;
 				render_list_params.subpass = RD::get_singleton()->draw_list_get_current_pass(); // Should now always be 0.
+				render_list_params.use_highlight_variant = use_highlight_outline;
 
 				_render_list(draw_list, fb_format, &render_list_params, 0, render_list_params.element_count);
 
@@ -1364,6 +1432,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 				RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, rp_uniform_set, base_specialization, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count);
 				render_list_params.framebuffer_format = fb_format;
 				render_list_params.subpass = RD::get_singleton()->draw_list_get_current_pass(); // Should now always be 0.
+				render_list_params.use_highlight_variant = use_highlight_outline;
 
 				draw_list = RD::get_singleton()->draw_list_begin(framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 1.0f, 0, p_render_data->render_region, breadcrumb);
 				_render_list(draw_list, fb_format, &render_list_params, 0, render_list_params.element_count);
@@ -2174,6 +2243,7 @@ void RenderForwardMobile::_fill_render_list(RenderListType p_render_list, const 
 		scene_state.used_screen_texture = false;
 		scene_state.used_depth_texture = false;
 		scene_state.used_lightmap = false;
+		scene_state.used_highlight = false; // Fork(Lestoroer)
 	}
 	uint32_t lightmap_captures_used = 0;
 
@@ -2213,6 +2283,10 @@ void RenderForwardMobile::_fill_render_list(RenderListType p_render_list, const 
 		uint32_t depth_layer = CLAMP(int(inst->depth * 16 / z_max), 0, 15);
 
 		uint32_t flags = inst->base_flags; //fill flags if appropriate
+		if (inst->highlighted) { // Fork(Lestoroer)
+			flags |= INSTANCE_DATA_FLAG_HIGHLIGHTED;
+			scene_state.used_highlight = true;
+		}
 
 		if (inst->non_uniform_scale) {
 			flags |= INSTANCE_DATA_FLAGS_NON_UNIFORM_SCALE;
@@ -2530,7 +2604,11 @@ void RenderForwardMobile::_render_list_template(RenderingDevice::DrawListID p_dr
 		switch (p_params->pass_mode) {
 			case PASS_MODE_COLOR:
 			case PASS_MODE_COLOR_TRANSPARENT: {
-				if (element_info.uses_lightmap) {
+				if (p_params->use_highlight_variant && element_info.uses_lightmap) {
+					pipeline_key.version = p_params->view_count > 1 ? SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW_HIGHLIGHT : SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS_HIGHLIGHT;
+				} else if (p_params->use_highlight_variant) {
+					pipeline_key.version = p_params->view_count > 1 ? SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS_MULTIVIEW_HIGHLIGHT : SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS_HIGHLIGHT;
+				} else if (element_info.uses_lightmap) {
 					pipeline_key.version = p_params->view_count > 1 ? SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW : SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS;
 				} else {
 					pipeline_key.version = p_params->view_count > 1 ? SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS_MULTIVIEW : SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS;
@@ -2862,6 +2940,8 @@ void RenderForwardMobile::_update_global_pipeline_data_requirements_from_project
 	global_pipeline_data_required.use_32_bit_shadows = !directional_shadow_16_bits || !positional_shadow_16_bits;
 	global_pipeline_data_required.target_samples = RenderSceneBuffersRD::msaa_to_samples(RSE::ViewportMSAA(msaa_2d_mode));
 	global_pipeline_data_required.texture_samples = RenderSceneBuffersRD::msaa_to_samples(RSE::ViewportMSAA(msaa_3d_mode));
+	// Fork(Lestoroer): Static renderer capability; included in startup pipeline warming.
+	global_pipeline_data_required.use_highlight_outline = highlight_outline_enabled;
 }
 
 void RenderForwardMobile::_update_global_pipeline_data_requirements_from_light_storage() {
@@ -3216,78 +3296,62 @@ void RenderForwardMobile::_geometry_instance_update(RenderGeometryInstance *p_ge
 	ginstance->dirty_list_element.remove_from_list();
 }
 
-static RD::FramebufferFormatID _get_color_framebuffer_format_for_pipeline(RD::DataFormat p_color_format, bool p_can_be_storage, RD::TextureSamples p_samples, RD::TextureSamples p_target_samples, bool p_vrs, bool p_post_pass, bool p_hdr, uint32_t p_view_count) {
+static RD::FramebufferFormatID _get_color_framebuffer_format_for_pipeline(RD::DataFormat p_color_format, bool p_can_be_storage, RD::TextureSamples p_samples, RD::TextureSamples p_target_samples, bool p_vrs, bool p_post_pass, bool p_hdr, uint32_t p_view_count, bool p_use_highlight = false) {
 	const bool multisampling = p_samples > RD::TEXTURE_SAMPLES_1;
-	RD::AttachmentFormat attachment;
-
-	RD::AttachmentFormat unused_attachment;
-	unused_attachment.usage_flags = RD::AttachmentFormat::UNUSED_ATTACHMENT;
-
+	MobileColorFramebufferLayout layout = _build_mobile_color_framebuffer_layout(multisampling, false, p_vrs, p_use_highlight, p_post_pass);
 	thread_local Vector<RD::AttachmentFormat> attachments;
 	attachments.clear();
-
-	// Color attachment.
-	attachment.samples = p_samples;
-	attachment.format = p_color_format;
-	attachment.usage_flags = RenderSceneBuffersRD::get_color_usage_bits(false, multisampling, p_can_be_storage);
-	attachments.push_back(attachment);
-
-	// Depth attachment.
-	attachment.samples = p_samples;
-	attachment.format = RenderSceneBuffersRD::get_depth_format(false, multisampling, p_can_be_storage);
-	attachment.usage_flags = RenderSceneBuffersRD::get_depth_usage_bits(false, multisampling, p_can_be_storage);
-	attachments.push_back(attachment);
-
-	if (p_vrs) {
-		// VRS attachment.
-		attachment.samples = RD::TEXTURE_SAMPLES_1;
-		attachment.format = RenderSceneBuffersRD::get_vrs_format();
-		attachment.usage_flags = RenderSceneBuffersRD::get_vrs_usage_bits();
-		attachments.push_back(attachment);
-	}
-
-	if (multisampling) {
-		// Resolve attachment.
-		attachment.samples = RD::TEXTURE_SAMPLES_1;
-		attachment.format = p_color_format;
-		attachment.usage_flags = RenderSceneBuffersRD::get_color_usage_bits(true, false, p_can_be_storage);
-		attachments.push_back(attachment);
-	}
-
-	RD::FramebufferPass pass;
-	thread_local Vector<RD::FramebufferPass> passes;
-	passes.clear();
-	pass.color_attachments.clear();
-	pass.color_attachments.push_back(0);
-	pass.depth_attachment = 1;
-
-	if (multisampling) {
-		pass.resolve_attachments.push_back(attachments.size() - 1);
-	}
-
-	passes.push_back(pass);
-
-	if (p_post_pass) {
-		attachment.format = RendererRD::TextureStorage::render_target_get_color_format(p_hdr, false);
-
-		if (p_view_count > 1 || p_target_samples == RD::TEXTURE_SAMPLES_1) {
-			attachment.samples = RD::TEXTURE_SAMPLES_1;
-			attachment.usage_flags = RendererRD::TextureStorage::render_target_get_color_usage_bits(false);
-		} else {
-			attachment.samples = p_target_samples;
-			attachment.usage_flags = RendererRD::TextureStorage::render_target_get_color_usage_bits(true);
+	for (MobileColorAttachmentKind kind : layout.attachments) {
+		RD::AttachmentFormat attachment;
+		switch (kind) {
+			case MOBILE_ATTACHMENT_COLOR:
+				attachment.samples = p_samples;
+				attachment.format = p_color_format;
+				attachment.usage_flags = RenderSceneBuffersRD::get_color_usage_bits(false, multisampling, p_can_be_storage);
+				break;
+			case MOBILE_ATTACHMENT_DEPTH:
+				attachment.samples = p_samples;
+				attachment.format = RenderSceneBuffersRD::get_depth_format(false, multisampling, p_can_be_storage);
+				attachment.usage_flags = RenderSceneBuffersRD::get_depth_usage_bits(false, multisampling, p_can_be_storage);
+				break;
+			case MOBILE_ATTACHMENT_VRS:
+				attachment.samples = RD::TEXTURE_SAMPLES_1;
+				attachment.format = RenderSceneBuffersRD::get_vrs_format();
+				attachment.usage_flags = RenderSceneBuffersRD::get_vrs_usage_bits();
+				break;
+			case MOBILE_ATTACHMENT_HIGHLIGHT:
+				attachment.samples = p_samples;
+				attachment.format = RD::DATA_FORMAT_R8_UNORM;
+				attachment.usage_flags = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | (multisampling ? 0 : RD::TEXTURE_USAGE_SAMPLING_BIT);
+				break;
+			case MOBILE_ATTACHMENT_COLOR_RESOLVE:
+				attachment.samples = RD::TEXTURE_SAMPLES_1;
+				attachment.format = p_color_format;
+				attachment.usage_flags = RenderSceneBuffersRD::get_color_usage_bits(true, false, p_can_be_storage);
+				break;
+			case MOBILE_ATTACHMENT_HIGHLIGHT_RESOLVE:
+				attachment.samples = RD::TEXTURE_SAMPLES_1;
+				attachment.format = RD::DATA_FORMAT_R8_UNORM;
+				attachment.usage_flags = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+				break;
+			case MOBILE_ATTACHMENT_TARGET:
+				attachment.format = RendererRD::TextureStorage::render_target_get_color_format(p_hdr, false);
+				if (p_view_count > 1 || p_target_samples == RD::TEXTURE_SAMPLES_1) {
+					attachment.samples = RD::TEXTURE_SAMPLES_1;
+					attachment.usage_flags = RendererRD::TextureStorage::render_target_get_color_usage_bits(false);
+				} else {
+					attachment.samples = p_target_samples;
+					attachment.usage_flags = RendererRD::TextureStorage::render_target_get_color_usage_bits(true);
+				}
+				break;
+			case MOBILE_ATTACHMENT_DEPTH_RESOLVE:
+				DEV_ASSERT(false); // Pipeline formats intentionally omit optional depth resolves, as upstream did.
+				break;
 		}
-
 		attachments.push_back(attachment);
-
-		RD::FramebufferPass blit_pass;
-		blit_pass.input_attachments.push_back(multisampling ? (attachments.size() - 2) : 0);
-		blit_pass.color_attachments.push_back(attachments.size() - 1);
-		passes.push_back(blit_pass);
 	}
 
-	int32_t vrs_attachment = p_vrs ? 2 : -1;
-	return RD::get_singleton()->framebuffer_format_create_multipass(attachments, passes, p_view_count, vrs_attachment);
+	return RD::get_singleton()->framebuffer_format_create_multipass(attachments, layout.passes, p_view_count, layout.vrs_attachment);
 }
 
 static RD::FramebufferFormatID _get_reflection_probe_color_framebuffer_format_for_pipeline(bool p_storage) {
@@ -3391,6 +3455,30 @@ void RenderForwardMobile::_mesh_compile_pipelines_for_surface(const SurfacePipel
 					if (p_global.use_lightmaps && p_surface.can_use_lightmap) {
 						pipeline_key.version = SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW;
 						_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+					}
+				}
+
+				// Fork(Lestoroer): Highlight outlines always use the separate tonemap path.
+				if (p_global.use_highlight_outline && !use_post_pass) {
+					pipeline_key.framebuffer_format_id = _get_color_framebuffer_format_for_pipeline(buffers_color_format, buffers_can_be_storage, RD::TextureSamples(p_global.texture_samples), RD::TextureSamples(p_global.target_samples), use_vrs, false, use_hdr, 1, true);
+					pipeline_key.version = SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS_HIGHLIGHT;
+					_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+
+					if (p_global.use_lightmaps && p_surface.can_use_lightmap) {
+						pipeline_key.version = SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS_HIGHLIGHT;
+						_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+					}
+
+					if (multiview_enabled) {
+						const uint32_t view_count = 2;
+						pipeline_key.framebuffer_format_id = _get_color_framebuffer_format_for_pipeline(buffers_color_format, buffers_can_be_storage, RD::TextureSamples(p_global.texture_samples), RD::TextureSamples(p_global.target_samples), use_vrs, false, use_hdr, view_count, true);
+						pipeline_key.version = SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS_MULTIVIEW_HIGHLIGHT;
+						_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+
+						if (p_global.use_lightmaps && p_surface.can_use_lightmap) {
+							pipeline_key.version = SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW_HIGHLIGHT;
+							_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+						}
 					}
 				}
 			}
@@ -3556,6 +3644,10 @@ void RenderForwardMobile::_update_shader_quality_settings() {
 
 RenderForwardMobile::RenderForwardMobile() {
 	singleton = this;
+	// Fork(Lestoroer): This capability is intentionally startup-only so shader
+	// families and pipeline warming remain deterministic.
+	highlight_outline_enabled = GLOBAL_GET("rendering/renderer/highlight_outline/enabled");
+	highlight_outline_width = GLOBAL_GET("rendering/renderer/highlight_outline/width");
 
 	disable_ubershaders = RD::get_singleton()->get_driver_workarounds().disable_ubershaders;
 	if (disable_ubershaders) {
