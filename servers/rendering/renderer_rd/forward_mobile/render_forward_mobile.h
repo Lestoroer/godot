@@ -91,8 +91,7 @@ private:
 			FB_CONFIG_MAX
 		};
 
-		RID get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth = false, bool p_use_highlight = false);
-		RID get_highlight_texture() const;
+		RID get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth = false);
 		virtual void free_data() override;
 		virtual void configure(RenderSceneBuffersRD *p_render_buffers) override;
 
@@ -144,8 +143,8 @@ private:
 		RD::FramebufferFormatID framebuffer_format = 0;
 		uint32_t element_offset = 0;
 		uint32_t subpass = 0;
-		// Fork(Lestoroer): Select the matching two-output scene shader family.
-		bool use_highlight_variant = false;
+		// Fork(Lestoroer): Reserve scene color alpha for outline coverage in this frame.
+		bool use_highlight_alpha = false;
 
 		RenderListParameters(GeometryInstanceSurfaceDataCache **p_elements, RenderElementInfo *p_element_info, int p_element_count, bool p_reverse_cull, PassMode p_pass_mode, RID p_render_pass_uniform_set, SceneShaderForwardMobile::ShaderSpecialization p_base_specialization, bool p_force_wireframe = false, const Vector2 &p_uv_offset = Vector2(), float p_lod_distance_multiplier = 0.0, float p_screen_mesh_lod_threshold = 0.0, uint32_t p_view_count = 1, uint32_t p_element_offset = 0) {
 			elements = p_elements;
@@ -355,6 +354,8 @@ private:
 			sorter.sort(elements.ptr(), elements.size());
 		}
 
+		void sort_by_key_highlight_last(); // Fork(Lestoroer)
+
 		void sort_by_key_range(uint32_t p_from, uint32_t p_size) {
 			SortArray<GeometryInstanceSurfaceDataCache *, SortByKey> sorter;
 			sorter.sort(elements.ptr() + p_from, p_size);
@@ -375,6 +376,8 @@ private:
 			SortArray<GeometryInstanceSurfaceDataCache *, SortByKeyAndStencil> sorter;
 			sorter.sort(elements.ptr(), elements.size());
 		}
+
+		void sort_by_key_and_stencil_highlight_last(); // Fork(Lestoroer)
 
 		struct SortByDepth {
 			_FORCE_INLINE_ bool operator()(const GeometryInstanceSurfaceDataCache *A, const GeometryInstanceSurfaceDataCache *B) const {
@@ -450,7 +453,6 @@ protected:
 
 	// When changing any of these enums, remember to change the corresponding enums in the shader files as well.
 	enum {
-		INSTANCE_DATA_FLAG_HIGHLIGHTED = 1 << 0, // Fork(Lestoroer): Writes into the optional outline coverage attachment.
 		INSTANCE_DATA_FLAG_MULTIMESH_INDIRECT = 1 << 2,
 		INSTANCE_DATA_FLAGS_DYNAMIC = 1 << 3,
 		INSTANCE_DATA_FLAGS_NON_UNIFORM_SCALE = 1 << 4,

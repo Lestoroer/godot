@@ -55,12 +55,6 @@ public:
 		SHADER_VERSION_SHADOW_PASS_MULTIVIEW,
 		SHADER_VERSION_MOTION_VECTORS_MULTIVIEW,
 
-		// Fork(Lestoroer): Color-pass variants with a second R8 highlight output.
-		SHADER_VERSION_COLOR_PASS_HIGHLIGHT,
-		SHADER_VERSION_LIGHTMAP_COLOR_PASS_HIGHLIGHT,
-		SHADER_VERSION_COLOR_PASS_MULTIVIEW_HIGHLIGHT,
-		SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW_HIGHLIGHT,
-
 		SHADER_VERSION_MAX
 	};
 
@@ -156,6 +150,14 @@ public:
 	};
 
 	struct ShaderData : public RendererRD::MaterialStorage::ShaderData {
+		// Fork(Lestoroer): Select whether a color-pass pipeline leaves scene color
+		// alpha untouched or writes highlight coverage into it.
+		enum HighlightAlphaMode {
+			HIGHLIGHT_ALPHA_DISABLED,
+			HIGHLIGHT_ALPHA_PRESERVE,
+			HIGHLIGHT_ALPHA_WRITE,
+		};
+
 		enum DepthDraw {
 			DEPTH_DRAW_DISABLED,
 			DEPTH_DRAW_OPAQUE,
@@ -209,6 +211,7 @@ public:
 			uint32_t render_pass = 0;
 			uint32_t wireframe = false;
 			uint32_t ubershader = false;
+			HighlightAlphaMode highlight_alpha_mode = HIGHLIGHT_ALPHA_DISABLED; // Fork(Lestoroer)
 
 			uint32_t hash() const {
 				uint32_t h = hash_murmur3_one_32(vertex_format_id);
@@ -222,6 +225,7 @@ public:
 				h = hash_murmur3_one_32(render_pass, h);
 				h = hash_murmur3_one_32(wireframe, h);
 				h = hash_murmur3_one_32(ubershader, h);
+				h = hash_murmur3_one_32(highlight_alpha_mode, h);
 				return hash_fmix32(h);
 			}
 		};

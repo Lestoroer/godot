@@ -766,9 +766,8 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		tonemap.luminance_multiplier = rb->get_luminance_multiplier();
 		tonemap.view_count = rb->get_view_count();
 
-		// Fork(Lestoroer): Forward Mobile supplies a resolved R8 highlight mask.
+		// Fork(Lestoroer): Forward Mobile supplies highlight coverage in scene color alpha.
 		tonemap.use_highlight_outline = p_render_data->use_highlight_outline;
-		tonemap.highlight_outline_texture = p_render_data->highlight_outline_texture;
 		tonemap.highlight_outline_width = p_render_data->highlight_outline_width;
 		tonemap.highlight_outline_color = p_render_data->highlight_outline_color; // Fork(Lestoroer)
 

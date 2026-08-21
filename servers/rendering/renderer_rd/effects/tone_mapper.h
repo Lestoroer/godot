@@ -212,9 +212,8 @@ public:
 
 		bool convert_to_srgb = false;
 
-		// Fork(Lestoroer): Optional resolved R8 coverage mask for Forward Mobile.
+		// Fork(Lestoroer): Optional outline from Forward Mobile scene color alpha.
 		bool use_highlight_outline = false;
-		RID highlight_outline_texture;
 		float highlight_outline_width = 1.5f;
 		Color highlight_outline_color = Color(1.0, 1.0, 1.0); // Fork(Lestoroer)
 	};

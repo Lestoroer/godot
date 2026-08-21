@@ -1973,7 +1973,7 @@
 			<param index="0" name="instance" type="RID" />
 			<param index="1" name="enabled" type="bool" />
 			<description>
-				Enables the Lestoroer Forward Mobile outline mask for the geometry [param instance]. The method has no visual effect in other rendering methods. Multiple highlighted meshes contribute to the same binary mask.
+				Enables the Lestoroer Forward Mobile outline mask for the geometry [param instance]. The method has no visual effect in other rendering methods, transparent viewports, reflection probes, or environments using [code]KEEP[/code], [code]CANVAS[/code], or [code]CAMERA_FEED[/code] backgrounds. Multiple highlighted meshes contribute to the same binary mask.
 			</description>
 		</method><!-- Fork(Lestoroer) -->
 		<method name="instance_geometry_set_visibility_range">

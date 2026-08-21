@@ -1022,10 +1022,6 @@ layout(location = 1) out vec4 specular_buffer; //specular and SSS (subsurface sc
 #else
 
 layout(location = 0) out vec4 frag_color;
-#ifdef MODE_RENDER_HIGHLIGHT
-// Fork(Lestoroer): Binary/coverage output resolved to the post-process mask.
-layout(location = 1) out float highlight_mask;
-#endif
 #endif // MODE_MULTIPLE_RENDER_TARGETS
 
 #endif // RENDER DEPTH
@@ -2363,16 +2359,6 @@ void main() {
 #endif
 
 	frag_color = out_color;
-
-#ifdef MODE_RENDER_HIGHLIGHT
-	bool instance_highlighted = bool(instances.data[draw_call.instance_index].flags & INSTANCE_FLAGS_HIGHLIGHTED);
-#if defined(ALPHA_USED) && !defined(ALPHA_SCISSOR_USED) && !defined(ALPHA_HASH_USED) && !defined(ALPHA_ANTIALIASING_EDGE_USED)
-	highlight_mask = instance_highlighted ? float(alpha) : 0.0;
-#else
-	highlight_mask = instance_highlighted ? 1.0 : 0.0;
-#endif
-#endif
-
 	if (sc_use_material_debanding()) {
 		// From https://alex.vlachos.com/graphics/Alex_Vlachos_Advanced_VR_Rendering_GDC2015.pdf
 		// and https://www.shadertoy.com/view/MslGR8 (5th one starting from the bottom)

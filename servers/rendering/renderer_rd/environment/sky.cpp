@@ -147,9 +147,13 @@ void SkyRD::SkyShaderData::set_code(const String &p_code) {
 
 		if (scene_singleton->sky.sky_shader.shader.is_variant_enabled(i)) {
 			RID shader_variant = scene_singleton->sky.sky_shader.shader.version_get_shader(version, i);
-			// Fork(Lestoroer): Highlight background variants emit color plus zero mask.
-			const bool highlight_variant = i == SKY_VERSION_BACKGROUND_HIGHLIGHT || i == SKY_VERSION_BACKGROUND_MULTIVIEW_HIGHLIGHT;
-			pipelines[i].setup(shader_variant, RD::RENDER_PRIMITIVE_TRIANGLES, RD::PipelineRasterizationState(), RD::PipelineMultisampleState(), depth_stencil_state, RD::PipelineColorBlendState::create_disabled(highlight_variant ? 2 : 1), 0);
+			RD::PipelineColorBlendState blend_state = RD::PipelineColorBlendState::create_disabled(1);
+			if (i == SKY_VERSION_BACKGROUND_HIGHLIGHT_ALPHA || i == SKY_VERSION_BACKGROUND_MULTIVIEW_HIGHLIGHT_ALPHA) {
+				// Fork(Lestoroer): Sky is drawn after opaque geometry and must not erase
+				// highlight coverage stored in scene color alpha.
+				blend_state.attachments.write[0].write_a = false;
+			}
+			pipelines[i].setup(shader_variant, RD::RENDER_PRIMITIVE_TRIANGLES, RD::PipelineRasterizationState(), RD::PipelineMultisampleState(), depth_stencil_state, blend_state, 0);
 		} else {
 			pipelines[i].clear();
 		}
@@ -731,22 +735,21 @@ void SkyRD::init() {
 		sky_modes.push_back("\n#define USE_HALF_RES_PASS\n#define USE_MULTIVIEW\n"); // Half Res multiview
 		sky_modes.push_back("\n#define USE_QUARTER_RES_PASS\n#define USE_MULTIVIEW\n"); // Quarter res multiview
 
-		// Fork(Lestoroer): Only full-resolution background rendering needs to match
-		// the extra Forward Mobile color attachment.
-		sky_modes.push_back("\n#define MODE_RENDER_HIGHLIGHT\n");
-		sky_modes.push_back("\n#define USE_MULTIVIEW\n#define MODE_RENDER_HIGHLIGHT\n");
+		// Fork(Lestoroer): These reuse the normal shaders; only pipeline alpha writes differ.
+		sky_modes.push_back("");
+		sky_modes.push_back("\n#define USE_MULTIVIEW\n");
 
 		sky_shader.shader.initialize(sky_modes, defines);
 		if (!bool(GLOBAL_GET("rendering/renderer/highlight_outline/enabled"))) {
-			sky_shader.shader.set_variant_enabled(SKY_VERSION_BACKGROUND_HIGHLIGHT, false);
-			sky_shader.shader.set_variant_enabled(SKY_VERSION_BACKGROUND_MULTIVIEW_HIGHLIGHT, false);
+			sky_shader.shader.set_variant_enabled(SKY_VERSION_BACKGROUND_HIGHLIGHT_ALPHA, false);
+			sky_shader.shader.set_variant_enabled(SKY_VERSION_BACKGROUND_MULTIVIEW_HIGHLIGHT_ALPHA, false);
 		}
 
 		if (!RendererCompositorRD::get_singleton()->is_xr_enabled()) {
 			sky_shader.shader.set_variant_enabled(SKY_VERSION_BACKGROUND_MULTIVIEW, false);
 			sky_shader.shader.set_variant_enabled(SKY_VERSION_HALF_RES_MULTIVIEW, false);
 			sky_shader.shader.set_variant_enabled(SKY_VERSION_QUARTER_RES_MULTIVIEW, false);
-			sky_shader.shader.set_variant_enabled(SKY_VERSION_BACKGROUND_MULTIVIEW_HIGHLIGHT, false);
+			sky_shader.shader.set_variant_enabled(SKY_VERSION_BACKGROUND_MULTIVIEW_HIGHLIGHT_ALPHA, false);
 		}
 	}
 
@@ -1472,7 +1475,7 @@ void SkyRD::update_res_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, RID p
 	RD::get_singleton()->draw_command_end_label(); // Setup Sky resolution buffers
 }
 
-void SkyRD::draw_sky(RD::DrawListID p_draw_list, Ref<RenderSceneBuffersRD> p_render_buffers, RID p_env, RID p_fb, double p_time, float p_luminance_multiplier, float p_brightness_multiplier, bool p_use_highlight_framebuffer) {
+void SkyRD::draw_sky(RD::DrawListID p_draw_list, Ref<RenderSceneBuffersRD> p_render_buffers, RID p_env, RID p_fb, double p_time, float p_luminance_multiplier, float p_brightness_multiplier, bool p_preserve_highlight_alpha) {
 	ERR_FAIL_COND(p_render_buffers.is_null());
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 	ERR_FAIL_COND(p_env.is_null());
@@ -1522,8 +1525,8 @@ void SkyRD::draw_sky(RD::DrawListID p_draw_list, Ref<RenderSceneBuffersRD> p_ren
 	sky_transform = sky_transform * sky_scene_state.cam_transform.basis;
 
 	SkyVersion version;
-	if (p_use_highlight_framebuffer) {
-		version = sky_scene_state.view_count > 1 ? SKY_VERSION_BACKGROUND_MULTIVIEW_HIGHLIGHT : SKY_VERSION_BACKGROUND_HIGHLIGHT;
+	if (p_preserve_highlight_alpha) {
+		version = sky_scene_state.view_count > 1 ? SKY_VERSION_BACKGROUND_MULTIVIEW_HIGHLIGHT_ALPHA : SKY_VERSION_BACKGROUND_HIGHLIGHT_ALPHA;
 	} else {
 		version = sky_scene_state.view_count > 1 ? SKY_VERSION_BACKGROUND_MULTIVIEW : SKY_VERSION_BACKGROUND;
 	}

@@ -272,38 +272,48 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 6. **renderer-integrated outline в Forward Mobile** | `lestoroer/feat-highlight-outline` |
    API и instance state: `rendering_server.{h,cpp}`, `rendering_server_default.h`,
    `rendering_method.h`, `renderer_scene_cull.{h,cpp}`, `renderer_geometry_instance.{h,cpp}`,
-   `doc/classes/RenderingServer.xml`; Forward Mobile и framebuffer:
+   `doc/classes/RenderingServer.xml`; Forward Mobile:
    `renderer_rd/forward_mobile/render_forward_mobile.{h,cpp}`,
-   `scene_shader_forward_mobile.{h,cpp}`,
-   `shaders/forward_mobile/scene_forward_mobile{,_inc}.glsl`; composite:
+   `scene_shader_forward_mobile.{h,cpp}`; composite:
    `renderer_rd/effects/tone_mapper.{h,cpp}`, `renderer_scene_render_rd.cpp`,
    `storage_rd/render_data_rd.h`, `shaders/effects/tonemap_mobile.glsl`; sky:
-   `environment/sky.{h,cpp}`, `shaders/environment/sky.glsl` |
+   `environment/sky.{h,cpp}` |
    `RenderingServer.instance_geometry_set_highlighted(instance, enabled)` проводит бинарный
-   instance-флаг до обычного geometry pass; парный read-only
+   instance-флаг до Forward Mobile; парный read-only
    `instance_geometry_is_highlighted(instance)` возвращает сохранённое состояние
    `RendererSceneCull` без GPU readback. Только когда в видимом render list есть подсвеченная
-   геометрия, Forward Mobile выбирает отдельное семейство pipeline/framebuffer: resolved
-   `R8_UNORM` mask плюс discardable MSAA-source при MSAA. Общий semantic layout builder формирует
-   и фактический framebuffer, и startup pipeline format, чтобы порядок color/resolve attachment
-   не расходился. Sky пишет нулевую mask; BG_KEEP всё равно очищает mask. Reflection probes и
-   canvas-background используют штатный путь без outline.
+   геометрия, Forward Mobile временно резервирует alpha уже существующего scene color под coverage:
+   обычные opaque поверхности рисуются первыми и сохраняют alpha, highlighted opaque — последними
+   и записывают её с обычным depth test. Поэтому закрытый непрозрачной геометрией объект не даёт
+   x-ray-контура. Sky использует отдельное pipeline-state только с `write_a = false`.
 
-   Непрозрачные, alpha-scissor/hash и alpha-to-coverage материалы пишут mask с replace; настоящая
-   прозрачность использует независимый MAXIMUM blend по coverage, если включены depth test/write;
-   важно использовать `BLEND_OP_MAXIMUM`, потому что `BLEND_OP_MAX` является sentinel enum и
-   отклоняется `RenderingDevice`. Mobile tonemap получает mask отдельным binding, четырьмя
-   диагональными bilinear taps строит только внешний контур заданной ширины и применяет его после color conversion, до
-   debanding. Geometry не дублируется, draw calls и triangles не добавляются. При нуле видимых
-   highlighted-instance сохраняются штатные framebuffer, subpass и shader variants.
+   Для настоящей прозрачности сохраняется material RGB blend, а highlighted coverage объединяется
+   отдельным alpha blend `src + dst * (1 - src)`. Материалы без depth test/write не помечаются:
+   их экранное покрытие неоднозначно. Mobile tonemap читает coverage из alpha исходного color,
+   четырьмя диагональными bilinear taps строит только внешний контур заданной ширины и применяет
+   его после color conversion, до debanding. Отдельного `R8` attachment, resolve, descriptor binding
+   и highlight shader family больше нет. Geometry не дублируется, draw calls и triangles не
+   добавляются. При нуле видимых highlighted-instance сохраняются штатные alpha writes, subpass и
+   pipeline states.
 
    Capability `rendering/renderer/highlight_outline/enabled` startup-only: `false` не создаёт
-   новые shader families/pipelines; `true` прогревает обычные и highlight-варианты. Первый
+   новые pipeline states; `true` прогревает режимы preserve/write. Первый
    контракт — Forward Mobile, одна бинарная маска, общий depth-tested outline без x-ray и без
    разделения соприкасающихся подсвеченных объектов. Ширина —
    `rendering/renderer/highlight_outline/width` в пикселях; общий цвет — startup-настройка
    `rendering/renderer/highlight_outline/color`, передаваемая tonemap как push constant без
-   расширения R8 mask.
+   отдельной текстуры.
+
+   Alpha-mask намеренно отключается для transparent viewport/passthrough, reflection probes и
+   background `KEEP`, `CANVAS`, `CAMERA_FEED`: там alpha принадлежит compositing-контракту либо
+   не может быть надёжно очищена. В highlight-кадре shader, читающий alpha `SCREEN_TEXTURE`, увидит
+   coverage mask; это зарезервированный внутренний канал, а не material alpha экрана.
+
+   Проверка на Quest 3, release, clocks 4/4, одинаковый фиксированный кадр: один outline
+   `6.206 ms` против `6.198 ms` baseline; 32 outline `5.643 ms` против `5.680 ms` baseline.
+   Разница находится в шуме замера; draw calls одинаковы (`44`), primitives отличаются только
+   штатным счётчиком стенда (`118840` против `118836`). Предыдущий вариант с отдельным R8 MRT
+   стоил около `+1.70 ms GPU` на этом же стенде и полностью удалён.
 
 ### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
 Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом

@@ -137,10 +137,6 @@ layout(set = 3, binding = 0) uniform texture3D volumetric_fog_texture;
 #GLOBALS
 
 layout(location = 0) out vec4 frag_color;
-#ifdef MODE_RENDER_HIGHLIGHT
-// Fork(Lestoroer): Sky clears visible background coverage in the highlight mask.
-layout(location = 1) out float highlight_mask;
-#endif
 
 #ifdef USE_DEBANDING
 // https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
@@ -276,9 +272,6 @@ void main() {
 
 	frag_color.rgb = color;
 	frag_color.a = alpha;
-#ifdef MODE_RENDER_HIGHLIGHT
-	highlight_mask = 0.0;
-#endif
 
 	// Apply environment 'brightness' setting separately before fog to ensure consistent luminance.
 	frag_color.rgb = frag_color.rgb * params.brightness_multiplier;

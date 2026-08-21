@@ -83,9 +83,8 @@ public:
 	bool transparent_bg = false;
 	Rect2i render_region;
 
-	// Fork(Lestoroer): Forward Mobile highlight mask consumed by the mobile tonemapper.
+	// Fork(Lestoroer): Forward Mobile highlight coverage stored in scene color alpha.
 	bool use_highlight_outline = false;
-	RID highlight_outline_texture;
 	float highlight_outline_width = 1.5f;
 	Color highlight_outline_color = Color(1.0, 1.0, 1.0); // Fork(Lestoroer)
 
