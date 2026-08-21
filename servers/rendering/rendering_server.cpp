@@ -3226,6 +3226,8 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("instance_set_surface_override_material", "instance", "surface", "material"), &RenderingServer::instance_set_surface_override_material);
 	ClassDB::bind_method(D_METHOD("instance_set_visible", "instance", "visible"), &RenderingServer::instance_set_visible);
 	ClassDB::bind_method(D_METHOD("instance_geometry_set_transparency", "instance", "transparency"), &RenderingServer::instance_geometry_set_transparency);
+	ClassDB::bind_method(D_METHOD("instance_geometry_set_highlighted", "instance", "enabled"), &RenderingServer::instance_geometry_set_highlighted); // Fork(Lestoroer): Probe compatibility only.
+	ClassDB::bind_method(D_METHOD("instance_geometry_is_highlighted", "instance"), &RenderingServer::instance_geometry_is_highlighted); // Fork(Lestoroer): Probe compatibility only.
 
 	ClassDB::bind_method(D_METHOD("instance_teleport", "instance"), &RenderingServer::instance_teleport);
 

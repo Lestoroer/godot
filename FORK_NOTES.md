@@ -201,7 +201,10 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 Настройка `rendering/renderer/highlight_outline/stencil_resolve_probe` при MSAA заставляет
 Forward Mobile использовать существующий hardware depth/stencil resolve. Vulkan временно
 использует `SAMPLE_ZERO` для обоих аспектов, чтобы не зависеть от поддержки независимых
-режимов resolve. После измерений probe-коммит не переносится в production feature-ветку.
+режимов resolve. Для запуска актуального проектного стенда ветка также объявляет временный
+no-op `instance_geometry_set_highlighted()` и getter, всегда возвращающий `false`; никакого
+highlight-состояния они не создают. После измерений probe-коммиты не переносятся в production
+feature-ветку.
 
 ## Инвентарь патчей
 Все строки патчей помечены `Fork(Lestoroer)` в комментарии — greppable. Формат: ветка | файлы | зачем.

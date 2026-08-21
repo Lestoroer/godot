@@ -766,6 +766,9 @@ public:
 	virtual void instance_geometry_set_lightmap(RID p_instance, RID p_lightmap, const Rect2 &p_lightmap_uv_scale, int p_lightmap_slice) = 0;
 	virtual void instance_geometry_set_lod_bias(RID p_instance, float p_lod_bias) = 0;
 	virtual void instance_geometry_set_transparency(RID p_instance, float p_transparency) = 0;
+	// Fork(Lestoroer): no-op API compatibility for the isolated stencil performance probe.
+	void instance_geometry_set_highlighted(RID, bool) {}
+	bool instance_geometry_is_highlighted(RID) const { return false; }
 
 	virtual void instance_geometry_set_shader_parameter(RID p_instance, const StringName &, const Variant &p_value) = 0;
 	virtual Variant instance_geometry_get_shader_parameter(RID p_instance, const StringName &) const = 0;
