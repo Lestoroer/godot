@@ -51,6 +51,10 @@ ToneMapper::ToneMapper(bool p_use_mobile_version) {
 		tonemap_modes.push_back("\n#define USE_MULTIVIEW\n#define USE_1D_LUT\n");
 		tonemap_modes.push_back("\n#define USE_MULTIVIEW\n#define SUBPASS\n");
 		tonemap_modes.push_back("\n#define USE_MULTIVIEW\n#define SUBPASS\n#define USE_1D_LUT\n");
+		tonemap_modes.push_back("\n#define USE_HIGHLIGHT_OUTLINE\n");
+		tonemap_modes.push_back("\n#define USE_HIGHLIGHT_OUTLINE\n#define USE_1D_LUT\n");
+		tonemap_modes.push_back("\n#define USE_HIGHLIGHT_OUTLINE\n#define USE_MULTIVIEW\n");
+		tonemap_modes.push_back("\n#define USE_HIGHLIGHT_OUTLINE\n#define USE_MULTIVIEW\n#define USE_1D_LUT\n"); // Fork(Lestoroer)
 
 		tonemap_mobile.shader.initialize(tonemap_modes);
 
@@ -59,11 +63,13 @@ ToneMapper::ToneMapper(bool p_use_mobile_version) {
 			tonemap_mobile.shader.set_variant_enabled(TONEMAP_MOBILE_MODE_1D_LUT_MULTIVIEW, false);
 			tonemap_mobile.shader.set_variant_enabled(TONEMAP_MOBILE_MODE_SUBPASS_MULTIVIEW, false);
 			tonemap_mobile.shader.set_variant_enabled(TONEMAP_MOBILE_MODE_SUBPASS_1D_LUT_MULTIVIEW, false);
+			tonemap_mobile.shader.set_variant_enabled(TONEMAP_MOBILE_MODE_HIGHLIGHT_MULTIVIEW, false);
+			tonemap_mobile.shader.set_variant_enabled(TONEMAP_MOBILE_MODE_HIGHLIGHT_1D_LUT_MULTIVIEW, false); // Fork(Lestoroer)
 		}
 
 		tonemap_mobile.shader_version = tonemap_mobile.shader.version_create();
 
-		for (int i = 0; i < TONEMAP_MODE_MAX; i++) {
+		for (int i = 0; i < TONEMAP_MOBILE_MODE_MAX; i++) {
 			if (tonemap_mobile.shader.is_variant_enabled(i)) {
 				tonemap_mobile.pipelines[i].setup(tonemap_mobile.shader.version_get_shader(tonemap_mobile.shader_version, i), RD::RENDER_PRIMITIVE_TRIANGLES, RD::PipelineRasterizationState(), RD::PipelineMultisampleState(), RD::PipelineDepthStencilState(), RD::PipelineColorBlendState::create_disabled(), 0);
 			} else {
@@ -244,6 +250,14 @@ void ToneMapper::tonemapper_mobile(RID p_source_color, RID p_dst_framebuffer, co
 	tonemap_mobile.push_constant.white = p_settings.white;
 	tonemap_mobile.push_constant.luminance_multiplier = p_settings.luminance_multiplier;
 	tonemap_mobile.push_constant.output_max_value = MAX(p_settings.max_value, 1.0f);
+	tonemap_mobile.push_constant.highlight_outline_width = p_settings.highlight_outline_width; // Fork(Lestoroer)
+	for (uint32_t i = 0; i < 4; i++) {
+		const Color color = p_settings.highlight_outline_colors[i].clamp();
+		tonemap_mobile.push_constant.highlight_outline_colors[i] = uint32_t(Math::round(color.r * 255.0f)) |
+				(uint32_t(Math::round(color.g * 255.0f)) << 8) |
+				(uint32_t(Math::round(color.b * 255.0f)) << 16) |
+				(uint32_t(Math::round(color.a * 255.0f)) << 24);
+	}
 
 	tonemap_mobile.push_constant.tonemapper_params[0] = p_settings.tonemapper_params[0];
 	tonemap_mobile.push_constant.tonemapper_params[1] = p_settings.tonemapper_params[1];
@@ -270,11 +284,17 @@ void ToneMapper::tonemapper_mobile(RID p_source_color, RID p_dst_framebuffer, co
 	spec_constant |= p_settings.glow_mode == RSE::ENV_GLOW_BLEND_MODE_REPLACE ? TONEMAP_MOBILE_FLAG_GLOW_MODE_REPLACE : 0;
 	spec_constant |= p_settings.glow_mode == RSE::ENV_GLOW_BLEND_MODE_MIX ? TONEMAP_MOBILE_FLAG_GLOW_MODE_MIX : 0;
 
-	int mode = p_settings.use_1d_color_correction ? TONEMAP_MOBILE_MODE_1D_LUT : TONEMAP_MOBILE_MODE_NORMAL;
-
-	if (p_settings.view_count > 1) {
-		// Use USE_MULTIVIEW versions
-		mode += 4;
+	int mode;
+	if (p_settings.use_highlight_outline) { // Fork(Lestoroer): Dedicated variants keep the ordinary tonemap descriptor layout untouched.
+		mode = p_settings.use_1d_color_correction ? TONEMAP_MOBILE_MODE_HIGHLIGHT_1D_LUT : TONEMAP_MOBILE_MODE_HIGHLIGHT;
+		if (p_settings.view_count > 1) {
+			mode += 2;
+		}
+	} else {
+		mode = p_settings.use_1d_color_correction ? TONEMAP_MOBILE_MODE_1D_LUT : TONEMAP_MOBILE_MODE_NORMAL;
+		if (p_settings.view_count > 1) {
+			mode += 4;
+		}
 	}
 
 	RID default_sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
@@ -300,13 +320,24 @@ void ToneMapper::tonemapper_mobile(RID p_source_color, RID p_dst_framebuffer, co
 	u_color_correction_texture.binding = 3;
 	u_color_correction_texture.append_id(default_sampler);
 	u_color_correction_texture.append_id(p_settings.color_correction_texture);
+	RD::Uniform u_highlight_stencil; // Fork(Lestoroer)
+	if (p_settings.use_highlight_outline) {
+		u_highlight_stencil.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+		u_highlight_stencil.binding = 4;
+		u_highlight_stencil.append_id(nearest_sampler);
+		u_highlight_stencil.append_id(p_settings.highlight_stencil_texture);
+	}
 
 	RID shader = tonemap_mobile.shader.version_get_shader(tonemap_mobile.shader_version, mode);
 	ERR_FAIL_COND(shader.is_null());
 
 	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_dst_framebuffer);
 	RD::get_singleton()->draw_list_bind_render_pipeline(draw_list, tonemap_mobile.pipelines[mode].get_render_pipeline(RD::INVALID_ID, RD::get_singleton()->framebuffer_get_format(p_dst_framebuffer), false, RD::get_singleton()->draw_list_get_current_pass(), spec_constant));
-	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 0, u_source_color, u_glow_texture, u_glow_map, u_color_correction_texture), 0);
+	if (p_settings.use_highlight_outline) { // Fork(Lestoroer)
+		RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 0, u_source_color, u_glow_texture, u_glow_map, u_color_correction_texture, u_highlight_stencil), 0);
+	} else {
+		RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 0, u_source_color, u_glow_texture, u_glow_map, u_color_correction_texture), 0);
+	}
 	RD::get_singleton()->draw_list_set_push_constant(draw_list, &tonemap_mobile.push_constant, sizeof(TonemapPushConstantMobile));
 	RD::get_singleton()->draw_list_draw(draw_list, false, 1u, 3u);
 	RD::get_singleton()->draw_list_end();

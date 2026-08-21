@@ -203,6 +203,7 @@ public:
 			uint32_t render_pass = 0;
 			uint32_t wireframe = false;
 			uint32_t ubershader = false;
+			uint32_t highlight_stencil_write = false; // Fork(Lestoroer): One dynamic-reference stencil pipeline for styles 1..4.
 
 			uint32_t hash() const {
 				uint32_t h = hash_murmur3_one_32(vertex_format_id);
@@ -216,6 +217,7 @@ public:
 				h = hash_murmur3_one_32(render_pass, h);
 				h = hash_murmur3_one_32(wireframe, h);
 				h = hash_murmur3_one_32(ubershader, h);
+				h = hash_murmur3_one_32(highlight_stencil_write, h); // Fork(Lestoroer)
 				return hash_fmix32(h);
 			}
 		};

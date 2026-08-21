@@ -74,6 +74,9 @@ private:
 
 	SceneShaderForwardMobile scene_shader;
 	bool disable_ubershaders = false;
+	bool highlight_outline_enabled = false; // Fork(Lestoroer): Startup-only Forward Mobile capability.
+	float highlight_outline_width = 1.0f;
+	Color highlight_outline_colors[4]; // Fork(Lestoroer): Global palette for stencil styles 1..4.
 
 	/* Render Buffer */
 
@@ -87,14 +90,16 @@ private:
 			FB_CONFIG_MAX
 		};
 
-		RID get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth = false);
+		RID get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth = false, bool p_resolve_stencil = false); // Fork(Lestoroer)
 		virtual void free_data() override;
 		virtual void configure(RenderSceneBuffersRD *p_render_buffers) override;
 
 		RID get_motion_vectors_fb();
+		RID get_highlight_stencil_view() const { return highlight_stencil_view; } // Fork(Lestoroer)
 
 	private:
 		RenderSceneBuffersRD *render_buffers = nullptr;
+		RID highlight_stencil_view; // Fork(Lestoroer): Sampling view of the resolved packed depth-stencil attachment.
 	};
 
 	virtual void setup_render_buffer_data(Ref<RenderSceneBuffersRD> p_render_buffers) override;
@@ -301,6 +306,7 @@ private:
 		bool used_depth_texture = false;
 		bool used_lightmap = false;
 		bool used_opaque_stencil = false;
+		bool used_highlight = false; // Fork(Lestoroer)
 
 		struct ShadowPass {
 			uint32_t element_from;
@@ -367,6 +373,9 @@ private:
 			SortArray<GeometryInstanceSurfaceDataCache *, SortByKeyAndStencil> sorter;
 			sorter.sort(elements.ptr(), elements.size());
 		}
+
+		void sort_by_key_highlight_last(); // Fork(Lestoroer)
+		void sort_by_key_and_stencil_highlight_last(); // Fork(Lestoroer)
 
 		struct SortByDepth {
 			_FORCE_INLINE_ bool operator()(const GeometryInstanceSurfaceDataCache *A, const GeometryInstanceSurfaceDataCache *B) const {

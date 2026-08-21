@@ -466,12 +466,13 @@ RID RenderSceneBuffersRD::get_texture_slice_view(const StringName &p_context, co
 		itos(p_mipmap),
 		itos(p_mipmaps),
 		itos(p_view.format_override),
+		itos(p_view.stencil_only), // Fork(Lestoroer)
 		itos(p_view.swizzle_r),
 		itos(p_view.swizzle_g),
 		itos(p_view.swizzle_b),
 		itos(p_view.swizzle_a)
 	};
-	RD::get_singleton()->set_resource_name(slice, String("RenderBuffer {0}/{1}, layer {2}/{3}, mipmap {4}/{5}, view {6}/{7}/{8}/{9}/{10}").format(arr));
+	RD::get_singleton()->set_resource_name(slice, String("RenderBuffer {0}/{1}, layer {2}/{3}, mipmap {4}/{5}, view {6}/{7}/{8}/{9}/{10}/{11}").format(arr)); // Fork(Lestoroer)
 
 	// and return our slice
 	return slice;

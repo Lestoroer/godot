@@ -370,6 +370,22 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 		depth_stencil_state.back_op = op;
 	}
 
+	if (p_pipeline_key.highlight_stencil_write) { // Fork(Lestoroer)
+		// The style itself is supplied as a dynamic stencil reference so all four
+		// project colors share one pipeline variant per material.
+		depth_stencil_state.enable_stencil = true;
+		RD::PipelineDepthStencilState::StencilOperationState op;
+		op.fail = RD::STENCIL_OP_KEEP;
+		op.pass = RD::STENCIL_OP_REPLACE;
+		op.depth_fail = RD::STENCIL_OP_KEEP;
+		op.compare = RD::COMPARE_OP_ALWAYS;
+		op.compare_mask = 0;
+		op.write_mask = 0xFF;
+		op.reference = 0;
+		depth_stencil_state.front_op = op;
+		depth_stencil_state.back_op = op;
+	}
+
 	bool emulate_point_size_flag = uses_point_size && SceneShaderForwardMobile::singleton->emulate_point_size;
 
 	RD::RenderPrimitive primitive_rd;
@@ -450,7 +466,8 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 	RID shader_rid = get_shader_variant(p_pipeline_key.version, p_pipeline_key.ubershader);
 	ERR_FAIL_COND(shader_rid.is_null());
 
-	RID pipeline = RD::get_singleton()->render_pipeline_create(shader_rid, p_pipeline_key.framebuffer_format_id, p_pipeline_key.vertex_format_id, primitive_rd, raster_state, multisample_state, depth_stencil_state, blend_state, 0, p_pipeline_key.render_pass, specialization_constants);
+	BitField<RD::PipelineDynamicStateFlags> dynamic_state = p_pipeline_key.highlight_stencil_write ? BitField<RD::PipelineDynamicStateFlags>(RD::DYNAMIC_STATE_STENCIL_REFERENCE) : BitField<RD::PipelineDynamicStateFlags>(); // Fork(Lestoroer)
+	RID pipeline = RD::get_singleton()->render_pipeline_create(shader_rid, p_pipeline_key.framebuffer_format_id, p_pipeline_key.vertex_format_id, primitive_rd, raster_state, multisample_state, depth_stencil_state, blend_state, dynamic_state, p_pipeline_key.render_pass, specialization_constants);
 
 	// Don't print error when it's expected.
 	if (unlikely(pipeline.is_null() && RD::get_singleton()->get_driver_workarounds().dont_print_on_render_pipeline_creation_failure)) {

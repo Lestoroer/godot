@@ -60,6 +60,14 @@ layout(set = 0, binding = 3) uniform sampler2D source_color_correction;
 layout(set = 0, binding = 3) uniform sampler3D source_color_correction;
 #endif
 
+#ifdef USE_HIGHLIGHT_OUTLINE
+#ifdef USE_MULTIVIEW
+layout(set = 0, binding = 4) uniform usampler2DArray highlight_stencil;
+#else
+layout(set = 0, binding = 4) uniform usampler2D highlight_stencil;
+#endif
+#endif // USE_HIGHLIGHT_OUTLINE, Fork(Lestoroer)
+
 layout(constant_id = 0) const bool use_bcs = false;
 layout(constant_id = 1) const bool use_glow = false;
 layout(constant_id = 2) const bool use_glow_map = false;
@@ -94,9 +102,47 @@ layout(push_constant, std430) uniform Params {
 	vec4 tonemapper_params;
 
 	float output_max_value;
-	float pad[3];
+	float highlight_outline_width;
+	uint highlight_outline_colors[4];
+	float pad[2]; // Fork(Lestoroer)
 }
 params;
+
+#ifdef USE_HIGHLIGHT_OUTLINE
+uint read_highlight_style(ivec2 pixel) { // Fork(Lestoroer)
+#ifdef USE_MULTIVIEW
+	ivec2 size = textureSize(highlight_stencil, 0).xy;
+	pixel = clamp(pixel, ivec2(0), size - ivec2(1));
+	return texelFetch(highlight_stencil, ivec3(pixel, int(ViewIndex)), 0).r;
+#else
+	ivec2 size = textureSize(highlight_stencil, 0);
+	pixel = clamp(pixel, ivec2(0), size - ivec2(1));
+	return texelFetch(highlight_stencil, pixel, 0).r;
+#endif
+}
+
+uint find_highlight_outline_style() { // Fork(Lestoroer): Eight fixed taps keep cost independent of object count and width.
+#ifdef USE_MULTIVIEW
+	ivec2 size = textureSize(highlight_stencil, 0).xy;
+#else
+	ivec2 size = textureSize(highlight_stencil, 0);
+#endif
+	ivec2 pixel = clamp(ivec2(uv_interp * vec2(size)), ivec2(0), size - ivec2(1));
+	int radius = clamp(int(round(params.highlight_outline_width)), 1, 4);
+	uint center = read_highlight_style(pixel);
+	uint outline_style = 0u;
+	const ivec2 directions[8] = ivec2[](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1), ivec2(-1, -1), ivec2(1, -1), ivec2(-1, 1), ivec2(1, 1));
+	for (uint i = 0u; i < 8u; i++) {
+		uint neighbor = read_highlight_style(pixel + directions[i] * radius);
+		if (center == 0u) {
+			outline_style = max(outline_style, neighbor);
+		} else if (neighbor != 0u && neighbor != center) {
+			outline_style = max(outline_style, max(center, neighbor));
+		}
+	}
+	return min(outline_style, 4u);
+}
+#endif // USE_HIGHLIGHT_OUTLINE
 
 layout(location = 0) out vec4 frag_color;
 
@@ -820,6 +866,14 @@ void main() {
 	} else if (convert_to_srgb) {
 		color.rgb = linear_to_srgb(color.rgb); // Regular linear -> SRGB conversion.
 	}
+
+#ifdef USE_HIGHLIGHT_OUTLINE
+	uint highlight_style = find_highlight_outline_style(); // Fork(Lestoroer)
+	if (highlight_style > 0u) {
+		vec4 outline_color = unpackUnorm4x8(params.highlight_outline_colors[highlight_style - 1u]);
+		color.rgb = mix(color.rgb, outline_color.rgb, outline_color.a);
+	}
+#endif
 
 	// Debanding should be done at the end of tonemapping, but before writing to the LDR buffer.
 	// Otherwise, we're adding noise to an already-quantized image.

@@ -1695,6 +1695,7 @@ RID RenderingDevice::texture_create(const TextureFormat &p_format, const Texture
 	tv.swizzle_g = p_view.swizzle_g;
 	tv.swizzle_b = p_view.swizzle_b;
 	tv.swizzle_a = p_view.swizzle_a;
+	tv.stencil_only = p_view.stencil_only; // Fork(Lestoroer)
 
 	// Create.
 
@@ -1798,6 +1799,8 @@ RID RenderingDevice::texture_create_shared(const TextureView &p_view, RID p_with
 	tv.swizzle_g = p_view.swizzle_g;
 	tv.swizzle_b = p_view.swizzle_b;
 	tv.swizzle_a = p_view.swizzle_a;
+	tv.stencil_only = p_view.stencil_only; // Fork(Lestoroer)
+	ERR_FAIL_COND_V_MSG(p_view.stencil_only && !format_has_stencil(texture.format), RID(), "Stencil-only view requires a depth-stencil texture.");
 
 	if (create_shared) {
 		texture.driver_id = driver->texture_create_shared(texture.driver_id, tv);
@@ -1964,6 +1967,8 @@ RID RenderingDevice::texture_create_shared_from_slice(const TextureView &p_view,
 	tv.swizzle_g = p_view.swizzle_g;
 	tv.swizzle_b = p_view.swizzle_b;
 	tv.swizzle_a = p_view.swizzle_a;
+	tv.stencil_only = p_view.stencil_only; // Fork(Lestoroer)
+	ERR_FAIL_COND_V_MSG(p_view.stencil_only && !format_has_stencil(texture.format), RID(), "Stencil-only view requires a depth-stencil texture.");
 
 	if (p_slice_type == TEXTURE_SLICE_CUBEMAP) {
 		ERR_FAIL_COND_V_MSG(p_layer >= src_texture->layers, RID(),
@@ -3349,8 +3354,10 @@ RDD::RenderPassID RenderingDevice::_render_pass_create(RenderingDeviceDriver *p_
 
 				subpass.depth_resolve_reference.attachment = attachment_remap[attachment];
 				subpass.depth_resolve_reference.layout = RDD::TEXTURE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+				subpass.resolve_stencil = pass->resolve_stencil; // Fork(Lestoroer)
 				attachment_last_pass[attachment] = i;
 			}
+			ERR_FAIL_COND_V_MSG(pass->resolve_stencil && pass->depth_resolve_attachment == ATTACHMENT_UNUSED, RDD::RenderPassID(), "Stencil resolve requires a depth resolve attachment."); // Fork(Lestoroer)
 
 		} else {
 			subpass.depth_stencil_reference.attachment = RDD::AttachmentReference::UNUSED;
@@ -5981,6 +5988,13 @@ void RenderingDevice::draw_list_set_line_width(DrawListID p_list, float p_width)
 	ERR_FAIL_COND(!draw_list.active);
 
 	draw_graph.add_draw_list_set_line_width(p_width);
+}
+
+void RenderingDevice::draw_list_set_stencil_reference(DrawListID p_list, uint32_t p_reference) { // Fork(Lestoroer)
+	ERR_RENDER_THREAD_GUARD();
+	ERR_FAIL_COND(!draw_list.active);
+	ERR_FAIL_COND_MSG(p_reference > 255, "Stencil reference must fit in 8 bits.");
+	draw_graph.add_draw_list_set_stencil_reference(p_reference);
 }
 
 void RenderingDevice::draw_list_set_push_constant(DrawListID p_list, const void *p_data, uint32_t p_data_size) {

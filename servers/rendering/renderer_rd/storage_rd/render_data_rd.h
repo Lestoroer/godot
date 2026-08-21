@@ -97,4 +97,9 @@ public:
 	const RendererSceneRender::RenderSDFGIUpdateData *sdfgi_update_data = nullptr;
 
 	uint32_t voxel_gi_count = 0;
+
+	bool use_highlight_outline = false; // Fork(Lestoroer): Forward Mobile stencil outline payload for the final tonemap pass.
+	RID highlight_stencil_texture;
+	float highlight_outline_width = 1.0f;
+	Color highlight_outline_colors[4];
 };

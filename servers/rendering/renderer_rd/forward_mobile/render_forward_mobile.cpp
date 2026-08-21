@@ -31,6 +31,7 @@
 #include "render_forward_mobile.h"
 
 #include "core/config/project_settings.h"
+#include "core/os/os.h" // Fork(Lestoroer): Highlight sampling is currently implemented only by the Vulkan driver.
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
@@ -169,9 +170,43 @@ void RenderForwardMobile::fill_push_constant_instance_indices(SceneState::Instan
 	}
 }
 
+void RenderForwardMobile::RenderList::sort_by_key_highlight_last() { // Fork(Lestoroer)
+	struct SortByHighlightAndKey {
+		_FORCE_INLINE_ bool operator()(const GeometryInstanceSurfaceDataCache *p_a, const GeometryInstanceSurfaceDataCache *p_b) const {
+			const bool a_highlight = p_a->owner->highlight_style > 0;
+			const bool b_highlight = p_b->owner->highlight_style > 0;
+			if (a_highlight != b_highlight) {
+				return !a_highlight;
+			}
+			return SortByKey()(p_a, p_b);
+		}
+	};
+	SortArray<GeometryInstanceSurfaceDataCache *, SortByHighlightAndKey> sorter;
+	sorter.sort(elements.ptr(), elements.size());
+}
+
+void RenderForwardMobile::RenderList::sort_by_key_and_stencil_highlight_last() { // Fork(Lestoroer)
+	struct SortByHighlightStencilAndKey {
+		_FORCE_INLINE_ bool operator()(const GeometryInstanceSurfaceDataCache *p_a, const GeometryInstanceSurfaceDataCache *p_b) const {
+			const bool a_highlight = p_a->owner->highlight_style > 0;
+			const bool b_highlight = p_b->owner->highlight_style > 0;
+			if (a_highlight != b_highlight) {
+				return !a_highlight;
+			}
+			return SortByKeyAndStencil()(p_a, p_b);
+		}
+	};
+	SortArray<GeometryInstanceSurfaceDataCache *, SortByHighlightStencilAndKey> sorter;
+	sorter.sort(elements.ptr(), elements.size());
+}
+
 /* Render buffer */
 
 void RenderForwardMobile::RenderBufferDataForwardMobile::free_data() {
+	if (highlight_stencil_view.is_valid()) { // Fork(Lestoroer)
+		RD::get_singleton()->free_rid(highlight_stencil_view);
+		highlight_stencil_view = RID();
+	}
 	// this should already be done but JIC..
 	if (render_buffers) {
 		render_buffers->clear_context(RB_SCOPE_MOBILE);
@@ -186,6 +221,12 @@ void RenderForwardMobile::RenderBufferDataForwardMobile::configure(RenderSceneBu
 
 	render_buffers = p_render_buffers;
 	ERR_FAIL_NULL(render_buffers); // Huh? really?
+	RD::TextureView stencil_view; // Fork(Lestoroer)
+	stencil_view.stencil_only = true;
+	RID depth_stencil = render_buffers->get_texture(RB_SCOPE_BUFFERS, RB_TEX_DEPTH);
+	if (depth_stencil.is_valid()) {
+		highlight_stencil_view = RD::get_singleton()->texture_create_shared(stencil_view, depth_stencil);
+	}
 }
 
 RID RendererSceneRenderImplementation::RenderForwardMobile::RenderBufferDataForwardMobile::get_motion_vectors_fb() {
@@ -216,8 +257,9 @@ RID RendererSceneRenderImplementation::RenderForwardMobile::RenderBufferDataForw
 	return RID();
 }
 
-RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth) {
+RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth, bool p_resolve_stencil) { // Fork(Lestoroer)
 	ERR_FAIL_NULL_V(render_buffers, RID());
+	ERR_FAIL_COND_V(p_resolve_stencil && !p_resolve_depth, RID()); // Fork(Lestoroer)
 
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 	ERR_FAIL_NULL_V(texture_storage, RID());
@@ -283,6 +325,7 @@ RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(Framebuffe
 				if (p_resolve_depth) {
 					// Add depth resolve.
 					pass.depth_resolve_attachment = depth_buffer_id;
+					pass.resolve_stencil = p_resolve_stencil; // Fork(Lestoroer)
 				}
 			}
 			passes.push_back(pass);
@@ -308,6 +351,7 @@ RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(Framebuffe
 				if (p_resolve_depth) {
 					// Add depth resolve.
 					pass.depth_resolve_attachment = depth_buffer_id;
+					pass.resolve_stencil = p_resolve_stencil; // Fork(Lestoroer)
 				}
 			}
 
@@ -829,6 +873,8 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 
 	ERR_FAIL_NULL(p_render_data);
+	p_render_data->use_highlight_outline = false; // Fork(Lestoroer)
+	p_render_data->highlight_stencil_texture = RID();
 
 	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
 	ERR_FAIL_COND(rb.is_null());
@@ -933,10 +979,19 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 
 	// fill our render lists early so we can find out if we use various features
 	_fill_render_list(RENDER_LIST_OPAQUE, p_render_data, PASS_MODE_COLOR);
+	const bool use_highlight_outline = highlight_outline_enabled && scene_state.used_highlight && (!use_msaa || supports_depth_resolve) && !is_reflection_probe && rb_data.is_valid(); // Fork(Lestoroer): Multisampled stencil must be resolvable before the outline pass can sample it.
 	if (scene_state.used_opaque_stencil) {
-		render_list[RENDER_LIST_OPAQUE].sort_by_key_and_stencil();
+		if (use_highlight_outline) {
+			render_list[RENDER_LIST_OPAQUE].sort_by_key_and_stencil_highlight_last(); // Fork(Lestoroer)
+		} else {
+			render_list[RENDER_LIST_OPAQUE].sort_by_key_and_stencil();
+		}
 	} else {
-		render_list[RENDER_LIST_OPAQUE].sort_by_key();
+		if (use_highlight_outline) {
+			render_list[RENDER_LIST_OPAQUE].sort_by_key_highlight_last(); // Fork(Lestoroer)
+		} else {
+			render_list[RENDER_LIST_OPAQUE].sort_by_key();
+		}
 	}
 	render_list[RENDER_LIST_ALPHA].sort_by_reverse_depth_and_priority();
 
@@ -970,6 +1025,19 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 		// setup rendering to render buffer
 		screen_size = p_render_data->render_buffers->get_internal_size();
 
+		if (use_highlight_outline) { // Fork(Lestoroer): Outline samples resolved stencil in the separate final pass.
+			using_subpass_post_process = false;
+			if (use_msaa) {
+				resolve_depth_buffer = true;
+			}
+			p_render_data->use_highlight_outline = true;
+			p_render_data->highlight_stencil_texture = rb_data->get_highlight_stencil_view();
+			p_render_data->highlight_outline_width = highlight_outline_width;
+			for (uint32_t i = 0; i < 4; i++) {
+				p_render_data->highlight_outline_colors[i] = highlight_outline_colors[i];
+			}
+		}
+
 		if (rb->get_scaling_3d_mode() != RSE::VIEWPORT_SCALING_3D_MODE_OFF) {
 			// can't do blit subpass because we're scaling
 			using_subpass_post_process = false;
@@ -1001,11 +1069,11 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 
 		if (using_subpass_post_process) {
 			// We can do all in one go.
-			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_RENDER_AND_POST_PASS, resolve_depth_buffer && supports_depth_resolve);
+			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_RENDER_AND_POST_PASS, resolve_depth_buffer && supports_depth_resolve, use_highlight_outline && use_msaa && supports_depth_resolve); // Fork(Lestoroer)
 			global_pipeline_data_required.use_subpass_post_pass = true;
 		} else {
 			// We separate things out.
-			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_RENDER_PASS, resolve_depth_buffer && supports_depth_resolve);
+			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_RENDER_PASS, resolve_depth_buffer && supports_depth_resolve, use_highlight_outline && use_msaa && supports_depth_resolve); // Fork(Lestoroer)
 			global_pipeline_data_required.use_separate_post_pass = true;
 		}
 		samplers = rb->get_samplers();
@@ -2174,6 +2242,7 @@ void RenderForwardMobile::_fill_render_list(RenderListType p_render_list, const 
 		scene_state.used_screen_texture = false;
 		scene_state.used_depth_texture = false;
 		scene_state.used_lightmap = false;
+		scene_state.used_highlight = false; // Fork(Lestoroer)
 	}
 	uint32_t lightmap_captures_used = 0;
 
@@ -2334,6 +2403,14 @@ void RenderForwardMobile::_fill_render_list(RenderListType p_render_list, const 
 				if ((surf->flags & GeometryInstanceSurfaceDataCache::FLAG_USES_STENCIL) && !force_alpha && (surf->flags & (GeometryInstanceSurfaceDataCache::FLAG_PASS_DEPTH | GeometryInstanceSurfaceDataCache::FLAG_PASS_OPAQUE))) {
 					scene_state.used_opaque_stencil = true;
 				}
+				if (inst->highlight_style > 0) { // Fork(Lestoroer)
+					const bool highlight_compatible = !(surf->flags & GeometryInstanceSurfaceDataCache::FLAG_USES_STENCIL) && surf->shader->depth_test == SceneShaderForwardMobile::ShaderData::DEPTH_TEST_ENABLED;
+					if (highlight_compatible && (surf->flags & (GeometryInstanceSurfaceDataCache::FLAG_PASS_OPAQUE | GeometryInstanceSurfaceDataCache::FLAG_PASS_ALPHA))) {
+						scene_state.used_highlight = true;
+					} else if (highlight_outline_enabled && !highlight_compatible) {
+						WARN_PRINT_ONCE("Fork(Lestoroer): Highlight outline skips materials that use stencil or disable/invert the depth test.");
+					}
+				}
 
 			} else if (p_pass_mode == PASS_MODE_SHADOW || p_pass_mode == PASS_MODE_SHADOW_DP) {
 				if (surf->flags & GeometryInstanceSurfaceDataCache::FLAG_PASS_SHADOW) {
@@ -2439,6 +2516,7 @@ void RenderForwardMobile::_render_list_template(RenderingDevice::DrawListID p_dr
 	SceneShaderForwardMobile::ShaderData::PipelineKey pipeline_key;
 	uint32_t pipeline_hash = 0;
 	uint32_t prev_pipeline_hash = 0;
+	uint8_t current_highlight_stencil_reference = 0; // Fork(Lestoroer)
 
 	bool shadow_pass = (p_params->pass_mode == PASS_MODE_SHADOW) || (p_params->pass_mode == PASS_MODE_SHADOW_DP);
 
@@ -2526,6 +2604,8 @@ void RenderForwardMobile::_render_list_template(RenderingDevice::DrawListID p_dr
 
 		pipeline_key.primitive_type = surf->primitive;
 		RID xforms_uniform_set = surf->owner->transforms_uniform_set;
+		uint8_t highlight_stencil_reference = 0; // Fork(Lestoroer)
+		pipeline_key.highlight_stencil_write = false;
 
 		switch (p_params->pass_mode) {
 			case PASS_MODE_COLOR:
@@ -2534,6 +2614,10 @@ void RenderForwardMobile::_render_list_template(RenderingDevice::DrawListID p_dr
 					pipeline_key.version = p_params->view_count > 1 ? SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW : SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS;
 				} else {
 					pipeline_key.version = p_params->view_count > 1 ? SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS_MULTIVIEW : SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS;
+				}
+				if (surf->owner->highlight_style > 0 && !shader->stencil_enabled && shader->depth_test == SceneShaderForwardMobile::ShaderData::DEPTH_TEST_ENABLED) { // Fork(Lestoroer)
+					pipeline_key.highlight_stencil_write = true;
+					highlight_stencil_reference = surf->owner->highlight_style;
 				}
 			} break;
 			case PASS_MODE_SHADOW: {
@@ -2634,6 +2718,10 @@ void RenderForwardMobile::_render_list_template(RenderingDevice::DrawListID p_dr
 
 			if (!pipeline_rd.is_null()) {
 				RD::get_singleton()->draw_list_bind_render_pipeline(draw_list, pipeline_rd);
+			}
+			if (highlight_stencil_reference > 0 && highlight_stencil_reference != current_highlight_stencil_reference) { // Fork(Lestoroer): Dynamic reference can change even when the pipeline stays bound.
+				RD::get_singleton()->draw_list_set_stencil_reference(draw_list, highlight_stencil_reference);
+				current_highlight_stencil_reference = highlight_stencil_reference;
 			}
 
 			if (xforms_uniform_set.is_valid() && prev_xforms_uniform_set != xforms_uniform_set) {
@@ -3556,6 +3644,12 @@ void RenderForwardMobile::_update_shader_quality_settings() {
 
 RenderForwardMobile::RenderForwardMobile() {
 	singleton = this;
+	highlight_outline_enabled = bool(GLOBAL_GET("rendering/renderer/highlight_outline/enabled")) && OS::get_singleton()->get_current_rendering_driver_name() == "vulkan"; // Fork(Lestoroer)
+	highlight_outline_width = GLOBAL_GET("rendering/renderer/highlight_outline/width");
+	highlight_outline_colors[0] = GLOBAL_GET("rendering/renderer/highlight_outline/color_1");
+	highlight_outline_colors[1] = GLOBAL_GET("rendering/renderer/highlight_outline/color_2");
+	highlight_outline_colors[2] = GLOBAL_GET("rendering/renderer/highlight_outline/color_3");
+	highlight_outline_colors[3] = GLOBAL_GET("rendering/renderer/highlight_outline/color_4"); // Fork(Lestoroer)
 
 	disable_ubershaders = RD::get_singleton()->get_driver_workarounds().disable_ubershaders;
 	if (disable_ubershaders) {

@@ -1866,6 +1866,14 @@
 				Once finished with your RID, you will want to free the RID using the RenderingServer's [method free_rid] method. This is a shorthand for using [method instance_create] and setting the base and scenario manually.
 			</description>
 		</method>
+		<!-- Fork(Lestoroer): Forward Mobile stencil highlight API. -->
+		<method name="instance_geometry_get_highlight_style" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="instance" type="RID" />
+			<description>
+				Returns the stencil highlight style assigned to the specified 3D geometry instance. [code]0[/code] disables highlighting; values [code]1[/code] through [code]4[/code] select the corresponding global color configured under [code]rendering/renderer/highlight_outline[/code]. This fork feature is implemented by the Forward Mobile Vulkan renderer.
+			</description>
+		</method>
 		<method name="instance_geometry_get_shader_parameter" qualifiers="const">
 			<return type="Variant" />
 			<param index="0" name="instance" type="RID" />
@@ -1905,6 +1913,15 @@
 			<param index="2" name="enabled" type="bool" />
 			<description>
 				Sets the [param flag] for a given [param instance] to [param enabled].
+			</description>
+		</method>
+		<!-- Fork(Lestoroer): Forward Mobile stencil highlight API. -->
+		<method name="instance_geometry_set_highlight_style">
+			<return type="void" />
+			<param index="0" name="instance" type="RID" />
+			<param index="1" name="style" type="int" />
+			<description>
+				Assigns a stencil highlight style to the specified 3D geometry instance. [code]0[/code] disables highlighting; values [code]1[/code] through [code]4[/code] select the corresponding global color configured under [code]rendering/renderer/highlight_outline[/code]. The outline uses one global width and does not duplicate mesh geometry. Materials that explicitly use stencil are left untouched and are not highlighted.
 			</description>
 		</method>
 		<method name="instance_geometry_set_lightmap">

@@ -269,6 +269,31 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    служебные HWND; они не являются окном Godot, не видны, не получают foreground и не входят в
    taskbar/Alt-Tab.
 
+6. **четыре stencil-стиля highlight для Forward Mobile** |
+   `lestoroer/feat-highlight-stencil` | публичный instance API:
+   `rendering_server.{h,cpp}`, `rendering_server_default.h`, `rendering_method.h`,
+   `renderer_scene_cull.{h,cpp}`, `renderer_geometry_instance.{h,cpp}`,
+   `doc/classes/RenderingServer.xml`; динамический stencil reference и stencil-only view:
+   `rendering_device*.{h,cpp}`, `rendering_device_driver.h`,
+   `drivers/{vulkan,d3d12,metal}/rendering_device_driver_*`, `framebuffer_cache_rd.h`,
+   `storage_rd/render_scene_buffers_rd.{h,cpp}`; Forward Mobile и resolve:
+   `forward_mobile/{render_forward_mobile,scene_shader_forward_mobile}.{h,cpp}`,
+   `renderer_scene_render_rd.cpp`, `storage_rd/render_data_rd.h`; экранная обводка:
+   `effects/tone_mapper.{h,cpp}`, `shaders/effects/tonemap_mobile.glsl` |
+   `RenderingServer.instance_geometry_set_highlight_style(instance, 0..4)` хранит номер
+   глобального стиля на geometry instance. Color pass пишет его в штатный stencil через один
+   pipeline с dynamic stencil reference; выделенные opaque surface сортируются после обычных,
+   чтобы скрытая геометрия не оставляла ID поверх ближнего occluder. Для MSAA отдельный
+   framebuffer включает stencil resolve `SAMPLE_ZERO` только в highlight-кадре; Vulkan
+   проверяет независимые depth/stencil resolve modes. Tonemap имеет отдельные highlight-варианты,
+   семплирует stencil по восьми направлениям и выбирает один из четырёх глобальных RGBA-цветов;
+   общая ширина — 1..4 пикселя. Геометрия не дублируется. При нуле выделенных объектов не
+   включаются ни highlight shader variant, ни дополнительный stencil resolve. Поддержаны
+   opaque и transparent surface; материалы с собственным stencil намеренно пропускаются.
+   Production-цель — Vulkan Forward Mobile/Quest; Compatibility не поддерживается. Metal
+   получает безопасный no-op для внутренней dynamic-reference команды, поскольку stencil-only
+   sampling path там не заявлен.
+
 ### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
 Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом
 мёрже upstream проверить:

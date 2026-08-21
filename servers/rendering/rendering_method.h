@@ -91,6 +91,8 @@ public:
 	virtual void instance_set_surface_override_material(RID p_instance, int p_surface, RID p_material) = 0;
 	virtual void instance_set_visible(RID p_instance, bool p_visible) = 0;
 	virtual void instance_geometry_set_transparency(RID p_instance, float p_transparency) = 0;
+	virtual void instance_geometry_set_highlight_style(RID p_instance, int p_style) = 0; // Fork(Lestoroer)
+	virtual uint8_t instance_geometry_get_highlight_style(RID p_instance) const = 0; // Fork(Lestoroer)
 
 	virtual void instance_teleport(RID p_instance) = 0;
 

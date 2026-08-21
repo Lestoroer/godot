@@ -439,6 +439,7 @@ public:
 public:
 	struct TextureView {
 		DataFormat format_override = DATA_FORMAT_MAX; // // Means, use same as format.
+		bool stencil_only = false; // Fork(Lestoroer): Internal stencil-aspect sampling view.
 		TextureSwizzle swizzle_r = TEXTURE_SWIZZLE_R;
 		TextureSwizzle swizzle_g = TEXTURE_SWIZZLE_G;
 		TextureSwizzle swizzle_b = TEXTURE_SWIZZLE_B;
@@ -446,6 +447,8 @@ public:
 
 		bool operator==(const TextureView &p_other) const {
 			if (format_override != p_other.format_override) {
+				return false;
+			} else if (stencil_only != p_other.stencil_only) {
 				return false;
 			} else if (swizzle_r != p_other.swizzle_r) {
 				return false;
@@ -542,6 +545,7 @@ public:
 		Vector<int32_t> preserve_attachments;
 		int32_t depth_attachment = ATTACHMENT_UNUSED;
 		int32_t depth_resolve_attachment = ATTACHMENT_UNUSED;
+		bool resolve_stencil = false; // Fork(Lestoroer): Resolve packed stencil only for passes that explicitly consume it.
 	};
 
 	typedef int64_t FramebufferFormatID;
@@ -643,6 +647,12 @@ private:
 				}
 				if (pass_ptr[i].depth_attachment != key_pass_ptr[i].depth_attachment) {
 					return pass_ptr[i].depth_attachment < key_pass_ptr[i].depth_attachment;
+				}
+				if (pass_ptr[i].depth_resolve_attachment != key_pass_ptr[i].depth_resolve_attachment) {
+					return pass_ptr[i].depth_resolve_attachment < key_pass_ptr[i].depth_resolve_attachment;
+				}
+				if (pass_ptr[i].resolve_stencil != key_pass_ptr[i].resolve_stencil) {
+					return pass_ptr[i].resolve_stencil < key_pass_ptr[i].resolve_stencil;
 				}
 			}
 
@@ -1553,6 +1563,7 @@ public:
 	void draw_list_bind_vertex_buffers_format(DrawListID p_list, VertexFormatID p_vertex_format, uint32_t p_vertex_count, const Span<RID> &p_vertex_buffers, const Span<uint64_t> &p_offsets = Vector<uint64_t>());
 	void draw_list_bind_index_array(DrawListID p_list, RID p_index_array);
 	void draw_list_set_line_width(DrawListID p_list, float p_width);
+	void draw_list_set_stencil_reference(DrawListID p_list, uint32_t p_reference); // Fork(Lestoroer)
 	void draw_list_set_push_constant(DrawListID p_list, const void *p_data, uint32_t p_data_size);
 
 	void draw_list_draw(DrawListID p_list, bool p_use_indices, uint32_t p_instances = 1, uint32_t p_procedural_vertices = 0);

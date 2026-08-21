@@ -210,6 +210,7 @@ public:
 
 	struct TextureView {
 		DataFormat format = DATA_FORMAT_MAX;
+		bool stencil_only = false; // Fork(Lestoroer): Create a sampling view of the stencil aspect.
 		TextureSwizzle swizzle_r = TEXTURE_SWIZZLE_R;
 		TextureSwizzle swizzle_g = TEXTURE_SWIZZLE_G;
 		TextureSwizzle swizzle_b = TEXTURE_SWIZZLE_B;
@@ -642,6 +643,7 @@ public:
 		LocalVector<AttachmentReference> color_references;
 		AttachmentReference depth_stencil_reference;
 		AttachmentReference depth_resolve_reference;
+		bool resolve_stencil = false; // Fork(Lestoroer)
 		LocalVector<AttachmentReference> resolve_references;
 		LocalVector<uint32_t> preserve_attachments;
 		AttachmentReference fragment_shading_rate_reference;
@@ -704,6 +706,7 @@ public:
 	// Dynamic state.
 	virtual void command_render_set_blend_constants(CommandBufferID p_cmd_buffer, const Color &p_constants) = 0;
 	virtual void command_render_set_line_width(CommandBufferID p_cmd_buffer, float p_width) = 0;
+	virtual void command_render_set_stencil_reference(CommandBufferID p_cmd_buffer, uint32_t p_reference) = 0; // Fork(Lestoroer): Dynamic per-instance highlight style.
 
 	// ----- PIPELINE -----
 

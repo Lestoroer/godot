@@ -765,6 +765,14 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 
 		tonemap.luminance_multiplier = rb->get_luminance_multiplier();
 		tonemap.view_count = rb->get_view_count();
+		tonemap.use_highlight_outline = p_render_data->use_highlight_outline && p_render_data->highlight_stencil_texture.is_valid(); // Fork(Lestoroer)
+		if (tonemap.use_highlight_outline) {
+			tonemap.highlight_stencil_texture = p_render_data->highlight_stencil_texture;
+			tonemap.highlight_outline_width = p_render_data->highlight_outline_width;
+			for (uint32_t i = 0; i < 4; i++) {
+				tonemap.highlight_outline_colors[i] = p_render_data->highlight_outline_colors[i];
+			}
+		}
 
 		RID dest_fb;
 		RD::DataFormat dest_fb_format;

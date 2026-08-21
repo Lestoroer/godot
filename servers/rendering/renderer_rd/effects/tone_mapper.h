@@ -63,6 +63,10 @@ private:
 		TONEMAP_MOBILE_MODE_1D_LUT_MULTIVIEW,
 		TONEMAP_MOBILE_MODE_SUBPASS_MULTIVIEW,
 		TONEMAP_MOBILE_MODE_SUBPASS_1D_LUT_MULTIVIEW,
+		TONEMAP_MOBILE_MODE_HIGHLIGHT,
+		TONEMAP_MOBILE_MODE_HIGHLIGHT_1D_LUT,
+		TONEMAP_MOBILE_MODE_HIGHLIGHT_MULTIVIEW,
+		TONEMAP_MOBILE_MODE_HIGHLIGHT_1D_LUT_MULTIVIEW, // Fork(Lestoroer)
 
 		TONEMAP_MOBILE_MODE_MAX
 	};
@@ -138,7 +142,9 @@ private:
 
 		float tonemapper_params[4]; //  16 - 64
 		float output_max_value; //  4 - 68
-		float pad[3]; //  12 - 80
+		float highlight_outline_width; // 4 - 72, Fork(Lestoroer)
+		uint32_t highlight_outline_colors[4]; // 16 - 88, packed RGBA8 palette.
+		float pad[2]; // 8 - 96
 	};
 
 	/* tonemap actually writes to a framebuffer, which is
@@ -207,6 +213,11 @@ public:
 		bool bilinear_filtering = true;
 
 		bool convert_to_srgb = false;
+
+		bool use_highlight_outline = false; // Fork(Lestoroer)
+		RID highlight_stencil_texture;
+		float highlight_outline_width = 1.0f;
+		Color highlight_outline_colors[4];
 	};
 
 	void tonemapper(RID p_source_color, RID p_dst_framebuffer, const TonemapSettings &p_settings);

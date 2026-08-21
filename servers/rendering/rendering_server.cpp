@@ -3226,6 +3226,8 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("instance_set_surface_override_material", "instance", "surface", "material"), &RenderingServer::instance_set_surface_override_material);
 	ClassDB::bind_method(D_METHOD("instance_set_visible", "instance", "visible"), &RenderingServer::instance_set_visible);
 	ClassDB::bind_method(D_METHOD("instance_geometry_set_transparency", "instance", "transparency"), &RenderingServer::instance_geometry_set_transparency);
+	ClassDB::bind_method(D_METHOD("instance_geometry_set_highlight_style", "instance", "style"), &RenderingServer::instance_geometry_set_highlight_style); // Fork(Lestoroer)
+	ClassDB::bind_method(D_METHOD("instance_geometry_get_highlight_style", "instance"), &RenderingServer::instance_geometry_get_highlight_style); // Fork(Lestoroer)
 
 	ClassDB::bind_method(D_METHOD("instance_teleport", "instance"), &RenderingServer::instance_teleport);
 
@@ -3756,6 +3758,14 @@ void RenderingServer::init() {
 	GLOBAL_DEF_RST(PropertyInfo(Variant::FLOAT, "rendering/anti_aliasing/quality/smaa_edge_detection_threshold", PROPERTY_HINT_RANGE, "0.01,0.2,0.01"), 0.05);
 
 	GLOBAL_DEF("rendering/anti_aliasing/quality/use_debanding", false);
+
+	// Fork(Lestoroer): Startup-only Forward Mobile stencil outline settings.
+	GLOBAL_DEF_RST_BASIC("rendering/renderer/highlight_outline/enabled", false);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/renderer/highlight_outline/width", PROPERTY_HINT_RANGE, "1.0,4.0,1.0,suffix:px"), 1.0);
+	GLOBAL_DEF(PropertyInfo(Variant::COLOR, "rendering/renderer/highlight_outline/color_1", PROPERTY_HINT_COLOR_NO_ALPHA), Color(1.0, 1.0, 1.0));
+	GLOBAL_DEF(PropertyInfo(Variant::COLOR, "rendering/renderer/highlight_outline/color_2", PROPERTY_HINT_COLOR_NO_ALPHA), Color(1.0, 0.12, 0.08));
+	GLOBAL_DEF(PropertyInfo(Variant::COLOR, "rendering/renderer/highlight_outline/color_3", PROPERTY_HINT_COLOR_NO_ALPHA), Color(1.0, 0.72, 0.08));
+	GLOBAL_DEF(PropertyInfo(Variant::COLOR, "rendering/renderer/highlight_outline/color_4", PROPERTY_HINT_COLOR_NO_ALPHA), Color(0.08, 0.72, 1.0)); // Fork(Lestoroer)
 
 	{
 		String mode_hints;

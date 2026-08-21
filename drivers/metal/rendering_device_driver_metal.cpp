@@ -1752,6 +1752,12 @@ void RenderingDeviceDriverMetal::command_render_set_line_width(CommandBufferID p
 	}
 }
 
+void RenderingDeviceDriverMetal::command_render_set_stencil_reference(CommandBufferID p_cmd_buffer, uint32_t p_reference) { // Fork(Lestoroer)
+	(void)p_cmd_buffer;
+	(void)p_reference;
+	ERR_PRINT_ONCE("Dynamic stencil reference is not implemented by the Metal rendering driver.");
+}
+
 // ----- PIPELINE -----
 
 RenderingDeviceDriverMetal::Result<NS::SharedPtr<MTL::Function>> RenderingDeviceDriverMetal::_create_function(MDLibrary *p_library, NS::String *p_name, VectorView<PipelineSpecializationConstant> &p_specialization_constants) {

@@ -168,6 +168,9 @@ class RenderingDeviceDriverVulkan : public RenderingDeviceDriver {
 	bool pipeline_cache_control_support = false;
 	bool device_fault_support = false;
 	bool framebuffer_depth_resolve = false;
+	VkResolveModeFlags supported_depth_resolve_modes = 0; // Fork(Lestoroer)
+	VkResolveModeFlags supported_stencil_resolve_modes = 0;
+	bool independent_depth_stencil_resolve = false;
 #if defined(VK_TRACK_DEVICE_MEMORY)
 	bool device_memory_report_support = false;
 #endif
@@ -662,6 +665,7 @@ public:
 	// Dynamic state.
 	virtual void command_render_set_blend_constants(CommandBufferID p_cmd_buffer, const Color &p_constants) override final;
 	virtual void command_render_set_line_width(CommandBufferID p_cmd_buffer, float p_width) override final;
+	virtual void command_render_set_stencil_reference(CommandBufferID p_cmd_buffer, uint32_t p_reference) override final; // Fork(Lestoroer)
 
 	// ----- PIPELINE -----
 

@@ -58,6 +58,7 @@ class FramebufferCacheRD : public Object {
 	static _FORCE_INLINE_ uint32_t _hash_pass(const RD::FramebufferPass &p, uint32_t h) {
 		h = hash_murmur3_one_32(p.depth_attachment, h);
 		h = hash_murmur3_one_32(p.depth_resolve_attachment, h);
+		h = hash_murmur3_one_32(p.resolve_stencil, h); // Fork(Lestoroer)
 
 		h = hash_murmur3_one_32(p.color_attachments.size(), h);
 		for (int i = 0; i < p.color_attachments.size(); i++) {
@@ -83,6 +84,9 @@ class FramebufferCacheRD : public Object {
 		}
 
 		if (a.depth_resolve_attachment != b.depth_resolve_attachment) {
+			return false;
+		}
+		if (a.resolve_stencil != b.resolve_stencil) { // Fork(Lestoroer)
 			return false;
 		}
 

@@ -1106,7 +1106,14 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDeviceSubgroupSizeControlProperties subgroup_size_control_properties = {};
 		VkPhysicalDeviceAccelerationStructurePropertiesKHR acceleration_structure_properties = {};
 		VkPhysicalDeviceRayTracingPipelinePropertiesKHR raytracing_properties = {};
+		VkPhysicalDeviceDepthStencilResolveProperties depth_stencil_resolve_properties = {}; // Fork(Lestoroer)
 		VkPhysicalDeviceProperties2 physical_device_properties_2 = {};
+
+		if (framebuffer_depth_resolve) { // Fork(Lestoroer)
+			depth_stencil_resolve_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES;
+			depth_stencil_resolve_properties.pNext = next_properties;
+			next_properties = &depth_stencil_resolve_properties;
+		}
 
 		const bool use_1_1_properties = physical_device_properties.apiVersion >= VK_API_VERSION_1_1;
 		if (use_1_1_properties) {
@@ -1161,6 +1168,11 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		physical_device_properties_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 		physical_device_properties_2.pNext = next_properties;
 		functions.GetPhysicalDeviceProperties2(physical_device, &physical_device_properties_2);
+		if (framebuffer_depth_resolve) { // Fork(Lestoroer)
+			supported_depth_resolve_modes = depth_stencil_resolve_properties.supportedDepthResolveModes;
+			supported_stencil_resolve_modes = depth_stencil_resolve_properties.supportedStencilResolveModes;
+			independent_depth_stencil_resolve = depth_stencil_resolve_properties.independentResolve;
+		}
 
 		subgroup_capabilities.size = subgroup_properties.subgroupSize;
 		subgroup_capabilities.min_size = subgroup_properties.subgroupSize;
@@ -2391,7 +2403,9 @@ RDD::TextureID RenderingDeviceDriverVulkan::texture_create(const TextureFormat &
 	image_view_create_info.components.a = (VkComponentSwizzle)p_view.swizzle_a;
 	image_view_create_info.subresourceRange.levelCount = create_info.mipLevels;
 	image_view_create_info.subresourceRange.layerCount = create_info.arrayLayers;
-	if ((p_format.usage_bits & (TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | TEXTURE_USAGE_DEPTH_RESOLVE_ATTACHMENT_BIT))) {
+	if (p_view.stencil_only) { // Fork(Lestoroer)
+		image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
+	} else if ((p_format.usage_bits & (TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | TEXTURE_USAGE_DEPTH_RESOLVE_ATTACHMENT_BIT))) {
 		image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
 	} else {
 		image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -2490,6 +2504,9 @@ RDD::TextureID RenderingDeviceDriverVulkan::texture_create_shared(TextureID p_or
 	image_view_create_info.components.g = (VkComponentSwizzle)p_view.swizzle_g;
 	image_view_create_info.components.b = (VkComponentSwizzle)p_view.swizzle_b;
 	image_view_create_info.components.a = (VkComponentSwizzle)p_view.swizzle_a;
+	if (p_view.stencil_only) { // Fork(Lestoroer)
+		image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
+	}
 
 	if (enabled_device_extension_names.has(VK_KHR_MAINTENANCE_2_EXTENSION_NAME)) {
 		// May need to make VK_KHR_maintenance2 mandatory and thus has Vulkan 1.1 be our minimum supported version
@@ -5478,7 +5495,20 @@ RDD::RenderPassID RenderingDeviceDriverVulkan::render_pass_create(VectorView<Att
 			vk_depth_resolve_info->sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
 			vk_depth_resolve_info->pNext = vk_subpasses[i].pNext;
 			vk_depth_resolve_info->depthResolveMode = VK_RESOLVE_MODE_MAX_BIT_KHR;
-			vk_depth_resolve_info->stencilResolveMode = VK_RESOLVE_MODE_NONE_KHR; // we don't resolve our stencil (for now)
+			vk_depth_resolve_info->stencilResolveMode = VK_RESOLVE_MODE_NONE_KHR;
+			if (p_subpasses[i].resolve_stencil) { // Fork(Lestoroer): Keep ordinary depth resolve unchanged; resolve stencil only for highlight passes.
+				const bool supports_stencil_sample_zero = supported_stencil_resolve_modes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT_KHR;
+				const bool supports_depth_max = supported_depth_resolve_modes & VK_RESOLVE_MODE_MAX_BIT_KHR;
+				const bool supports_depth_sample_zero = supported_depth_resolve_modes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT_KHR;
+				if (supports_stencil_sample_zero && supports_depth_max && independent_depth_stencil_resolve) {
+					vk_depth_resolve_info->stencilResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT_KHR;
+				} else if (supports_stencil_sample_zero && supports_depth_sample_zero) {
+					vk_depth_resolve_info->depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT_KHR;
+					vk_depth_resolve_info->stencilResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT_KHR;
+				} else {
+					ERR_PRINT_ONCE("Fork(Lestoroer): This Vulkan device cannot resolve the highlight stencil attachment.");
+				}
+			}
 			vk_depth_resolve_info->pDepthStencilResolveAttachment = vk_subpass_depth_resolve_attachment;
 
 			vk_subpasses[i].pNext = vk_depth_resolve_info;
@@ -5798,6 +5828,11 @@ void RenderingDeviceDriverVulkan::command_render_set_blend_constants(CommandBuff
 void RenderingDeviceDriverVulkan::command_render_set_line_width(CommandBufferID p_cmd_buffer, float p_width) {
 	const CommandBufferInfo *command_buffer = (const CommandBufferInfo *)p_cmd_buffer.id;
 	vkCmdSetLineWidth(command_buffer->vk_command_buffer, p_width);
+}
+
+void RenderingDeviceDriverVulkan::command_render_set_stencil_reference(CommandBufferID p_cmd_buffer, uint32_t p_reference) { // Fork(Lestoroer)
+	const CommandBufferInfo *command_buffer = (const CommandBufferInfo *)p_cmd_buffer.id;
+	vkCmdSetStencilReference(command_buffer->vk_command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK, p_reference);
 }
 
 // ----- PIPELINE -----

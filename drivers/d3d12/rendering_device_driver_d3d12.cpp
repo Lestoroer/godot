@@ -5014,6 +5014,12 @@ void RenderingDeviceDriverD3D12::command_render_set_line_width(CommandBufferID p
 	}
 }
 
+void RenderingDeviceDriverD3D12::command_render_set_stencil_reference(CommandBufferID p_cmd_buffer, uint32_t p_reference) { // Fork(Lestoroer)
+	CommandBufferInfo *cmd_buf_info = (CommandBufferInfo *)p_cmd_buffer.id;
+	cmd_buf_info->cmd_list->OMSetStencilRef(p_reference);
+	cmd_buf_info->dyn_params.stencil_reference = p_reference;
+}
+
 // ----- PIPELINE -----
 
 static const D3D12_PRIMITIVE_TOPOLOGY_TYPE RD_PRIMITIVE_TO_D3D12_TOPOLOGY_TYPE[RDD::RENDER_PRIMITIVE_MAX] = {
