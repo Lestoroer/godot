@@ -883,6 +883,11 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 	RSE::ViewportMSAA msaa = rb->get_msaa_3d();
 	bool use_msaa = msaa != RSE::VIEWPORT_MSAA_DISABLED;
 	bool resolve_depth_buffer = (use_msaa && has_depth_texture_override); // We'll check more conditions later.
+	// Fork(Lestoroer): isolated performance probe for the stencil highlight candidate.
+	// Force the existing hardware depth/stencil resolve without implementing highlight behavior.
+	if (use_msaa && force_stencil_resolve_probe) {
+		resolve_depth_buffer = true;
+	}
 
 	bool ce_has_post_opaque = _has_compositor_effect(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_OPAQUE, p_render_data);
 	bool ce_has_pre_transparent = _has_compositor_effect(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
@@ -3556,6 +3561,7 @@ void RenderForwardMobile::_update_shader_quality_settings() {
 
 RenderForwardMobile::RenderForwardMobile() {
 	singleton = this;
+	force_stencil_resolve_probe = GLOBAL_GET("rendering/renderer/highlight_outline/stencil_resolve_probe");
 
 	disable_ubershaders = RD::get_singleton()->get_driver_workarounds().disable_ubershaders;
 	if (disable_ubershaders) {

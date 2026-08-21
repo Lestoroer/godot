@@ -3718,6 +3718,8 @@ void RenderingServer::init() {
 	GLOBAL_DEF_RST("rendering/shading/overrides/force_vertex_shading", false);
 	GLOBAL_DEF("rendering/shading/overrides/force_lambert_over_burley", false);
 	GLOBAL_DEF("rendering/shading/overrides/force_lambert_over_burley.mobile", true);
+	// Fork(Lestoroer): temporary startup-only switch for measuring stencil resolve cost.
+	GLOBAL_DEF_RST_BASIC("rendering/renderer/highlight_outline/stencil_resolve_probe", false);
 
 	GLOBAL_DEF_RST("rendering/driver/depth_prepass/enable", true);
 	GLOBAL_DEF_RST("rendering/driver/depth_prepass/disable_for_vendors", "PowerVR,Mali,Adreno,Apple");

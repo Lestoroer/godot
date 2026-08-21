@@ -194,6 +194,15 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 обновления — тег `fork-pre-update`; исторические якоря — `fork-pre-4.7-stable` и
 `fork-pre-4.7-upgrade`.
 
+## Временный stencil-resolve probe
+
+Ветка `lestoroer/probe-highlight-stencil-resolve` изолированно измеряет обязательную
+цену stencil-кандидата для highlight и не является пользовательской возможностью движка.
+Настройка `rendering/renderer/highlight_outline/stencil_resolve_probe` при MSAA заставляет
+Forward Mobile использовать существующий hardware depth/stencil resolve. Vulkan временно
+использует `SAMPLE_ZERO` для обоих аспектов, чтобы не зависеть от поддержки независимых
+режимов resolve. После измерений probe-коммит не переносится в production feature-ветку.
+
 ## Инвентарь патчей
 Все строки патчей помечены `Fork(Lestoroer)` в комментарии — greppable. Формат: ветка | файлы | зачем.
 

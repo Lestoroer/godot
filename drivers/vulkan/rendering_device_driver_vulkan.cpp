@@ -5477,8 +5477,11 @@ RDD::RenderPassID RenderingDeviceDriverVulkan::render_pass_create(VectorView<Att
 			*vk_depth_resolve_info = {};
 			vk_depth_resolve_info->sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
 			vk_depth_resolve_info->pNext = vk_subpasses[i].pNext;
-			vk_depth_resolve_info->depthResolveMode = VK_RESOLVE_MODE_MAX_BIT_KHR;
-			vk_depth_resolve_info->stencilResolveMode = VK_RESOLVE_MODE_NONE_KHR; // we don't resolve our stencil (for now)
+			// Fork(Lestoroer): the highlight stencil probe needs the resolved stencil aspect.
+			// SAMPLE_ZERO for both aspects is the conservative combination on devices without
+			// independent depth/stencil resolve modes. This branch is measurement-only.
+			vk_depth_resolve_info->depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT_KHR;
+			vk_depth_resolve_info->stencilResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT_KHR;
 			vk_depth_resolve_info->pDepthStencilResolveAttachment = vk_subpass_depth_resolve_attachment;
 
 			vk_subpasses[i].pNext = vk_depth_resolve_info;

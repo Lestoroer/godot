@@ -74,6 +74,7 @@ private:
 
 	SceneShaderForwardMobile scene_shader;
 	bool disable_ubershaders = false;
+	bool force_stencil_resolve_probe = false;
 
 	/* Render Buffer */
 
