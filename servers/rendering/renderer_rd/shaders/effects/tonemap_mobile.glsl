@@ -100,6 +100,7 @@ layout(push_constant, std430) uniform Params {
 	float output_max_value;
 	float highlight_outline_width;
 	float pad[2];
+	vec4 highlight_outline_color; // Fork(Lestoroer): Project-wide color; mask stays R8.
 }
 params;
 
@@ -846,7 +847,7 @@ void main() {
 		neighbor = max(neighbor, textureLod(source_highlight_outline, highlight_uv - offset_x + offset_y, 0.0).r);
 		neighbor = max(neighbor, textureLod(source_highlight_outline, highlight_uv + offset_x + offset_y, 0.0).r);
 		float outline = clamp(neighbor - center, 0.0, 1.0);
-		color.rgb = mix(color.rgb, vec3(1.0), outline);
+		color.rgb = mix(color.rgb, params.highlight_outline_color.rgb, outline);
 	}
 
 	// Debanding should be done at the end of tonemapping, but before writing to the LDR buffer.

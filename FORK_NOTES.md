@@ -280,7 +280,9 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    `storage_rd/render_data_rd.h`, `shaders/effects/tonemap_mobile.glsl`; sky:
    `environment/sky.{h,cpp}`, `shaders/environment/sky.glsl` |
    `RenderingServer.instance_geometry_set_highlighted(instance, enabled)` проводит бинарный
-   instance-флаг до обычного geometry pass. Только когда в видимом render list есть подсвеченная
+   instance-флаг до обычного geometry pass; парный read-only
+   `instance_geometry_is_highlighted(instance)` возвращает сохранённое состояние
+   `RendererSceneCull` без GPU readback. Только когда в видимом render list есть подсвеченная
    геометрия, Forward Mobile выбирает отдельное семейство pipeline/framebuffer: resolved
    `R8_UNORM` mask плюс discardable MSAA-source при MSAA. Общий semantic layout builder формирует
    и фактический framebuffer, и startup pipeline format, чтобы порядок color/resolve attachment
@@ -288,17 +290,20 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    canvas-background используют штатный путь без outline.
 
    Непрозрачные, alpha-scissor/hash и alpha-to-coverage материалы пишут mask с replace; настоящая
-   прозрачность использует независимый MAX blend по coverage, если включены depth test/write.
-   Mobile tonemap получает mask отдельным binding, четырьмя диагональными bilinear taps строит
-   только внешний белый контур заданной ширины и применяет его после color conversion, до
+   прозрачность использует независимый MAXIMUM blend по coverage, если включены depth test/write;
+   важно использовать `BLEND_OP_MAXIMUM`, потому что `BLEND_OP_MAX` является sentinel enum и
+   отклоняется `RenderingDevice`. Mobile tonemap получает mask отдельным binding, четырьмя
+   диагональными bilinear taps строит только внешний контур заданной ширины и применяет его после color conversion, до
    debanding. Geometry не дублируется, draw calls и triangles не добавляются. При нуле видимых
    highlighted-instance сохраняются штатные framebuffer, subpass и shader variants.
 
    Capability `rendering/renderer/highlight_outline/enabled` startup-only: `false` не создаёт
    новые shader families/pipelines; `true` прогревает обычные и highlight-варианты. Первый
-   контракт — Forward Mobile, одна бинарная маска, белый depth-tested outline без x-ray и без
+   контракт — Forward Mobile, одна бинарная маска, общий depth-tested outline без x-ray и без
    разделения соприкасающихся подсвеченных объектов. Ширина —
-   `rendering/renderer/highlight_outline/width` в пикселях.
+   `rendering/renderer/highlight_outline/width` в пикселях; общий цвет — startup-настройка
+   `rendering/renderer/highlight_outline/color`, передаваемая tonemap как push constant без
+   расширения R8 mask.
 
 ### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
 Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом

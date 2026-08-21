@@ -770,6 +770,7 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		tonemap.use_highlight_outline = p_render_data->use_highlight_outline;
 		tonemap.highlight_outline_texture = p_render_data->highlight_outline_texture;
 		tonemap.highlight_outline_width = p_render_data->highlight_outline_width;
+		tonemap.highlight_outline_color = p_render_data->highlight_outline_color; // Fork(Lestoroer)
 
 		RID dest_fb;
 		RD::DataFormat dest_fb_format;

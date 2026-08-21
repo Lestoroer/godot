@@ -767,6 +767,7 @@ public:
 	virtual void instance_geometry_set_lod_bias(RID p_instance, float p_lod_bias) = 0;
 	virtual void instance_geometry_set_transparency(RID p_instance, float p_transparency) = 0;
 	virtual void instance_geometry_set_highlighted(RID p_instance, bool p_enabled) = 0; // Fork(Lestoroer)
+	virtual bool instance_geometry_is_highlighted(RID p_instance) const = 0; // Fork(Lestoroer): Read-only test/diagnostic access to scene-cull state.
 
 	virtual void instance_geometry_set_shader_parameter(RID p_instance, const StringName &, const Variant &p_value) = 0;
 	virtual Variant instance_geometry_get_shader_parameter(RID p_instance, const StringName &) const = 0;

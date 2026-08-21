@@ -1059,6 +1059,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 			p_render_data->use_highlight_outline = true;
 			p_render_data->highlight_outline_texture = rb_data->get_highlight_texture();
 			p_render_data->highlight_outline_width = highlight_outline_width;
+			p_render_data->highlight_outline_color = highlight_outline_color; // Fork(Lestoroer)
 		}
 		samplers = rb->get_samplers();
 
@@ -3648,6 +3649,7 @@ RenderForwardMobile::RenderForwardMobile() {
 	// families and pipeline warming remain deterministic.
 	highlight_outline_enabled = GLOBAL_GET("rendering/renderer/highlight_outline/enabled");
 	highlight_outline_width = GLOBAL_GET("rendering/renderer/highlight_outline/width");
+	highlight_outline_color = GLOBAL_GET("rendering/renderer/highlight_outline/color"); // Fork(Lestoroer)
 
 	disable_ubershaders = RD::get_singleton()->get_driver_workarounds().disable_ubershaders;
 	if (disable_ubershaders) {

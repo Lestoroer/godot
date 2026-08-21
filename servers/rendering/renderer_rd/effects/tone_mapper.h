@@ -142,6 +142,7 @@ private:
 		float output_max_value; //  4 - 68
 		float highlight_outline_width; //  4 - 72, Fork(Lestoroer).
 		float pad[2]; //  8 - 80
+		float highlight_outline_color[4]; // 16 - 96, Fork(Lestoroer).
 	};
 
 	/* tonemap actually writes to a framebuffer, which is
@@ -215,6 +216,7 @@ public:
 		bool use_highlight_outline = false;
 		RID highlight_outline_texture;
 		float highlight_outline_width = 1.5f;
+		Color highlight_outline_color = Color(1.0, 1.0, 1.0); // Fork(Lestoroer)
 	};
 
 	void tonemapper(RID p_source_color, RID p_dst_framebuffer, const TonemapSettings &p_settings);

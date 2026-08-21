@@ -55,7 +55,9 @@
 
 ### Renderer-integrated outline в Forward Mobile
 
-- Добавлен `RenderingServer.instance_geometry_set_highlighted(instance, enabled)`.
+- Добавлены `RenderingServer.instance_geometry_set_highlighted(instance, enabled)`
+  и read-only `instance_geometry_is_highlighted(instance)`; getter читает
+  сохранённое scene-cull состояние без GPU readback.
 - При включённой возможности обычный geometry pass записывает бинарное покрытие
   подсвеченных instance во второе `R8_UNORM` color attachment, а Mobile tonemap
   строит белый внешний screen-space контур.
@@ -63,10 +65,11 @@
   Кадры без видимой подсветки используют штатный framebuffer без mask attachment.
 - Возможность включается до старта renderer через
   `rendering/renderer/highlight_outline/enabled`; ширина задаётся в пикселях через
-  `rendering/renderer/highlight_outline/width`.
+  `rendering/renderer/highlight_outline/width`, общий цвет — через
+  `rendering/renderer/highlight_outline/color`.
 - Реализация предназначена для Forward Mobile. Она depth-tested, не является
   x-ray; несколько мешей и соприкасающиеся подсвеченные объекты образуют общий
-  силуэт. Первый контракт использует одну бинарную маску и один белый стиль.
+  силуэт. Первый контракт использует одну бинарную маску и один общий стиль.
 
 ## Что не изменено
 

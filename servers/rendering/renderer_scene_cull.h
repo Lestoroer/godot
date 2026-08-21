@@ -1036,6 +1036,7 @@ public:
 	virtual void instance_set_visible(RID p_instance, bool p_visible);
 	virtual void instance_geometry_set_transparency(RID p_instance, float p_transparency);
 	virtual void instance_geometry_set_highlighted(RID p_instance, bool p_enabled); // Fork(Lestoroer)
+	virtual bool instance_geometry_is_highlighted(RID p_instance) const; // Fork(Lestoroer)
 
 	virtual void instance_teleport(RID p_instance);
 

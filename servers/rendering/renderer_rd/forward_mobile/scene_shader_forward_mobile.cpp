@@ -440,10 +440,10 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 			highlight_attachment.enable_blend = true;
 			highlight_attachment.src_color_blend_factor = RD::BLEND_FACTOR_ONE;
 			highlight_attachment.dst_color_blend_factor = RD::BLEND_FACTOR_ONE;
-			highlight_attachment.color_blend_op = RD::BLEND_OP_MAX;
+			highlight_attachment.color_blend_op = RD::BLEND_OP_MAXIMUM; // Fork(Lestoroer): BLEND_OP_MAX is the enum sentinel, not an operation.
 			highlight_attachment.src_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
 			highlight_attachment.dst_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
-			highlight_attachment.alpha_blend_op = RD::BLEND_OP_MAX;
+			highlight_attachment.alpha_blend_op = RD::BLEND_OP_MAXIMUM; // Fork(Lestoroer)
 		}
 
 		blend_state.attachments.push_back(highlight_attachment);

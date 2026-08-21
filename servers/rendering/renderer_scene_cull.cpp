@@ -1002,6 +1002,12 @@ void RendererSceneCull::instance_geometry_set_highlighted(RID p_instance, bool p
 	}
 }
 
+bool RendererSceneCull::instance_geometry_is_highlighted(RID p_instance) const { // Fork(Lestoroer)
+	const Instance *instance = instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL_V(instance, false);
+	return instance->highlighted;
+}
+
 void RendererSceneCull::instance_set_transform(RID p_instance, const Transform3D &p_transform) {
 	Instance *instance = instance_owner.get_or_null(p_instance);
 	ERR_FAIL_NULL(instance);

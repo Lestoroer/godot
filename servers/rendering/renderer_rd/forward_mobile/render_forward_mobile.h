@@ -77,6 +77,7 @@ private:
 	// Fork(Lestoroer): Static capability plus visual tuning read at renderer startup.
 	bool highlight_outline_enabled = false;
 	float highlight_outline_width = 1.5f;
+	Color highlight_outline_color = Color(1.0, 1.0, 1.0); // Fork(Lestoroer): One project-wide outline color.
 
 	/* Render Buffer */
 
