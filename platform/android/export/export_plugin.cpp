@@ -34,6 +34,7 @@
 #include "run_icon_svg.gen.h"
 
 #include "core/config/project_settings.h"
+#include "core/io/config_file.h" // Fork(Lestoroer): Persist Gradle export state across editor processes.
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
@@ -3556,6 +3557,7 @@ String EditorExportPlatformAndroid::_get_plugins_names(const Ref<EditorExportPre
 		}
 	}
 
+	names.sort(); // Fork(Lestoroer): Registration order is not a plugin-set change.
 	String plugins_names = String("|").join(names);
 	return plugins_names;
 }
@@ -3574,12 +3576,32 @@ String EditorExportPlatformAndroid::_resolve_export_plugin_android_library_path(
 }
 
 bool EditorExportPlatformAndroid::_is_clean_build_required(const Ref<EditorExportPreset> &p_preset) {
+	// Fork(Lestoroer): A fresh CLI editor process used to forget a valid Gradle
+	// cache and force `clean` on every export. Restore the same invalidation state
+	// that a long-lived editor keeps in memory.
+	String gradle_build_dir = ExportTemplateManager::get_android_build_directory(p_preset);
+	String gradle_state_path = gradle_build_dir.get_base_dir().path_join(".godot_gradle_build_state");
+	String gradle_cache_dir = gradle_build_dir.path_join(".gradle");
+	String plugin_names = _get_plugins_names(p_preset);
+	bool restored_build_state = false;
+
+	if (last_gradle_build_time == 0 && DirAccess::exists(gradle_cache_dir) && FileAccess::exists(gradle_state_path)) {
+		Ref<ConfigFile> state;
+		state.instantiate();
+		if (state->load(gradle_state_path) == OK && (String)state->get_value("build", "directory", "") == gradle_build_dir) {
+			last_gradle_build_time = state->get_value("build", "time", 0);
+			last_gradle_build_dir = gradle_build_dir;
+			last_plugin_names = state->get_value("build", "plugins", "");
+			PackedStringArray persisted_plugin_names = last_plugin_names.split("|", false);
+			persisted_plugin_names.sort();
+			last_plugin_names = String("|").join(persisted_plugin_names);
+			restored_build_state = last_gradle_build_time != 0;
+		}
+	}
+
 	bool first_build = last_gradle_build_time == 0;
 	bool have_plugins_changed = false;
-	String gradle_build_dir = ExportTemplateManager::get_android_build_directory(p_preset);
 	bool has_build_dir_changed = last_gradle_build_dir != gradle_build_dir;
-
-	String plugin_names = _get_plugins_names(p_preset);
 
 	if (!first_build) {
 		have_plugins_changed = plugin_names != last_plugin_names;
@@ -3599,6 +3621,17 @@ bool EditorExportPlatformAndroid::_is_clean_build_required(const Ref<EditorExpor
 	last_gradle_build_time = OS::get_singleton()->get_unix_time();
 	last_gradle_build_dir = gradle_build_dir;
 	last_plugin_names = plugin_names;
+
+	// Fork(Lestoroer): Preserve the updated invalidation state for the next editor process.
+	Ref<ConfigFile> state;
+	state.instantiate();
+	state->set_value("build", "time", last_gradle_build_time);
+	state->set_value("build", "directory", last_gradle_build_dir);
+	state->set_value("build", "plugins", last_plugin_names);
+	if (state->save(gradle_state_path) != OK) {
+		WARN_PRINT(vformat("Could not persist Android Gradle build state at '%s'. The next editor process will require a clean build.", gradle_state_path));
+	}
+	print_verbose(vformat("Android Gradle clean decision: clean=%s first=%s build_dir_changed=%s plugins_changed=%s state_restored=%s state_path=%s", have_plugins_changed || has_build_dir_changed || first_build, first_build, has_build_dir_changed, have_plugins_changed, restored_build_state, gradle_state_path));
 
 	return have_plugins_changed || has_build_dir_changed || first_build;
 }
@@ -4077,14 +4110,29 @@ Error EditorExportPlatformAndroid::export_project_helper(const Ref<EditorExportP
 			print_verbose(build_project_output);
 		}
 
-		print_verbose("Copying Android binary using gradle command: " + String("\n") + build_command + " " + join_list(copy_args, String(" ")));
-		String copy_binary_output;
-		int copy_result = EditorNode::get_singleton()->execute_and_show_output(TTR("Moving output"), build_command, copy_args, true, false, &copy_binary_output);
-		if (copy_result != 0) {
-			add_message(EXPORT_MESSAGE_ERROR, TTR("Export"), TTR("Unable to copy and rename export file:") + "\n\n" + copy_binary_output);
-			return ERR_CANT_CREATE;
-		} else {
-			print_verbose(copy_binary_output);
+		bool binary_copied = false;
+		if (export_format == EXPORT_FORMAT_APK) {
+			// Fork(Lestoroer): Starting Gradle a second time just to copy an APK adds
+			// several seconds to every deployment. Keep the Gradle task as a fallback
+			// in case its output convention changes upstream.
+			String filename_suffix = has_dotnet_project ? edition.to_lower() + build_type : build_type.to_lower();
+			String built_apk_path = build_path.path_join("build/outputs/apk").path_join(edition.to_lower()).path_join(build_type.to_lower()).path_join("android_" + filename_suffix + ".apk");
+			if (FileAccess::exists(built_apk_path) && DirAccess::copy_absolute(built_apk_path, p_path) == OK) {
+				print_verbose("Copied Android binary directly from: " + built_apk_path);
+				binary_copied = true;
+			}
+		}
+
+		if (!binary_copied) {
+			print_verbose("Copying Android binary using gradle command: " + String("\n") + build_command + " " + join_list(copy_args, String(" ")));
+			String copy_binary_output;
+			int copy_result = EditorNode::get_singleton()->execute_and_show_output(TTR("Moving output"), build_command, copy_args, true, false, &copy_binary_output);
+			if (copy_result != 0) {
+				add_message(EXPORT_MESSAGE_ERROR, TTR("Export"), TTR("Unable to copy and rename export file:") + "\n\n" + copy_binary_output);
+				return ERR_CANT_CREATE;
+			} else {
+				print_verbose(copy_binary_output);
+			}
 		}
 
 		print_verbose("Successfully completed Android gradle build.");

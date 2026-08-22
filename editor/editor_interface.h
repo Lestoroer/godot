@@ -190,6 +190,7 @@ public:
 	void mark_scene_as_unsaved();
 	void save_all_scenes();
 	Error close_scene();
+	Error export_project(const String &p_preset_name, bool p_debug, const String &p_path); // Fork(Lestoroer): Export through a warm editor process.
 
 	// Scene playback.
 

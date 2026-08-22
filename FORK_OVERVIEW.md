@@ -77,6 +77,20 @@
   compositing-контракт. В highlight-кадре alpha `SCREEN_TEXTURE` зарезервирована
   под coverage-mask.
 
+### Инкрементальный Android export из CLI
+
+- Android exporter сохраняет состояние Gradle-кэша между процессами редактора.
+  Повторный headless export больше не считается первой сборкой и не вызывает
+  `gradle clean` без причины.
+- Clean сохраняется для первого export, другого build-каталога, изменившегося
+  набора Android export-плагинов и обновлённых legacy Android-плагинов.
+- Состояние лежит рядом со сгенерированным Android build template и исчезает
+  вместе с ним при его переустановке.
+- Для APK готовый результат Gradle копируется напрямую; второй запуск Gradle
+  только ради `copyAndRenameBinary` используется лишь как fallback.
+- `EditorInterface.export_project()` позволяет editor-плагину запускать export
+  из уже прогретого процесса редактора.
+
 ## Что не изменено
 
 В форке нет собственных патчей физики, физических запросов, collision data или
