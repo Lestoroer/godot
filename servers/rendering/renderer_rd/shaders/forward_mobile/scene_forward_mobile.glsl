@@ -1021,7 +1021,12 @@ layout(location = 0) out vec4 diffuse_buffer; //diffuse (rgb) and roughness
 layout(location = 1) out vec4 specular_buffer; //specular and SSS (subsurface scatter)
 #else
 
+#ifdef USE_HIGHLIGHT_STYLE_ALPHA
+layout(location = 0, index = 0) out vec4 frag_color;
+layout(location = 0, index = 1) out vec4 frag_blend_opacity; // Fork(Lestoroer): Real material opacity for dual-source RGB blending.
+#else
 layout(location = 0) out vec4 frag_color;
+#endif
 #endif // MODE_MULTIPLE_RENDER_TARGETS
 
 #endif // RENDER DEPTH
@@ -2358,7 +2363,17 @@ void main() {
 	out_color.rgb *= premul_alpha;
 #endif
 
+#ifdef USE_HIGHLIGHT_STYLE_ALPHA
+	frag_blend_opacity = vec4(out_color.a);
+	uint highlight_style = (instances.data[draw_call.instance_index].flags >> INSTANCE_FLAGS_HIGHLIGHT_STYLE_SHIFT) & INSTANCE_FLAGS_HIGHLIGHT_STYLE_MASK;
+	float output_alpha = float(out_color.a);
+	if (highlight_style > 0u) {
+		output_alpha = out_color.a > half(0.001) ? float(highlight_style) / 3.0 : 0.0;
+	}
+	frag_color = vec4(out_color.rgb, output_alpha); // Fork(Lestoroer): CPU only packs a style for a supported main-view highlight frame.
+#else
 	frag_color = out_color;
+#endif
 	if (sc_use_material_debanding()) {
 		// From https://alex.vlachos.com/graphics/Alex_Vlachos_Advanced_VR_Rendering_GDC2015.pdf
 		// and https://www.shadertoy.com/view/MslGR8 (5th one starting from the bottom)

@@ -278,42 +278,57 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    `renderer_rd/effects/tone_mapper.{h,cpp}`, `renderer_scene_render_rd.cpp`,
    `storage_rd/render_data_rd.h`, `shaders/effects/tonemap_mobile.glsl`; sky:
    `environment/sky.{h,cpp}` |
-   `RenderingServer.instance_geometry_set_highlighted(instance, enabled)` проводит бинарный
-   instance-флаг до Forward Mobile; парный read-only
-   `instance_geometry_is_highlighted(instance)` возвращает сохранённое состояние
+   `RenderingServer.instance_geometry_set_highlight_style(instance, style)` проводит style ID
+   `0…3` до Forward Mobile; парный read-only
+   `instance_geometry_get_highlight_style(instance)` возвращает сохранённое состояние
    `RendererSceneCull` без GPU readback. Только когда в видимом render list есть подсвеченная
-   геометрия, Forward Mobile временно резервирует alpha уже существующего scene color под coverage:
+   геометрия, Forward Mobile временно резервирует два A2-бита уже существующего scene color под ID:
    обычные opaque поверхности рисуются первыми и сохраняют alpha, highlighted opaque — последними
    и записывают её с обычным depth test. Поэтому закрытый непрозрачной геометрией объект не даёт
    x-ray-контура. Sky использует отдельное pipeline-state только с `write_a = false`.
 
-   Для настоящей прозрачности сохраняется material RGB blend, а highlighted coverage объединяется
-   отдельным alpha blend `src + dst * (1 - src)`. Материалы без depth test/write не помечаются:
-   их экранное покрытие неоднозначно. Mobile tonemap читает coverage из alpha исходного color,
-   четырьмя диагональными bilinear taps строит только внешний контур заданной ширины и применяет
-   его после color conversion, до debanding. Отдельного `R8` attachment, resolve, descriptor binding
-   и highlight shader family больше нет. Geometry не дублируется, draw calls и triangles не
-   добавляются. При нуле видимых highlighted-instance сохраняются штатные alpha writes, subpass и
-   pipeline states.
+   На Vulkan с dual-source blending primary alpha хранит style ID, а второй fragment output передаёт
+   настоящую material opacity только в коэффициенты RGB-blend; прозрачные материалы поэтому не
+   меняют свой вид. Alpha highlighted-примитивов объединяется `MAX`, без отдельной текстуры.
+   Alpha-to-coverage намеренно сохраняет штатный pipeline и не получает маску: один и тот же alpha
+   там уже управляет MSAA coverage. На устройствах без dual-source blending все ненулевые стили
+   автоматически используют прежнюю одноцветную coverage-mask. Материалы без depth test/write
+   также не помечаются: их экранное покрытие неоднозначно.
+
+   Mobile tonemap читает A2/coverage из alpha исходного color, четырьмя диагональными bilinear taps
+   строит только внешний контур заданной ширины и применяет его после color conversion, до
+   debanding. На пикселе найденного контура один дополнительный tap в направлении сильнейшего
+   соседа читает ID глубже внутри силуэта: это не даёт стандартному MSAA resolve превращать один
+   стиль в цветной шум на полупокрытых samples. Отдельного attachment, resolve, descriptor binding
+   и highlight shader family нет.
+   Geometry не дублируется, draw calls и triangles не добавляются. При нуле видимых
+   highlighted-instance сохраняются штатные alpha writes, subpass и pipeline states.
 
    Capability `rendering/renderer/highlight_outline/enabled` startup-only: `false` не создаёт
    новые pipeline states; `true` прогревает режимы preserve/write. Первый
-   контракт — Forward Mobile, одна бинарная маска, общий depth-tested outline без x-ray и без
-   разделения соприкасающихся подсвеченных объектов. Ширина —
+   контракт — Forward Mobile, три глобальных стиля, общий depth-tested outline без x-ray и без
+   разделения соприкасающихся подсвеченных объектов одного стиля. Ширина —
    `rendering/renderer/highlight_outline/width` в пикселях; общий цвет — startup-настройка
-   `rendering/renderer/highlight_outline/color`, передаваемая tonemap как push constant без
-   отдельной текстуры.
+   `rendering/renderer/highlight_outline/color_1…3`, передаваемая tonemap упакованной палитрой в
+   push constant без отдельной текстуры.
 
    Alpha-mask намеренно отключается для transparent viewport/passthrough, reflection probes и
    background `KEEP`, `CANVAS`, `CAMERA_FEED`: там alpha принадлежит compositing-контракту либо
    не может быть надёжно очищена. В highlight-кадре shader, читающий alpha `SCREEN_TEXTURE`, увидит
    coverage mask; это зарезервированный внутренний канал, а не material alpha экрана.
 
-   Проверка на Quest 3, release, clocks 4/4, одинаковый фиксированный кадр: один outline
-   `6.206 ms` против `6.198 ms` baseline; 32 outline `5.643 ms` против `5.680 ms` baseline.
-   Разница находится в шуме замера; draw calls одинаковы (`44`), primitives отличаются только
-   штатным счётчиком стенда (`118840` против `118836`). Предыдущий вариант с отдельным R8 MRT
-   стоил около `+1.70 ms GPU` на этом же стенде и полностью удалён.
+   A2/dual-source вариант проверен на Quest 3, release, production MSAA, clocks 4/4:
+   32 outline `6.154 ms`, один outline `6.141 ms`, baseline `6.142 ms` GPU average;
+   p95 соответственно `6.222 / 6.175 / 6.238 ms`. Разница находится в шуме замера;
+   draw calls одинаковы (`46`), primitives отличаются только штатным счётчиком стенда
+   (`114724` против `114720`). Visual gate подтвердил три стабильных цвета, составной силуэт,
+   тонкую поверхность и прозрачный бак со стеклом и жидкостью. Дополнительный внутренний tap
+   исправил смешение A2 ID на MSAA-краях без измеримой постоянной стоимости.
+
+   Для сравнения, предыдущий вариант с отдельным R8 MRT стоил около `+1.70 ms GPU` на этом же
+   стенде и полностью удалён. Предыдущая одноцветная alpha-версия также находилась в шуме
+   (`6.206 ms` один outline против `6.198 ms` baseline; 32 outline `5.643 ms` против
+   `5.680 ms` baseline), но не поддерживала разные типы выделения.
 
 ### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
 Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом

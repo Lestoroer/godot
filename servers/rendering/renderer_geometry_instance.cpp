@@ -110,8 +110,8 @@ void RenderGeometryInstanceBase::set_transparency(float p_transparency) {
 	force_alpha = CLAMP(1.0 - p_transparency, 0, 1);
 }
 
-void RenderGeometryInstanceBase::set_highlighted(bool p_enabled) { // Fork(Lestoroer)
-	highlighted = p_enabled;
+void RenderGeometryInstanceBase::set_highlight_style(uint8_t p_style) { // Fork(Lestoroer)
+	highlight_style = p_style;
 }
 
 void RenderGeometryInstanceBase::set_use_baked_light(bool p_enable) {

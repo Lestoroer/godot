@@ -257,6 +257,8 @@ layout(set = 0, binding = 2) uniform sampler shadow_sampler;
 #define INSTANCE_FLAGS_PARTICLE_TRAIL_SHIFT 16
 //3 bits of stride
 #define INSTANCE_FLAGS_PARTICLE_TRAIL_MASK 0xFF
+#define INSTANCE_FLAGS_HIGHLIGHT_STYLE_SHIFT 24
+#define INSTANCE_FLAGS_HIGHLIGHT_STYLE_MASK 0x3 // Fork(Lestoroer)
 
 layout(set = 0, binding = 3, std430) restrict readonly buffer OmniLights {
 	LightData data[];

@@ -458,7 +458,7 @@ public:
 		HashSet<Instance *> visibility_dependencies;
 		uint32_t visibility_dependencies_depth = 0;
 		float transparency = 0.0f;
-		bool highlighted = false; // Fork(Lestoroer): Persist outline state across geometry-instance recreation.
+		uint8_t highlight_style = 0; // Fork(Lestoroer): Persist outline style across geometry-instance recreation.
 		Scenario *scenario = nullptr;
 		SelfList<Instance> scenario_item;
 
@@ -1035,8 +1035,8 @@ public:
 	virtual void instance_set_surface_override_material(RID p_instance, int p_surface, RID p_material);
 	virtual void instance_set_visible(RID p_instance, bool p_visible);
 	virtual void instance_geometry_set_transparency(RID p_instance, float p_transparency);
-	virtual void instance_geometry_set_highlighted(RID p_instance, bool p_enabled); // Fork(Lestoroer)
-	virtual bool instance_geometry_is_highlighted(RID p_instance) const; // Fork(Lestoroer)
+	virtual void instance_geometry_set_highlight_style(RID p_instance, int p_style); // Fork(Lestoroer)
+	virtual uint8_t instance_geometry_get_highlight_style(RID p_instance) const; // Fork(Lestoroer)
 
 	virtual void instance_teleport(RID p_instance);
 

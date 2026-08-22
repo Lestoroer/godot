@@ -1036,6 +1036,7 @@ public:
 		SUPPORTS_RAY_QUERY,
 		SUPPORTS_RAYTRACING_PIPELINE,
 		SUPPORTS_HDR_OUTPUT,
+		SUPPORTS_DUAL_SOURCE_BLENDING, // Fork(Lestoroer): Required to keep material opacity separate from highlight style stored in scene color alpha.
 	};
 
 	enum SubgroupOperations {

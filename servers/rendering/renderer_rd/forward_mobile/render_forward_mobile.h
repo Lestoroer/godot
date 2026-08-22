@@ -76,8 +76,9 @@ private:
 	bool disable_ubershaders = false;
 	// Fork(Lestoroer): Static capability plus visual tuning read at renderer startup.
 	bool highlight_outline_enabled = false;
+	bool highlight_outline_styles_enabled = false;
 	float highlight_outline_width = 1.5f;
-	Color highlight_outline_color = Color(1.0, 1.0, 1.0); // Fork(Lestoroer): One project-wide outline color.
+	Color highlight_outline_colors[3]; // Fork(Lestoroer): Global alpha-ID palette for styles 1..3.
 
 	/* Render Buffer */
 
@@ -308,6 +309,7 @@ private:
 		bool used_lightmap = false;
 		bool used_opaque_stencil = false;
 		bool used_highlight = false; // Fork(Lestoroer): Visible scene list contains an outlined geometry instance.
+		bool write_highlight_style_ids = false; // Fork(Lestoroer): Current render context may reserve scene color A2.
 
 		struct ShadowPass {
 			uint32_t element_from;
@@ -469,6 +471,8 @@ protected:
 		INSTANCE_DATA_FLAG_MULTIMESH_HAS_CUSTOM_DATA = 1 << 15,
 		INSTANCE_DATA_FLAGS_PARTICLE_TRAIL_SHIFT = 16,
 		INSTANCE_DATA_FLAGS_PARTICLE_TRAIL_MASK = 0xFF,
+		INSTANCE_DATA_FLAGS_HIGHLIGHT_STYLE_SHIFT = 24,
+		INSTANCE_DATA_FLAGS_HIGHLIGHT_STYLE_MASK = 0x3, // Fork(Lestoroer): Two unused instance flag bits carry A2 style 0..3.
 	};
 
 	struct GeometryInstanceLightmapSH {
@@ -549,6 +553,7 @@ protected:
 		bool store_transform_cache = true; // If true we copy our transform into our per-draw buffer, if false we use our transforms UBO and clear our per-draw transform.
 		uint32_t instance_count = 0;
 		uint32_t trail_steps = 1;
+		bool highlight_style_alpha_encoded = false; // Fork(Lestoroer): Style bits were safely packed for this render context.
 
 		uint64_t prev_transform_change_frame = UINT_MAX;
 		bool prev_transform_dirty = true;

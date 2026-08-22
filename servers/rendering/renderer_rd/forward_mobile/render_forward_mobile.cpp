@@ -174,8 +174,8 @@ void RenderForwardMobile::fill_push_constant_instance_indices(SceneState::Instan
 void RenderForwardMobile::RenderList::sort_by_key_highlight_last() {
 	struct SortByHighlightAndKey {
 		_FORCE_INLINE_ bool operator()(const GeometryInstanceSurfaceDataCache *p_a, const GeometryInstanceSurfaceDataCache *p_b) const {
-			if (p_a->owner->highlighted != p_b->owner->highlighted) {
-				return !p_a->owner->highlighted;
+			if ((p_a->owner->highlight_style > 0) != (p_b->owner->highlight_style > 0)) {
+				return p_a->owner->highlight_style == 0;
 			}
 			return SortByKey()(p_a, p_b);
 		}
@@ -188,8 +188,8 @@ void RenderForwardMobile::RenderList::sort_by_key_highlight_last() {
 void RenderForwardMobile::RenderList::sort_by_key_and_stencil_highlight_last() {
 	struct SortByHighlightStencilAndKey {
 		_FORCE_INLINE_ bool operator()(const GeometryInstanceSurfaceDataCache *p_a, const GeometryInstanceSurfaceDataCache *p_b) const {
-			if (p_a->owner->highlighted != p_b->owner->highlighted) {
-				return !p_a->owner->highlighted;
+			if ((p_a->owner->highlight_style > 0) != (p_b->owner->highlight_style > 0)) {
+				return p_a->owner->highlight_style == 0;
 			}
 			return SortByKeyAndStencil()(p_a, p_b);
 		}
@@ -871,6 +871,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 	ERR_FAIL_NULL(p_render_data);
 	// Fork(Lestoroer): RenderDataRD is reused; never leak a previous frame's state.
 	p_render_data->use_highlight_outline = false;
+	p_render_data->use_highlight_outline_styles = false; // Fork(Lestoroer)
 
 	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
 	ERR_FAIL_COND(rb.is_null());
@@ -973,13 +974,16 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 	// Lightmaps need to be set up before _fill_render_list as it depends on them.
 	_setup_lightmaps(p_render_data, *p_render_data->lightmaps, p_render_data->scene_data->cam_transform);
 
-	// fill our render lists early so we can find out if we use various features
-	_fill_render_list(RENDER_LIST_OPAQUE, p_render_data, PASS_MODE_COLOR);
 	// Fork(Lestoroer): Scene color alpha is owned by transparent viewports and by
 	// backgrounds that retain/copy prior color, so those modes deliberately fall back.
 	const RSE::EnvironmentBG background_mode = p_render_data->environment.is_valid() ? environment_get_background(p_render_data->environment) : RSE::ENV_BG_CLEAR_COLOR;
 	const bool unsupported_background = background_mode == RSE::ENV_BG_CANVAS || background_mode == RSE::ENV_BG_KEEP || background_mode == RSE::ENV_BG_CAMERA_FEED;
-	const bool use_highlight_outline = highlight_outline_enabled && scene_state.used_highlight && !is_reflection_probe && !p_render_data->transparent_bg && !unsupported_background;
+	const bool highlight_context_supported = highlight_outline_enabled && !is_reflection_probe && !p_render_data->transparent_bg && !unsupported_background;
+	scene_state.write_highlight_style_ids = highlight_outline_styles_enabled && highlight_context_supported;
+
+	// fill our render lists early so we can find out if we use various features
+	_fill_render_list(RENDER_LIST_OPAQUE, p_render_data, PASS_MODE_COLOR);
+	const bool use_highlight_outline = highlight_context_supported && scene_state.used_highlight;
 	if (scene_state.used_opaque_stencil && use_highlight_outline) {
 		render_list[RENDER_LIST_OPAQUE].sort_by_key_and_stencil_highlight_last();
 	} else if (use_highlight_outline) {
@@ -1065,8 +1069,11 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 		}
 		if (use_highlight_outline) {
 			p_render_data->use_highlight_outline = true;
+			p_render_data->use_highlight_outline_styles = highlight_outline_styles_enabled;
 			p_render_data->highlight_outline_width = highlight_outline_width;
-			p_render_data->highlight_outline_color = highlight_outline_color; // Fork(Lestoroer)
+			for (uint32_t i = 0; i < 3; i++) {
+				p_render_data->highlight_outline_colors[i] = highlight_outline_colors[i];
+			} // Fork(Lestoroer)
 		}
 		samplers = rb->get_samplers();
 
@@ -2278,8 +2285,18 @@ void RenderForwardMobile::_fill_render_list(RenderListType p_render_list, const 
 		uint32_t depth_layer = CLAMP(int(inst->depth * 16 / z_max), 0, 15);
 
 		uint32_t flags = inst->base_flags; //fill flags if appropriate
-		if (inst->highlighted) { // Fork(Lestoroer)
+		if (inst->highlight_style > 0) { // Fork(Lestoroer)
 			scene_state.used_highlight = true;
+			bool style_alpha_compatible = scene_state.write_highlight_style_ids;
+			for (GeometryInstanceSurfaceDataCache *style_surface = inst->surface_caches; style_alpha_compatible && style_surface; style_surface = style_surface->next) {
+				style_alpha_compatible = !style_surface->shader->uses_alpha_antialiasing;
+			}
+			if (style_alpha_compatible) {
+				flags |= uint32_t(inst->highlight_style) << INSTANCE_DATA_FLAGS_HIGHLIGHT_STYLE_SHIFT;
+			}
+			inst->highlight_style_alpha_encoded = style_alpha_compatible;
+		} else {
+			inst->highlight_style_alpha_encoded = false;
 		}
 
 		if (inst->non_uniform_scale) {
@@ -2605,7 +2622,8 @@ void RenderForwardMobile::_render_list_template(RenderingDevice::DrawListID p_dr
 					pipeline_key.version = p_params->view_count > 1 ? SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS_MULTIVIEW : SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS;
 				}
 				if (p_params->use_highlight_alpha) {
-					pipeline_key.highlight_alpha_mode = surf->owner->highlighted ? SceneShaderForwardMobile::ShaderData::HIGHLIGHT_ALPHA_WRITE : SceneShaderForwardMobile::ShaderData::HIGHLIGHT_ALPHA_PRESERVE;
+					const bool can_write_highlight = surf->owner->highlight_style > 0 && !shader->uses_alpha_antialiasing && (!highlight_outline_styles_enabled || surf->owner->highlight_style_alpha_encoded);
+					pipeline_key.highlight_alpha_mode = can_write_highlight ? SceneShaderForwardMobile::ShaderData::HIGHLIGHT_ALPHA_WRITE : SceneShaderForwardMobile::ShaderData::HIGHLIGHT_ALPHA_PRESERVE;
 				}
 			} break;
 			case PASS_MODE_SHADOW: {
@@ -3637,8 +3655,11 @@ RenderForwardMobile::RenderForwardMobile() {
 	// Fork(Lestoroer): This capability is intentionally startup-only so shader
 	// families and pipeline warming remain deterministic.
 	highlight_outline_enabled = GLOBAL_GET("rendering/renderer/highlight_outline/enabled");
+	highlight_outline_styles_enabled = highlight_outline_enabled && RD::get_singleton()->has_feature(RD::SUPPORTS_DUAL_SOURCE_BLENDING); // Fork(Lestoroer)
 	highlight_outline_width = GLOBAL_GET("rendering/renderer/highlight_outline/width");
-	highlight_outline_color = GLOBAL_GET("rendering/renderer/highlight_outline/color"); // Fork(Lestoroer)
+	highlight_outline_colors[0] = GLOBAL_GET("rendering/renderer/highlight_outline/color_1");
+	highlight_outline_colors[1] = GLOBAL_GET("rendering/renderer/highlight_outline/color_2");
+	highlight_outline_colors[2] = GLOBAL_GET("rendering/renderer/highlight_outline/color_3"); // Fork(Lestoroer)
 
 	disable_ubershaders = RD::get_singleton()->get_driver_workarounds().disable_ubershaders;
 	if (disable_ubershaders) {
@@ -3650,6 +3671,9 @@ RenderForwardMobile::RenderForwardMobile() {
 	sky.set_texture_format(_render_buffers_get_preferred_color_format());
 
 	String defines;
+	if (highlight_outline_styles_enabled) {
+		defines += "\n#define USE_HIGHLIGHT_STYLE_ALPHA\n"; // Fork(Lestoroer): Adds the secondary opacity output only on capable devices.
+	}
 
 	defines += "\n#define MAX_ROUGHNESS_LOD " + itos(get_roughness_layers() - 1) + ".0\n";
 	if (is_using_radiance_octmap_array()) {
@@ -3691,7 +3715,7 @@ RenderForwardMobile::RenderForwardMobile() {
 	}
 #endif
 
-	scene_shader.init(defines);
+	scene_shader.init(defines, highlight_outline_styles_enabled); // Fork(Lestoroer)
 
 	_update_shader_quality_settings();
 	_update_global_pipeline_data_requirements_from_project();

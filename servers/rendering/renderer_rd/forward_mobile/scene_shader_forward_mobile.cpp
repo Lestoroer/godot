@@ -432,11 +432,28 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 			// stored in scene color alpha.
 			color_attachment.write_a = false;
 		} else if (uses_alpha || uses_blend_alpha) {
-			// Fork(Lestoroer): Keep the material's RGB blend equation while accumulating
-			// transparent highlight coverage as src + dst * (1 - src).
-			color_attachment.alpha_blend_op = RD::BLEND_OP_ADD;
-			color_attachment.src_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
-			color_attachment.dst_alpha_blend_factor = RD::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+			if (SceneShaderForwardMobile::singleton->use_highlight_style_alpha) {
+				// Fork(Lestoroer): Primary alpha stores the style ID. Source 1 carries
+				// material opacity so transparent RGB keeps its original blend equation.
+				if (color_attachment.src_color_blend_factor == RD::BLEND_FACTOR_SRC_ALPHA) {
+					color_attachment.src_color_blend_factor = RD::BLEND_FACTOR_SRC1_ALPHA;
+				} else if (color_attachment.src_color_blend_factor == RD::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA) {
+					color_attachment.src_color_blend_factor = RD::BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA;
+				}
+				if (color_attachment.dst_color_blend_factor == RD::BLEND_FACTOR_SRC_ALPHA) {
+					color_attachment.dst_color_blend_factor = RD::BLEND_FACTOR_SRC1_ALPHA;
+				} else if (color_attachment.dst_color_blend_factor == RD::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA) {
+					color_attachment.dst_color_blend_factor = RD::BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA;
+				}
+				color_attachment.alpha_blend_op = RD::BLEND_OP_MAXIMUM;
+				color_attachment.src_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
+				color_attachment.dst_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
+			} else {
+				// Fork(Lestoroer): Single-color fallback accumulates transparent coverage.
+				color_attachment.alpha_blend_op = RD::BLEND_OP_ADD;
+				color_attachment.src_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
+				color_attachment.dst_alpha_blend_factor = RD::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+			}
 		}
 	}
 
@@ -463,7 +480,6 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 	sc.bool_value = emulate_point_size_flag;
 	sc.type = RD::PIPELINE_SPECIALIZATION_CONSTANT_TYPE_BOOL;
 	specialization_constants.push_back(sc);
-
 	RID shader_rid = get_shader_variant(p_pipeline_key.version, p_pipeline_key.ubershader);
 	ERR_FAIL_COND(shader_rid.is_null());
 
@@ -593,8 +609,9 @@ SceneShaderForwardMobile::SceneShaderForwardMobile() {
 	singleton = this;
 }
 
-void SceneShaderForwardMobile::init(const String p_defines) {
+void SceneShaderForwardMobile::init(const String p_defines, bool p_use_highlight_style_alpha) {
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
+	use_highlight_style_alpha = p_use_highlight_style_alpha; // Fork(Lestoroer)
 
 	// Store whether the shader will prefer using the FP16 variant.
 	use_fp16 = RD::get_singleton()->has_feature(RD::SUPPORTS_HALF_FLOAT);

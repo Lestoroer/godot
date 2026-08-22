@@ -768,8 +768,11 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 
 		// Fork(Lestoroer): Forward Mobile supplies highlight coverage in scene color alpha.
 		tonemap.use_highlight_outline = p_render_data->use_highlight_outline;
+		tonemap.use_highlight_outline_styles = p_render_data->use_highlight_outline_styles;
 		tonemap.highlight_outline_width = p_render_data->highlight_outline_width;
-		tonemap.highlight_outline_color = p_render_data->highlight_outline_color; // Fork(Lestoroer)
+		for (uint32_t i = 0; i < 3; i++) {
+			tonemap.highlight_outline_colors[i] = p_render_data->highlight_outline_colors[i];
+		} // Fork(Lestoroer)
 
 		RID dest_fb;
 		RD::DataFormat dest_fb_format;

@@ -246,10 +246,16 @@ void ToneMapper::tonemapper_mobile(RID p_source_color, RID p_dst_framebuffer, co
 	tonemap_mobile.push_constant.output_max_value = MAX(p_settings.max_value, 1.0f);
 	// Fork(Lestoroer): Outline width is expressed in source-mask pixels.
 	tonemap_mobile.push_constant.highlight_outline_width = p_settings.highlight_outline_width;
-	tonemap_mobile.push_constant.highlight_outline_color[0] = p_settings.highlight_outline_color.r; // Fork(Lestoroer)
-	tonemap_mobile.push_constant.highlight_outline_color[1] = p_settings.highlight_outline_color.g;
-	tonemap_mobile.push_constant.highlight_outline_color[2] = p_settings.highlight_outline_color.b;
-	tonemap_mobile.push_constant.highlight_outline_color[3] = 1.0f;
+	tonemap_mobile.push_constant.highlight_outline_style_count = p_settings.use_highlight_outline_styles ? 3 : 1;
+	for (uint32_t i = 0; i < 3; i++) {
+		const Color color = p_settings.highlight_outline_colors[i].clamp();
+		tonemap_mobile.push_constant.highlight_outline_colors[i] = uint32_t(Math::round(color.r * 255.0f)) |
+				(uint32_t(Math::round(color.g * 255.0f)) << 8) |
+				(uint32_t(Math::round(color.b * 255.0f)) << 16) |
+				(uint32_t(Math::round(color.a * 255.0f)) << 24);
+	} // Fork(Lestoroer)
+	tonemap_mobile.push_constant.pad[0] = 0;
+	tonemap_mobile.push_constant.pad[1] = 0;
 
 	tonemap_mobile.push_constant.tonemapper_params[0] = p_settings.tonemapper_params[0];
 	tonemap_mobile.push_constant.tonemapper_params[1] = p_settings.tonemapper_params[1];
@@ -343,10 +349,16 @@ void ToneMapper::tonemapper_subpass(RD::DrawListID p_subpass_draw_list, RID p_so
 	tonemap_mobile.push_constant.luminance_multiplier = p_settings.luminance_multiplier;
 	tonemap_mobile.push_constant.output_max_value = MAX(p_settings.max_value, 1.0f);
 	tonemap_mobile.push_constant.highlight_outline_width = p_settings.highlight_outline_width;
-	tonemap_mobile.push_constant.highlight_outline_color[0] = p_settings.highlight_outline_color.r; // Fork(Lestoroer)
-	tonemap_mobile.push_constant.highlight_outline_color[1] = p_settings.highlight_outline_color.g;
-	tonemap_mobile.push_constant.highlight_outline_color[2] = p_settings.highlight_outline_color.b;
-	tonemap_mobile.push_constant.highlight_outline_color[3] = 1.0f;
+	tonemap_mobile.push_constant.highlight_outline_style_count = 1; // Fork(Lestoroer): Highlight outline never uses the subpass path.
+	for (uint32_t i = 0; i < 3; i++) {
+		const Color color = p_settings.highlight_outline_colors[i].clamp();
+		tonemap_mobile.push_constant.highlight_outline_colors[i] = uint32_t(Math::round(color.r * 255.0f)) |
+				(uint32_t(Math::round(color.g * 255.0f)) << 8) |
+				(uint32_t(Math::round(color.b * 255.0f)) << 16) |
+				(uint32_t(Math::round(color.a * 255.0f)) << 24);
+	}
+	tonemap_mobile.push_constant.pad[0] = 0;
+	tonemap_mobile.push_constant.pad[1] = 0;
 
 	tonemap_mobile.push_constant.tonemapper_params[0] = p_settings.tonemapper_params[0];
 	tonemap_mobile.push_constant.tonemapper_params[1] = p_settings.tonemapper_params[1];

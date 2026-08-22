@@ -85,8 +85,9 @@ public:
 
 	// Fork(Lestoroer): Forward Mobile highlight coverage stored in scene color alpha.
 	bool use_highlight_outline = false;
+	bool use_highlight_outline_styles = false;
 	float highlight_outline_width = 1.5f;
-	Color highlight_outline_color = Color(1.0, 1.0, 1.0); // Fork(Lestoroer)
+	Color highlight_outline_colors[3]; // Fork(Lestoroer)
 
 	/* Shadow data */
 	const RendererSceneRender::RenderShadowData *render_shadows = nullptr;

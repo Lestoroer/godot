@@ -1866,6 +1866,13 @@
 				Once finished with your RID, you will want to free the RID using the RenderingServer's [method free_rid] method. This is a shorthand for using [method instance_create] and setting the base and scenario manually.
 			</description>
 		</method>
+		<method name="instance_geometry_get_highlight_style" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="instance" type="RID" />
+			<description>
+				Returns the Forward Mobile outline style stored for the geometry [param instance]. [code]0[/code] disables highlighting; values [code]1[/code] through [code]3[/code] select the corresponding global color configured under [code]rendering/renderer/highlight_outline[/code]. This is a scene-state query and does not read GPU output.
+			</description>
+		</method><!-- Fork(Lestoroer) -->
 		<method name="instance_geometry_get_shader_parameter" qualifiers="const">
 			<return type="Variant" />
 			<param index="0" name="instance" type="RID" />
@@ -1961,19 +1968,12 @@
 				[b]Note:[/b] [param transparency] is clamped between [code]0.0[/code] and [code]1.0[/code], so this property cannot be used to make transparent materials more opaque than they originally are.
 			</description>
 		</method>
-		<method name="instance_geometry_is_highlighted">
-			<return type="bool" />
-			<param index="0" name="instance" type="RID" />
-			<description>
-				Returns the Lestoroer Forward Mobile outline flag stored for the geometry [param instance]. This is a read-only scene state query and does not read GPU output.
-			</description>
-		</method><!-- Fork(Lestoroer) -->
-		<method name="instance_geometry_set_highlighted">
+		<method name="instance_geometry_set_highlight_style">
 			<return type="void" />
 			<param index="0" name="instance" type="RID" />
-			<param index="1" name="enabled" type="bool" />
+			<param index="1" name="style" type="int" />
 			<description>
-				Enables the Lestoroer Forward Mobile outline mask for the geometry [param instance]. The method has no visual effect in other rendering methods, transparent viewports, reflection probes, or environments using [code]KEEP[/code], [code]CANVAS[/code], or [code]CAMERA_FEED[/code] backgrounds. Multiple highlighted meshes contribute to the same binary mask.
+				Assigns a Forward Mobile outline style to the geometry [param instance]. [code]0[/code] disables highlighting; values [code]1[/code] through [code]3[/code] select a global palette color. The method has no visual effect in other rendering methods, transparent viewports, reflection probes, environments using [code]KEEP[/code], [code]CANVAS[/code], or [code]CAMERA_FEED[/code] backgrounds, and alpha-to-coverage materials. On devices without dual-source blending, nonzero styles fall back to the first palette color.
 			</description>
 		</method><!-- Fork(Lestoroer) -->
 		<method name="instance_geometry_set_visibility_range">

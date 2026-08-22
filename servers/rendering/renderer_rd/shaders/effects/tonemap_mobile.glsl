@@ -96,8 +96,9 @@ layout(push_constant, std430) uniform Params {
 
 	float output_max_value;
 	float highlight_outline_width;
-	float pad[2];
-	vec4 highlight_outline_color; // Fork(Lestoroer): Project-wide outline color.
+	uint highlight_outline_style_count;
+	uint highlight_outline_colors[3];
+	uint pad[2]; // Fork(Lestoroer): Packed RGBA8 palette keeps the push constant at 96 bytes.
 }
 params;
 
@@ -840,11 +841,43 @@ void main() {
 		vec2 offset_y = vec2(0.0, params.src_pixel_size.y * params.highlight_outline_width);
 #endif
 		float neighbor = textureLod(source_color, highlight_uv - offset_x - offset_y, 0.0).a;
-		neighbor = max(neighbor, textureLod(source_color, highlight_uv + offset_x - offset_y, 0.0).a);
-		neighbor = max(neighbor, textureLod(source_color, highlight_uv - offset_x + offset_y, 0.0).a);
-		neighbor = max(neighbor, textureLod(source_color, highlight_uv + offset_x + offset_y, 0.0).a);
-		float outline = clamp(neighbor - center, 0.0, 1.0);
-		color.rgb = mix(color.rgb, params.highlight_outline_color.rgb, outline);
+#ifdef USE_MULTIVIEW
+		vec3 best_offset = -offset_x - offset_y;
+#else
+		vec2 best_offset = -offset_x - offset_y;
+#endif
+		float candidate = textureLod(source_color, highlight_uv + offset_x - offset_y, 0.0).a;
+		if (candidate > neighbor) {
+			neighbor = candidate;
+			best_offset = offset_x - offset_y;
+		}
+		candidate = textureLod(source_color, highlight_uv - offset_x + offset_y, 0.0).a;
+		if (candidate > neighbor) {
+			neighbor = candidate;
+			best_offset = -offset_x + offset_y;
+		}
+		candidate = textureLod(source_color, highlight_uv + offset_x + offset_y, 0.0).a;
+		if (candidate > neighbor) {
+			neighbor = candidate;
+			best_offset = offset_x + offset_y;
+		}
+		uint highlight_style = 1u;
+		float outline = 0.0;
+		if (params.highlight_outline_style_count > 1u) {
+			if (center <= 0.001 && neighbor > 0.001) {
+				// Fork(Lestoroer): MSAA resolve attenuates the ID at silhouette samples.
+				// Read one texel farther toward the strongest neighbor for a stable ID;
+				// the original sample still controls the outline's antialiased coverage.
+				float style_sample = max(neighbor, textureLod(source_color, highlight_uv + best_offset * 2.0, 0.0).a);
+				highlight_style = uint(clamp(ceil(style_sample * 3.0 - 0.001), 1.0, 3.0));
+				float encoded_style = float(highlight_style) / 3.0;
+				outline = clamp(neighbor / encoded_style, 0.0, 1.0);
+			}
+		} else {
+			outline = clamp(neighbor - center, 0.0, 1.0);
+		}
+		vec4 outline_color = unpackUnorm4x8(params.highlight_outline_colors[highlight_style - 1u]);
+		color.rgb = mix(color.rgb, outline_color.rgb, outline * outline_color.a);
 		color.a = 1.0;
 	}
 #endif

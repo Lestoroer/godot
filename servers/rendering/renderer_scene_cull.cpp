@@ -734,7 +734,7 @@ void RendererSceneCull::instance_set_base(RID p_instance, RID p_base) {
 				geom->geometry_instance->set_pivot_data(instance->sorting_offset, instance->use_aabb_center);
 				geom->geometry_instance->set_lod_bias(instance->lod_bias);
 				geom->geometry_instance->set_transparency(instance->transparency);
-				geom->geometry_instance->set_highlighted(instance->highlighted); // Fork(Lestoroer)
+				geom->geometry_instance->set_highlight_style(instance->highlight_style); // Fork(Lestoroer)
 				geom->geometry_instance->set_use_baked_light(instance->baked_light);
 				geom->geometry_instance->set_use_dynamic_gi(instance->dynamic_gi);
 				geom->geometry_instance->set_use_lightmap(RID(), instance->lightmap_uv_scale, instance->lightmap_slice_index);
@@ -986,26 +986,28 @@ void RendererSceneCull::instance_geometry_set_transparency(RID p_instance, float
 	}
 }
 
-void RendererSceneCull::instance_geometry_set_highlighted(RID p_instance, bool p_enabled) { // Fork(Lestoroer)
+void RendererSceneCull::instance_geometry_set_highlight_style(RID p_instance, int p_style) { // Fork(Lestoroer)
 	Instance *instance = instance_owner.get_or_null(p_instance);
 	ERR_FAIL_NULL(instance);
+	ERR_FAIL_COND_MSG(p_style < 0 || p_style > 3, "Highlight style must be in range 0..3.");
+	const uint8_t style = uint8_t(p_style);
 
-	if (instance->highlighted == p_enabled) {
+	if (instance->highlight_style == style) {
 		return;
 	}
 
-	instance->highlighted = p_enabled;
+	instance->highlight_style = style;
 	if ((1 << instance->base_type) & RSE::INSTANCE_GEOMETRY_MASK && instance->base_data) {
 		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(instance->base_data);
 		ERR_FAIL_NULL(geom->geometry_instance);
-		geom->geometry_instance->set_highlighted(p_enabled);
+		geom->geometry_instance->set_highlight_style(style);
 	}
 }
 
-bool RendererSceneCull::instance_geometry_is_highlighted(RID p_instance) const { // Fork(Lestoroer)
+uint8_t RendererSceneCull::instance_geometry_get_highlight_style(RID p_instance) const { // Fork(Lestoroer)
 	const Instance *instance = instance_owner.get_or_null(p_instance);
-	ERR_FAIL_NULL_V(instance, false);
-	return instance->highlighted;
+	ERR_FAIL_NULL_V(instance, 0);
+	return instance->highlight_style;
 }
 
 void RendererSceneCull::instance_set_transform(RID p_instance, const Transform3D &p_transform) {

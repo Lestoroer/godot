@@ -141,8 +141,9 @@ private:
 		float tonemapper_params[4]; //  16 - 64
 		float output_max_value; //  4 - 68
 		float highlight_outline_width; //  4 - 72, Fork(Lestoroer).
-		float pad[2]; //  8 - 80
-		float highlight_outline_color[4]; // 16 - 96, Fork(Lestoroer).
+		uint32_t highlight_outline_style_count; // 4 - 76, Fork(Lestoroer).
+		uint32_t highlight_outline_colors[3]; // 12 - 88, packed RGBA8.
+		uint32_t pad[2]; // 8 - 96
 	};
 
 	/* tonemap actually writes to a framebuffer, which is
@@ -214,8 +215,9 @@ public:
 
 		// Fork(Lestoroer): Optional outline from Forward Mobile scene color alpha.
 		bool use_highlight_outline = false;
+		bool use_highlight_outline_styles = false;
 		float highlight_outline_width = 1.5f;
-		Color highlight_outline_color = Color(1.0, 1.0, 1.0); // Fork(Lestoroer)
+		Color highlight_outline_colors[3]; // Fork(Lestoroer)
 	};
 
 	void tonemapper(RID p_source_color, RID p_dst_framebuffer, const TonemapSettings &p_settings);

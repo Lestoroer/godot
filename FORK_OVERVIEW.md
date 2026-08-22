@@ -55,23 +55,29 @@
 
 ### Renderer-integrated outline в Forward Mobile
 
-- Добавлены `RenderingServer.instance_geometry_set_highlighted(instance, enabled)`
-  и read-only `instance_geometry_is_highlighted(instance)`; getter читает
+- Добавлены `RenderingServer.instance_geometry_set_highlight_style(instance, style)`
+  со значениями `0…3` и read-only `instance_geometry_get_highlight_style(instance)`; getter читает
   сохранённое scene-cull состояние без GPU readback.
 - При включённой возможности Forward Mobile использует alpha существующего scene
-  color как внутреннюю coverage-mask: обычные opaque поверхности сохраняют alpha,
-  а подсвеченные записывают её с обычным depth test. Mobile tonemap строит из mask
-  внешний screen-space контур.
+  color как внутренний A2 style ID: обычные opaque поверхности сохраняют alpha,
+  а подсвеченные записывают стиль с обычным depth test. Mobile tonemap строит из ID
+  внешний screen-space контур одного из трёх глобальных цветов.
+- На Vulkan с dual-source blending прозрачный material продолжает смешивать RGB своей
+  настоящей opacity из второго fragment output. Alpha-to-coverage не получает outline;
+  без dual-source все ненулевые стили автоматически используют первый цвет как прежнюю
+  бинарную coverage-mask.
+- Для устойчивого цвета после MSAA resolve tonemap определяет coverage четырьмя обычными
+  taps, а ID читает одним дополнительным tap глубже внутрь только на найденном контуре.
 - Меш не рисуется второй раз: подсветка не добавляет draw calls и треугольники.
   Дополнительного color attachment, MSAA resolve и отдельной mask-текстуры нет.
   Кадры без видимой подсветки используют полностью штатные alpha pipeline states.
 - Возможность включается до старта renderer через
   `rendering/renderer/highlight_outline/enabled`; ширина задаётся в пикселях через
-  `rendering/renderer/highlight_outline/width`, общий цвет — через
-  `rendering/renderer/highlight_outline/color`.
+  `rendering/renderer/highlight_outline/width`, три цвета — через
+  `rendering/renderer/highlight_outline/color_1…3`.
 - Реализация предназначена для Forward Mobile. Она depth-tested, не является
-  x-ray; несколько мешей и соприкасающиеся подсвеченные объекты образуют общий
-  силуэт. Первый контракт использует одну бинарную маску и один общий стиль.
+  x-ray; несколько мешей и соприкасающиеся подсвеченные объекты одного стиля образуют общий
+  силуэт. Между соприкасающимися объектами разных стилей возможна граница палитры.
 - Outline намеренно не включается для transparent viewport/passthrough, reflection
   probes и background `KEEP`, `CANVAS`, `CAMERA_FEED`, где alpha уже имеет другой
   compositing-контракт. В highlight-кадре alpha `SCREEN_TEXTURE` зарезервирована

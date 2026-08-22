@@ -359,6 +359,7 @@ public:
 	ShaderCompiler compiler;
 	bool use_fp16 = false;
 	bool emulate_point_size = false;
+	bool use_highlight_style_alpha = false; // Fork(Lestoroer): Dual-source material opacity with A2 style IDs.
 
 	RID default_shader;
 	RID default_material;
@@ -389,7 +390,7 @@ public:
 
 	uint32_t pipeline_compilations[RSE::PIPELINE_SOURCE_MAX] = {};
 
-	void init(const String p_defines);
+	void init(const String p_defines, bool p_use_highlight_style_alpha = false);
 	void set_default_specialization(const ShaderSpecialization &p_specialization);
 	uint32_t get_pipeline_compilations(RSE::PipelineSource p_source);
 	void enable_fp32_shader_group();

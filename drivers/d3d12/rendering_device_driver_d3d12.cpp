@@ -5892,6 +5892,8 @@ bool RenderingDeviceDriverD3D12::has_feature(Features p_feature) {
 			return false;
 		case SUPPORTS_HDR_OUTPUT:
 			return true;
+		case SUPPORTS_DUAL_SOURCE_BLENDING:
+			return false; // Fork(Lestoroer): Highlight style alpha is currently validated only on Vulkan.
 		default:
 			return false;
 	}

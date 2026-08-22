@@ -37,6 +37,7 @@
 #include "drivers/vulkan/vulkan_hooks.h"
 
 #include <thirdparty/misc/smolv.h>
+#include <thirdparty/spirv-headers/include/spirv/unified1/spirv.h> // Fork(Lestoroer): Detect dual-source Index decorations before invoking re-spirv.
 
 #if defined(SWAPPY_FRAME_PACING_ENABLED)
 #include "platform/android/java_godot_wrapper.h"
@@ -77,6 +78,26 @@
 #include "core/io/file_access.h"
 #define RECORD_PIPELINE_STATISTICS_PATH "./pipelines.csv"
 #endif
+
+static bool _spirv_uses_dual_source_output(const uint8_t *p_data, size_t p_size) { // Fork(Lestoroer)
+	if (p_size < 5 * sizeof(uint32_t) || p_size % sizeof(uint32_t) != 0) {
+		return false;
+	}
+	const uint32_t *words = reinterpret_cast<const uint32_t *>(p_data);
+	const size_t word_count = p_size / sizeof(uint32_t);
+	for (size_t word_index = 5; word_index < word_count;) {
+		const uint32_t instruction_word_count = words[word_index] >> 16U;
+		if (instruction_word_count == 0 || word_index + instruction_word_count > word_count) {
+			return false;
+		}
+		const SpvOp opcode = SpvOp(words[word_index] & 0xFFFFU);
+		if (opcode == SpvOpDecorate && instruction_word_count >= 4 && words[word_index + 2] == SpvDecorationIndex && words[word_index + 3] > 0) {
+			return true;
+		}
+		word_index += instruction_word_count;
+	}
+	return false;
+}
 
 /*****************/
 /**** GENERIC ****/
@@ -4378,7 +4399,8 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 
 		shader_info.original_stage_size.push_back(decoded_spirv.size());
 
-		if (use_respv) {
+		const bool respv_compatible = !_spirv_uses_dual_source_output(decoded_spirv.ptr(), decoded_spirv.size()); // Fork(Lestoroer): re-spirv does not support the Index decoration and otherwise emits parser errors.
+		if (use_respv && respv_compatible) {
 			const bool inline_data = store_respv || (RESPV_ONLY_INLINE_SHADERS_WITH_SPEC_CONSTANTS == 0);
 			respv::Shader respv_shader(decoded_spirv.ptr(), decoded_spirv.size(), inline_data);
 			if (respv_shader.empty()) {
@@ -4404,6 +4426,8 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 #endif
 				}
 			}
+		} else if (store_respv) {
+			shader_info.respv_stage_shaders.push_back(respv::Shader()); // Fork(Lestoroer): Keep stage indices aligned; Vulkan applies specialization constants normally.
 		}
 
 #if RECORD_PIPELINE_STATISTICS
@@ -7421,6 +7445,8 @@ bool RenderingDeviceDriverVulkan::has_feature(Features p_feature) {
 #else
 			return context_driver->is_colorspace_supported();
 #endif // defined(WINDOWS_ENABLED)
+		case SUPPORTS_DUAL_SOURCE_BLENDING:
+			return requested_device_features.dualSrcBlend; // Fork(Lestoroer)
 		default:
 			return false;
 	}
