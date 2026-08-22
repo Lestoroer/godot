@@ -41,6 +41,10 @@
 #include "editor/editor_main_screen.h"
 #include "editor/editor_node.h"
 #include "editor/editor_undo_redo_manager.h"
+// Fork(Lestoroer): Public export entry point for warm editor deployment.
+#include "editor/export/editor_export.h"
+#include "editor/export/editor_export_platform.h"
+#include "editor/export/editor_export_preset.h"
 #include "editor/file_system/editor_paths.h"
 #include "editor/gui/create_dialog.h"
 #include "editor/gui/editor_quick_open_dialog.h"
@@ -789,6 +793,22 @@ Error EditorInterface::close_scene() {
 	return EditorNode::get_singleton()->close_scene() ? OK : ERR_DOES_NOT_EXIST;
 }
 
+Error EditorInterface::export_project(const String &p_preset_name, bool p_debug, const String &p_path) {
+	// Fork(Lestoroer): Allow a project editor plugin to request an export from a
+	// warm editor process instead of spawning a fresh CLI editor for every deploy.
+	EditorExport *editor_export = EditorExport::get_singleton();
+	for (int i = 0; i < editor_export->get_export_preset_count(); i++) {
+		Ref<EditorExportPreset> preset = editor_export->get_export_preset(i);
+		if (preset->get_name() != p_preset_name) {
+			continue;
+		}
+		String export_path = p_path.is_empty() ? preset->get_export_path() : p_path;
+		ERR_FAIL_COND_V_MSG(export_path.is_empty(), ERR_INVALID_PARAMETER, vformat("Export preset '%s' has no export path.", p_preset_name));
+		return preset->get_platform()->export_project(preset, p_debug, export_path, 0);
+	}
+	ERR_FAIL_V_MSG(ERR_DOES_NOT_EXIST, vformat("Export preset '%s' does not exist.", p_preset_name));
+}
+
 // Scene playback.
 
 void EditorInterface::play_main_scene() {
@@ -934,6 +954,7 @@ void EditorInterface::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("save_scene_as", "path", "with_preview"), &EditorInterface::save_scene_as, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("save_all_scenes"), &EditorInterface::save_all_scenes);
 	ClassDB::bind_method(D_METHOD("close_scene"), &EditorInterface::close_scene);
+	ClassDB::bind_method(D_METHOD("export_project", "preset_name", "debug", "path"), &EditorInterface::export_project, DEFVAL("")); // Fork(Lestoroer)
 
 	ClassDB::bind_method(D_METHOD("mark_scene_as_unsaved"), &EditorInterface::mark_scene_as_unsaved);
 

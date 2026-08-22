@@ -81,7 +81,7 @@ git checkout lestoroer/main
 git merge --no-ff 4.7-base      # конфликты разруливать РУКАМИ, сверяясь с «Инвентарём патчей»
 ```
 Конфликт в файле из инвентаря → сохранить и upstream-изменение, и наш `Fork(Lestoroer)`-блок.
-После merge: `grep -rn "Fork(Lestoroer)" servers/ drivers/ doc/ | wc -l` — число строк-маркеров
+После merge: `grep -rn "Fork(Lestoroer)" core/ editor/ scene/ servers/ drivers/ platform/ modules/ doc/ | wc -l` — число строк-маркеров
 не должно уменьшиться против инвентаря.
 > Историческая справка: пока патчей не было, дерево бралось точь-в-точь read-tree-трюком
 > (`git merge --no-commit || true` + `git read-tree -u --reset 4.7-base`).
@@ -314,6 +314,22 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    Разница находится в шуме замера; draw calls одинаковы (`44`), primitives отличаются только
    штатным счётчиком стенда (`118840` против `118836`). Предыдущий вариант с отдельным R8 MRT
    стоил около `+1.70 ms GPU` на этом же стенде и полностью удалён.
+
+7. **fast automated Android export** | `lestoroer/feat-fast-headless-android-export` |
+   `platform/android/export/export_plugin.cpp`, `editor/editor_interface.{h,cpp}`,
+   `doc/classes/EditorInterface.xml` | Android exporter сохраняет рядом с
+   установленным build template время последней Gradle-сборки, build-каталог и набор
+   export-плагинов. Новый headless editor восстанавливает это состояние и не принимает
+   каждый CLI-export за первую сборку с обязательным `clean`. Настоящий первый export,
+   смена build-каталога и изменения Android-плагинов по-прежнему требуют clean; удаление
+   или переустановка build template удаляет и состояние. Имена export-плагинов
+   сортируются перед сравнением: порядок их регистрации между процессами не считается
+   изменением состава. Для APK готовый
+   подписанный artifact копируется напрямую из `build/outputs/apk`; отдельный
+   второй Gradle-процесс для `copyAndRenameBinary` остаётся fallback на случай
+   изменения upstream layout. `EditorInterface.export_project()` даёт проектному
+   editor-плагину узкий способ запустить export из прогретого процесса без
+   автоматизации GUI.
 
 ### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
 Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом

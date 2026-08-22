@@ -56,6 +56,15 @@
 				Edits the given [Script]. The line and column on which to open the script can also be specified. The script will be open with the user-configured editor for the script's language which may be an external editor.
 			</description>
 		</method>
+		<method name="export_project">
+			<return type="int" enum="Error" />
+			<param index="0" name="preset_name" type="String" />
+			<param index="1" name="debug" type="bool" />
+			<param index="2" name="path" type="String" default="&quot;&quot;" />
+			<description>
+				Exports the project using the export preset named [param preset_name]. If [param path] is empty, uses the path configured by the preset. Returns [constant OK] on success.
+			</description>
+		</method><!-- Fork(Lestoroer): Export through a warm editor process. -->
 		<method name="get_base_control" qualifiers="const">
 			<return type="Control" />
 			<description>
