@@ -244,6 +244,12 @@ void ToneMapper::tonemapper_mobile(RID p_source_color, RID p_dst_framebuffer, co
 	tonemap_mobile.push_constant.white = p_settings.white;
 	tonemap_mobile.push_constant.luminance_multiplier = p_settings.luminance_multiplier;
 	tonemap_mobile.push_constant.output_max_value = MAX(p_settings.max_value, 1.0f);
+	// Fork(Lestoroer): Outline width is expressed in source-mask pixels.
+	tonemap_mobile.push_constant.highlight_outline_width = p_settings.highlight_outline_width;
+	tonemap_mobile.push_constant.highlight_outline_color[0] = p_settings.highlight_outline_color.r; // Fork(Lestoroer)
+	tonemap_mobile.push_constant.highlight_outline_color[1] = p_settings.highlight_outline_color.g;
+	tonemap_mobile.push_constant.highlight_outline_color[2] = p_settings.highlight_outline_color.b;
+	tonemap_mobile.push_constant.highlight_outline_color[3] = 1.0f;
 
 	tonemap_mobile.push_constant.tonemapper_params[0] = p_settings.tonemapper_params[0];
 	tonemap_mobile.push_constant.tonemapper_params[1] = p_settings.tonemapper_params[1];
@@ -269,6 +275,7 @@ void ToneMapper::tonemapper_mobile(RID p_source_color, RID p_dst_framebuffer, co
 	spec_constant |= p_settings.glow_mode == RSE::ENV_GLOW_BLEND_MODE_SOFTLIGHT ? TONEMAP_MOBILE_FLAG_GLOW_MODE_SOFTLIGHT : 0;
 	spec_constant |= p_settings.glow_mode == RSE::ENV_GLOW_BLEND_MODE_REPLACE ? TONEMAP_MOBILE_FLAG_GLOW_MODE_REPLACE : 0;
 	spec_constant |= p_settings.glow_mode == RSE::ENV_GLOW_BLEND_MODE_MIX ? TONEMAP_MOBILE_FLAG_GLOW_MODE_MIX : 0;
+	spec_constant |= p_settings.use_highlight_outline ? TONEMAP_MOBILE_FLAG_USE_HIGHLIGHT_OUTLINE : 0;
 
 	int mode = p_settings.use_1d_color_correction ? TONEMAP_MOBILE_MODE_1D_LUT : TONEMAP_MOBILE_MODE_NORMAL;
 
@@ -335,6 +342,11 @@ void ToneMapper::tonemapper_subpass(RD::DrawListID p_subpass_draw_list, RID p_so
 	tonemap_mobile.push_constant.white = p_settings.white;
 	tonemap_mobile.push_constant.luminance_multiplier = p_settings.luminance_multiplier;
 	tonemap_mobile.push_constant.output_max_value = MAX(p_settings.max_value, 1.0f);
+	tonemap_mobile.push_constant.highlight_outline_width = p_settings.highlight_outline_width;
+	tonemap_mobile.push_constant.highlight_outline_color[0] = p_settings.highlight_outline_color.r; // Fork(Lestoroer)
+	tonemap_mobile.push_constant.highlight_outline_color[1] = p_settings.highlight_outline_color.g;
+	tonemap_mobile.push_constant.highlight_outline_color[2] = p_settings.highlight_outline_color.b;
+	tonemap_mobile.push_constant.highlight_outline_color[3] = 1.0f;
 
 	tonemap_mobile.push_constant.tonemapper_params[0] = p_settings.tonemapper_params[0];
 	tonemap_mobile.push_constant.tonemapper_params[1] = p_settings.tonemapper_params[1];

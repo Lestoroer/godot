@@ -1981,10 +1981,10 @@ void main() {
 					hvec3 light_dir = hvec3(directional_lights.data[i].direction);
 					hvec3 base_normal_bias = geo_normal * (half(1.0) - max(half(0.0), dot(light_dir, -geo_normal)));
 
-#define BIAS_FUNC(m_var, m_idx)                                                                        \
+#define BIAS_FUNC(m_var, m_idx) \
 	hvec3 normal_bias = base_normal_bias * half(directional_lights.data[i].shadow_normal_bias[m_idx]); \
-	normal_bias -= light_dir * dot(light_dir, normal_bias);                                            \
-	normal_bias += light_dir * half(directional_lights.data[i].shadow_bias[m_idx]);                    \
+	normal_bias -= light_dir * dot(light_dir, normal_bias); \
+	normal_bias += light_dir * half(directional_lights.data[i].shadow_bias[m_idx]); \
 	m_var.xyz += vec3(normal_bias);
 
 					if (depth_z < directional_lights.data[i].shadow_split_offsets.x) {
@@ -2359,7 +2359,6 @@ void main() {
 #endif
 
 	frag_color = out_color;
-
 	if (sc_use_material_debanding()) {
 		// From https://alex.vlachos.com/graphics/Alex_Vlachos_Advanced_VR_Rendering_GDC2015.pdf
 		// and https://www.shadertoy.com/view/MslGR8 (5th one starting from the bottom)

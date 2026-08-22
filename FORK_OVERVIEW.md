@@ -53,6 +53,30 @@
   сравнивать с обычным оконным запуском или Quest. Перф проекта по-прежнему
   измеряется на устройстве.
 
+### Renderer-integrated outline в Forward Mobile
+
+- Добавлены `RenderingServer.instance_geometry_set_highlighted(instance, enabled)`
+  и read-only `instance_geometry_is_highlighted(instance)`; getter читает
+  сохранённое scene-cull состояние без GPU readback.
+- При включённой возможности Forward Mobile использует alpha существующего scene
+  color как внутреннюю coverage-mask: обычные opaque поверхности сохраняют alpha,
+  а подсвеченные записывают её с обычным depth test. Mobile tonemap строит из mask
+  внешний screen-space контур.
+- Меш не рисуется второй раз: подсветка не добавляет draw calls и треугольники.
+  Дополнительного color attachment, MSAA resolve и отдельной mask-текстуры нет.
+  Кадры без видимой подсветки используют полностью штатные alpha pipeline states.
+- Возможность включается до старта renderer через
+  `rendering/renderer/highlight_outline/enabled`; ширина задаётся в пикселях через
+  `rendering/renderer/highlight_outline/width`, общий цвет — через
+  `rendering/renderer/highlight_outline/color`.
+- Реализация предназначена для Forward Mobile. Она depth-tested, не является
+  x-ray; несколько мешей и соприкасающиеся подсвеченные объекты образуют общий
+  силуэт. Первый контракт использует одну бинарную маску и один общий стиль.
+- Outline намеренно не включается для transparent viewport/passthrough, reflection
+  probes и background `KEEP`, `CANVAS`, `CAMERA_FEED`, где alpha уже имеет другой
+  compositing-контракт. В highlight-кадре alpha `SCREEN_TEXTURE` зарезервирована
+  под coverage-mask.
+
 ## Что не изменено
 
 В форке нет собственных патчей физики, физических запросов, collision data или

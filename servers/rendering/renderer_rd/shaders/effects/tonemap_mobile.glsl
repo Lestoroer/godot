@@ -78,6 +78,7 @@ layout(constant_id = 14) const bool glow_mode_screen = false;
 layout(constant_id = 15) const bool glow_mode_softlight = false;
 layout(constant_id = 16) const bool glow_mode_replace = false;
 layout(constant_id = 17) const bool glow_mode_mix = false;
+layout(constant_id = 18) const bool use_highlight_outline = false;
 
 layout(push_constant, std430) uniform Params {
 	vec3 bcs;
@@ -94,7 +95,9 @@ layout(push_constant, std430) uniform Params {
 	vec4 tonemapper_params;
 
 	float output_max_value;
-	float pad[3];
+	float highlight_outline_width;
+	float pad[2];
+	vec4 highlight_outline_color; // Fork(Lestoroer): Project-wide outline color.
 }
 params;
 
@@ -820,6 +823,31 @@ void main() {
 	} else if (convert_to_srgb) {
 		color.rgb = linear_to_srgb(color.rgb); // Regular linear -> SRGB conversion.
 	}
+
+	// Fork(Lestoroer): Scene color alpha carries highlight coverage. Four bilinear
+	// diagonal taps produce a stable outward-only silhouette without another target.
+#ifndef SUBPASS
+	if (use_highlight_outline) {
+#ifdef USE_MULTIVIEW
+		vec3 highlight_uv = vec3(uv_interp, ViewIndex);
+		float center = color.a;
+		vec3 offset_x = vec3(params.src_pixel_size.x * params.highlight_outline_width, 0.0, 0.0);
+		vec3 offset_y = vec3(0.0, params.src_pixel_size.y * params.highlight_outline_width, 0.0);
+#else
+		vec2 highlight_uv = uv_interp;
+		float center = color.a;
+		vec2 offset_x = vec2(params.src_pixel_size.x * params.highlight_outline_width, 0.0);
+		vec2 offset_y = vec2(0.0, params.src_pixel_size.y * params.highlight_outline_width);
+#endif
+		float neighbor = textureLod(source_color, highlight_uv - offset_x - offset_y, 0.0).a;
+		neighbor = max(neighbor, textureLod(source_color, highlight_uv + offset_x - offset_y, 0.0).a);
+		neighbor = max(neighbor, textureLod(source_color, highlight_uv - offset_x + offset_y, 0.0).a);
+		neighbor = max(neighbor, textureLod(source_color, highlight_uv + offset_x + offset_y, 0.0).a);
+		float outline = clamp(neighbor - center, 0.0, 1.0);
+		color.rgb = mix(color.rgb, params.highlight_outline_color.rgb, outline);
+		color.a = 1.0;
+	}
+#endif
 
 	// Debanding should be done at the end of tonemapping, but before writing to the LDR buffer.
 	// Otherwise, we're adding noise to an already-quantized image.

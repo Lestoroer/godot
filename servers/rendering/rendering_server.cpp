@@ -3226,6 +3226,8 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("instance_set_surface_override_material", "instance", "surface", "material"), &RenderingServer::instance_set_surface_override_material);
 	ClassDB::bind_method(D_METHOD("instance_set_visible", "instance", "visible"), &RenderingServer::instance_set_visible);
 	ClassDB::bind_method(D_METHOD("instance_geometry_set_transparency", "instance", "transparency"), &RenderingServer::instance_geometry_set_transparency);
+	ClassDB::bind_method(D_METHOD("instance_geometry_set_highlighted", "instance", "enabled"), &RenderingServer::instance_geometry_set_highlighted); // Fork(Lestoroer)
+	ClassDB::bind_method(D_METHOD("instance_geometry_is_highlighted", "instance"), &RenderingServer::instance_geometry_is_highlighted); // Fork(Lestoroer)
 
 	ClassDB::bind_method(D_METHOD("instance_teleport", "instance"), &RenderingServer::instance_teleport);
 
@@ -3756,6 +3758,11 @@ void RenderingServer::init() {
 	GLOBAL_DEF_RST(PropertyInfo(Variant::FLOAT, "rendering/anti_aliasing/quality/smaa_edge_detection_threshold", PROPERTY_HINT_RANGE, "0.01,0.2,0.01"), 0.05);
 
 	GLOBAL_DEF("rendering/anti_aliasing/quality/use_debanding", false);
+
+	// Fork(Lestoroer): Opt-in Forward Mobile screen-space highlight outline.
+	GLOBAL_DEF("rendering/renderer/highlight_outline/enabled", false);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/renderer/highlight_outline/width", PROPERTY_HINT_RANGE, "0.5,3.0,0.1,suffix:px"), 1.5);
+	GLOBAL_DEF(PropertyInfo(Variant::COLOR, "rendering/renderer/highlight_outline/color", PROPERTY_HINT_COLOR_NO_ALPHA), Color(1.0, 1.0, 1.0)); // Fork(Lestoroer)
 
 	{
 		String mode_hints;

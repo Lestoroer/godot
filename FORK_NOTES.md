@@ -269,6 +269,52 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    служебные HWND; они не являются окном Godot, не видны, не получают foreground и не входят в
    taskbar/Alt-Tab.
 
+6. **renderer-integrated outline в Forward Mobile** | `lestoroer/feat-highlight-outline` |
+   API и instance state: `rendering_server.{h,cpp}`, `rendering_server_default.h`,
+   `rendering_method.h`, `renderer_scene_cull.{h,cpp}`, `renderer_geometry_instance.{h,cpp}`,
+   `doc/classes/RenderingServer.xml`; Forward Mobile:
+   `renderer_rd/forward_mobile/render_forward_mobile.{h,cpp}`,
+   `scene_shader_forward_mobile.{h,cpp}`; composite:
+   `renderer_rd/effects/tone_mapper.{h,cpp}`, `renderer_scene_render_rd.cpp`,
+   `storage_rd/render_data_rd.h`, `shaders/effects/tonemap_mobile.glsl`; sky:
+   `environment/sky.{h,cpp}` |
+   `RenderingServer.instance_geometry_set_highlighted(instance, enabled)` проводит бинарный
+   instance-флаг до Forward Mobile; парный read-only
+   `instance_geometry_is_highlighted(instance)` возвращает сохранённое состояние
+   `RendererSceneCull` без GPU readback. Только когда в видимом render list есть подсвеченная
+   геометрия, Forward Mobile временно резервирует alpha уже существующего scene color под coverage:
+   обычные opaque поверхности рисуются первыми и сохраняют alpha, highlighted opaque — последними
+   и записывают её с обычным depth test. Поэтому закрытый непрозрачной геометрией объект не даёт
+   x-ray-контура. Sky использует отдельное pipeline-state только с `write_a = false`.
+
+   Для настоящей прозрачности сохраняется material RGB blend, а highlighted coverage объединяется
+   отдельным alpha blend `src + dst * (1 - src)`. Материалы без depth test/write не помечаются:
+   их экранное покрытие неоднозначно. Mobile tonemap читает coverage из alpha исходного color,
+   четырьмя диагональными bilinear taps строит только внешний контур заданной ширины и применяет
+   его после color conversion, до debanding. Отдельного `R8` attachment, resolve, descriptor binding
+   и highlight shader family больше нет. Geometry не дублируется, draw calls и triangles не
+   добавляются. При нуле видимых highlighted-instance сохраняются штатные alpha writes, subpass и
+   pipeline states.
+
+   Capability `rendering/renderer/highlight_outline/enabled` startup-only: `false` не создаёт
+   новые pipeline states; `true` прогревает режимы preserve/write. Первый
+   контракт — Forward Mobile, одна бинарная маска, общий depth-tested outline без x-ray и без
+   разделения соприкасающихся подсвеченных объектов. Ширина —
+   `rendering/renderer/highlight_outline/width` в пикселях; общий цвет — startup-настройка
+   `rendering/renderer/highlight_outline/color`, передаваемая tonemap как push constant без
+   отдельной текстуры.
+
+   Alpha-mask намеренно отключается для transparent viewport/passthrough, reflection probes и
+   background `KEEP`, `CANVAS`, `CAMERA_FEED`: там alpha принадлежит compositing-контракту либо
+   не может быть надёжно очищена. В highlight-кадре shader, читающий alpha `SCREEN_TEXTURE`, увидит
+   coverage mask; это зарезервированный внутренний канал, а не material alpha экрана.
+
+   Проверка на Quest 3, release, clocks 4/4, одинаковый фиксированный кадр: один outline
+   `6.206 ms` против `6.198 ms` baseline; 32 outline `5.643 ms` против `5.680 ms` baseline.
+   Разница находится в шуме замера; draw calls одинаковы (`44`), primitives отличаются только
+   штатным счётчиком стенда (`118840` против `118836`). Предыдущий вариант с отдельным R8 MRT
+   стоил около `+1.70 ms GPU` на этом же стенде и полностью удалён.
+
 ### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
 Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом
 мёрже upstream проверить:

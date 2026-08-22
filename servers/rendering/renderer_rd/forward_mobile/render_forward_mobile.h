@@ -74,6 +74,10 @@ private:
 
 	SceneShaderForwardMobile scene_shader;
 	bool disable_ubershaders = false;
+	// Fork(Lestoroer): Static capability plus visual tuning read at renderer startup.
+	bool highlight_outline_enabled = false;
+	float highlight_outline_width = 1.5f;
+	Color highlight_outline_color = Color(1.0, 1.0, 1.0); // Fork(Lestoroer): One project-wide outline color.
 
 	/* Render Buffer */
 
@@ -139,6 +143,8 @@ private:
 		RD::FramebufferFormatID framebuffer_format = 0;
 		uint32_t element_offset = 0;
 		uint32_t subpass = 0;
+		// Fork(Lestoroer): Reserve scene color alpha for outline coverage in this frame.
+		bool use_highlight_alpha = false;
 
 		RenderListParameters(GeometryInstanceSurfaceDataCache **p_elements, RenderElementInfo *p_element_info, int p_element_count, bool p_reverse_cull, PassMode p_pass_mode, RID p_render_pass_uniform_set, SceneShaderForwardMobile::ShaderSpecialization p_base_specialization, bool p_force_wireframe = false, const Vector2 &p_uv_offset = Vector2(), float p_lod_distance_multiplier = 0.0, float p_screen_mesh_lod_threshold = 0.0, uint32_t p_view_count = 1, uint32_t p_element_offset = 0) {
 			elements = p_elements;
@@ -301,6 +307,7 @@ private:
 		bool used_depth_texture = false;
 		bool used_lightmap = false;
 		bool used_opaque_stencil = false;
+		bool used_highlight = false; // Fork(Lestoroer): Visible scene list contains an outlined geometry instance.
 
 		struct ShadowPass {
 			uint32_t element_from;
@@ -347,6 +354,8 @@ private:
 			sorter.sort(elements.ptr(), elements.size());
 		}
 
+		void sort_by_key_highlight_last(); // Fork(Lestoroer)
+
 		void sort_by_key_range(uint32_t p_from, uint32_t p_size) {
 			SortArray<GeometryInstanceSurfaceDataCache *, SortByKey> sorter;
 			sorter.sort(elements.ptr() + p_from, p_size);
@@ -367,6 +376,8 @@ private:
 			SortArray<GeometryInstanceSurfaceDataCache *, SortByKeyAndStencil> sorter;
 			sorter.sort(elements.ptr(), elements.size());
 		}
+
+		void sort_by_key_and_stencil_highlight_last(); // Fork(Lestoroer)
 
 		struct SortByDepth {
 			_FORCE_INLINE_ bool operator()(const GeometryInstanceSurfaceDataCache *A, const GeometryInstanceSurfaceDataCache *B) const {
@@ -689,6 +700,7 @@ public:
 				uint32_t use_separate_post_pass : 1;
 				uint32_t use_hdr_render_target : 1;
 				uint32_t use_ldr_render_target : 1;
+				uint32_t use_highlight_outline : 1;
 			};
 		};
 	};

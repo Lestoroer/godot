@@ -306,6 +306,7 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 	RD::PipelineColorBlendState blend_state_opaque_specular = RD::PipelineColorBlendState::create_disabled(2);
 	RD::PipelineColorBlendState blend_state_depth_normal_roughness = RD::PipelineColorBlendState::create_disabled(1);
 	RD::PipelineColorBlendState blend_state_depth_normal_roughness_giprobe = RD::PipelineColorBlendState::create_disabled(2);
+	const bool color_variant = p_pipeline_key.version == SHADER_VERSION_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_MOTION_VECTORS_MULTIVIEW;
 
 	//update pipelines
 
@@ -396,7 +397,7 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 			multisample_state.enable_alpha_to_one = true;
 		}
 
-		if (p_pipeline_key.version == SHADER_VERSION_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_MOTION_VECTORS_MULTIVIEW) {
+		if (color_variant) {
 			blend_state = blend_state_blend;
 			if (depth_draw == DEPTH_DRAW_OPAQUE && !uses_alpha_clip) {
 				// Alpha does not write to depth.
@@ -411,7 +412,7 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 			// Do not use this version (error case).
 		}
 	} else {
-		if (p_pipeline_key.version == SHADER_VERSION_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS || p_pipeline_key.version == SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_MOTION_VECTORS_MULTIVIEW) {
+		if (color_variant) {
 			blend_state = blend_state_opaque;
 		} else if (p_pipeline_key.version == SHADER_VERSION_SHADOW_PASS || p_pipeline_key.version == SHADER_VERSION_SHADOW_PASS_MULTIVIEW || p_pipeline_key.version == SHADER_VERSION_SHADOW_PASS_DP) {
 			// Contains nothing.
@@ -420,6 +421,22 @@ void SceneShaderForwardMobile::ShaderData::_create_pipeline(PipelineKey p_pipeli
 			blend_state = RD::PipelineColorBlendState::create_disabled(5);
 		} else {
 			// Unknown pipeline version.
+		}
+	}
+
+	if (color_variant && p_pipeline_key.highlight_alpha_mode != ShaderData::HIGHLIGHT_ALPHA_DISABLED) {
+		RD::PipelineColorBlendState::Attachment &color_attachment = blend_state.attachments.write[0];
+		const bool can_write_highlight_alpha = p_pipeline_key.highlight_alpha_mode == ShaderData::HIGHLIGHT_ALPHA_WRITE && depth_test != DEPTH_TEST_DISABLED && depth_draw != DEPTH_DRAW_DISABLED;
+		if (!can_write_highlight_alpha) {
+			// Fork(Lestoroer): Ordinary surfaces preserve the highlight coverage already
+			// stored in scene color alpha.
+			color_attachment.write_a = false;
+		} else if (uses_alpha || uses_blend_alpha) {
+			// Fork(Lestoroer): Keep the material's RGB blend equation while accumulating
+			// transparent highlight coverage as src + dst * (1 - src).
+			color_attachment.alpha_blend_op = RD::BLEND_OP_ADD;
+			color_attachment.src_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
+			color_attachment.dst_alpha_blend_factor = RD::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 		}
 	}
 
@@ -630,7 +647,6 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(RenderForwardMobile::RENDER_PASS_UNIFORM_SET, 0));
 		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(RenderForwardMobile::RENDER_PASS_UNIFORM_SET, 1));
 		shader.initialize(shader_versions, p_defines, immutable_samplers, dynamic_buffers);
-
 		if (RendererCompositorRD::get_singleton()->is_xr_enabled()) {
 			enable_multiview_shader_group();
 		}
