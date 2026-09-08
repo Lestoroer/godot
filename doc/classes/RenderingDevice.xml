@@ -423,6 +423,15 @@
 				Sets the push constant data to [param buffer] for the specified [param draw_list]. The shader determines how this binary data is used. The buffer's size in bytes must also be specified in [param size_bytes] (this can be obtained by calling the [method PackedByteArray.size] method on the passed [param buffer]).
 			</description>
 		</method>
+		<!-- Fork(Lestoroer): existing dynamic viewport exposed to scripts. -->
+		<method name="draw_list_set_viewport">
+			<return type="void" />
+			<param index="0" name="draw_list" type="int" />
+			<param index="1" name="rect" type="Rect2" />
+			<description>
+				Sets the dynamic viewport for subsequent draws in the active draw list. The rectangle must lie inside the framebuffer. This does not change the scissor rectangle; call [method draw_list_disable_scissor] afterwards to reset the scissor to the new viewport. Clear and resolve operations still belong to the enclosing render pass.
+			</description>
+		</method>
 		<method name="draw_list_switch_to_next_pass">
 			<return type="int" />
 			<description>

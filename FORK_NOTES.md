@@ -331,6 +331,14 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    editor-плагину узкий способ запустить export из прогретого процесса без
    автоматизации GUI.
 
+8. **Dynamic viewport в RD из GDScript** | `codex/shadow-batch-viewport` |
+   `servers/rendering/rendering_device.cpp`, `doc/classes/RenderingDevice.xml` |
+   Привязан существующий `draw_list_set_viewport(draw_list, rect)` для пакетного
+   рисования независимых тайлов теней в одном render pass. Реализация viewport,
+   драйверы и синхронизация не менялись. Scissor обновляется отдельно; clear и
+   resolve остаются общими для framebuffer. Проверки качества и стоимости
+   выполняются в проекте Voxel Underworld.
+
 ### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
 Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом
 мёрже upstream проверить:

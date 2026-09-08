@@ -91,6 +91,12 @@
 - `EditorInterface.export_project()` позволяет editor-плагину запускать export
   из уже прогретого процесса редактора.
 
+### Смена viewport внутри RD-прохода
+
+- Существующий `RenderingDevice.draw_list_set_viewport(draw_list, rect)` доступен
+  из GDScript. Он позволяет рисовать независимые тайлы теней в общем framebuffer
+  без завершения render pass. Scissor задаётся отдельно.
+
 ## Что не изменено
 
 В форке нет собственных патчей физики, физических запросов, collision data или
