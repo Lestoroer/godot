@@ -127,8 +127,20 @@ RID JoltPhysicsServer3D::heightmap_shape_create() {
 	return rid;
 }
 
+// Fork(Lestoroer): фабрика принадлежит подключённому нативному модулю.
+static JoltShape3D *(*vu_custom_shape_factory)() = nullptr;
+
+void JoltPhysicsServer3D::set_custom_shape_factory(JoltShape3D *(*p_factory)()) {
+	vu_custom_shape_factory = p_factory;
+}
+
 RID JoltPhysicsServer3D::custom_shape_create() {
-	ERR_FAIL_V_MSG(RID(), "Custom shapes are not supported.");
+	ERR_FAIL_NULL_V_MSG(vu_custom_shape_factory, RID(), "No native custom shape provider registered.");
+	JoltShape3D *shape = vu_custom_shape_factory();
+	ERR_FAIL_NULL_V(shape, RID());
+	RID rid = shape_owner.make_rid(shape);
+	shape->set_rid(rid);
+	return rid;
 }
 
 void JoltPhysicsServer3D::shape_set_data(RID p_shape, const Variant &p_data) {

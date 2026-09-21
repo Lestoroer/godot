@@ -367,3 +367,16 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 7. При новых методах `DisplayServerHeadless` перепроверить virtual window size, screen list,
    `can_any_window_draw`, mouse-mode state и запрет subwindows в offscreen-наследнике.
 8. PR #94530 остаётся историческим источником требований, а не кодом для повторного merge.
+
+## Эксперимент SDF-формы Voxel Underworld (16.09.2026)
+
+Fork(Lestoroer): `JoltPhysicsServer3D::set_custom_shape_factory` позволяет
+нативному модулю зарегистрировать фабрику для существующего `custom_shape_create`.
+Без провайдера прежний отказ сохранён. RID и жизненным циклом владеет Jolt server.
+Провайдер регистрируется только при инициализации модулей, до запуска физики.
+Экспериментальный внешний модуль `game/world/native/vu_sdf_collision` принадлежит
+игровому репозиторию: неизменяемое поле, Surface Nets по запросу, User3, статическая
+форма. Обычная сборка без модуля не включает новую коллизию. Сборка проекта:
+`python tools/vu_build_shadow_module.py --sdf`. Исходники и ограничения — в
+`game/world/native/README.md` игрового репозитория. При обновлении Jolt проверить
+свободный User3, порядок регистрации dispatch и ABI-флаги внешнего модуля.

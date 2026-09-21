@@ -137,6 +137,8 @@ public:
 	virtual RID concave_polygon_shape_create() override;
 	virtual RID heightmap_shape_create() override;
 	virtual RID custom_shape_create() override;
+	// Fork(Lestoroer): нативный модуль может предоставить собственную статическую форму.
+	static void set_custom_shape_factory(JoltShape3D *(*p_factory)());
 
 	virtual void shape_set_data(RID p_shape, const Variant &p_data) override;
 	virtual Variant shape_get_data(RID p_shape) const override;
