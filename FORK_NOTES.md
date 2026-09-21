@@ -339,6 +339,26 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    resolve остаются общими для framebuffer. Проверки качества и стоимости
    выполняются в проекте Voxel Underworld.
 
+9. **Эксперимент CPU-отсечения MSAA2-треугольников** | `codex/shadow-batch-viewport` |
+   `core/core_bind.{h,cpp}`, `doc/classes/Geometry3D.xml` |
+   `Geometry3D.filter_shadow_sample_coverage` принимает реальные FP32-позиции,
+   индексы и байты MVP. Сохраняет порядок оставшихся индексов; неопределённые
+   clip-пересечения не отсекает. Контракт ограничен 512px-тайлами в полосе
+   до восьми тайлов и стандартными позициями MSAA2. Погрешность viewport
+   учитывает абсолютную координату в полосе. Пока эксперимент: строгая граница
+   fixed-function точности и выигрыш на целевых устройствах не подтверждены.
+   Сам renderer этот метод не вызывает; драйвер и GPU-синхронизация не меняются.
+
+10. **Внешний модуль подачи теней Voxel Underworld** | проектный `custom_modules` |
+    `voxel-underworld/game/lighting/native/vu_shadow_submit` |
+    Класс `VuShadowSubmit` исполняет готовые проектные команды через публичный
+    RenderingDevice на render thread. Порядок draw, барьеры, ресурсы и GPU-код
+    не меняются; внутри движка патча renderer нет. Исходники и сборочная команда
+    `tools/vu_build_shadow_module.py` принадлежат игровому репозиторию.
+    Бинарник содержит класс только при сборке с этим внешним модулем; Android
+    templates требуют того же `custom_modules`. Проект сохраняет GDScript-путь
+    для бинарников без класса. При upstream-обновлении проверить сигнатуры RD
+    и прогнать проектный `vu_test_native_shadow_submission.gd`.
 ### Чеклист апгрейда для RD-зависимостей проекта (вариант D теней)
 Проектный RD-пасс (vu_shadow_system.gd) живёт на сыром RD API и порядке кадра — при каждом
 мёрже upstream проверить:
