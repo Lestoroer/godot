@@ -415,6 +415,9 @@ public:
 	Vector<Vector3> clip_polygon(const Vector<Vector3> &p_points, const Plane &p_plane);
 	Vector<int32_t> tetrahedralize_delaunay(const Vector<Vector3> &p_points);
 
+	// Fork(Lestoroer): explicit MSAA2 shadow coverage experiment.
+	Vector<int32_t> filter_shadow_sample_coverage(const Vector<Vector3> &p_vertices, const Vector<int32_t> &p_indices, const Vector<uint8_t> &p_packed_mvp, const Rect2i &p_viewport) const;
+
 	Geometry3D() { singleton = this; }
 };
 

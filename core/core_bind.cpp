@@ -40,6 +40,12 @@
 #include "core/io/marshalls.h"
 #include "core/math/geometry_2d.h"
 #include "core/math/geometry_3d.h"
+#include "core/math/projection.h"
+
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
+#include <limits>
 #include "core/object/class_db.h"
 #include "core/os/keyboard.h"
 #include "core/os/main_loop.h"
@@ -1281,7 +1287,157 @@ Vector<int32_t> Geometry3D::tetrahedralize_delaunay(const Vector<Vector3> &p_poi
 	return ::Geometry3D::tetrahedralize_delaunay(p_points);
 }
 
+namespace {
+struct ShadowSampleVertex {
+	double xmin = 0, xmax = 0, ymin = 0, ymax = 0;
+	bool usable = false;
+};
+struct ShadowInterval { double lo, hi; };
+double shadow_down(double x) {
+	return std::nextafter(x, -std::numeric_limits<double>::infinity());
+}
+double shadow_up(double x) {
+	return std::nextafter(x, std::numeric_limits<double>::infinity());
+}
+bool shadow_input_ok(double x) {
+	// Reject FTZ-sensitive operands and values not exactly representable as f32.
+	return std::isfinite(x) && double(float(x)) == x &&
+			(x == 0.0 || std::abs(x) >= double(FLT_MIN));
+}
+ShadowSampleVertex shadow_project(const Vector3 &v, const Projection &m, const Rect2i &viewport) {
+	ShadowSampleVertex out;
+	const double a[4] = {double(v.x), double(v.y), double(v.z), 1.0};
+	for (double x : a) {
+		if (!shadow_input_ok(x)) { return out; }
+	}
+	// u=2^-23 deliberately exceeds nearest-even unit roundoff (2^-24).
+	// 8 operations cover four products plus three adds, any association/FMA.
+	constexpr double u = 0x1p-23;
+	constexpr double gamma8 = (8.0 * u) / (1.0 - 8.0 * u);
+	ShadowInterval c[4];
+	for (int row = 0; row < 4; ++row) {
+		double dot = 0.0, abs_sum = 0.0;
+		for (int col = 0; col < 4; ++col) {
+			const double b = double(m[col][row]);
+			if (!shadow_input_ok(b)) { return out; }
+			// Products of two normal f32 values are exact in double.
+			const double product = b * a[col];
+			dot += product;
+			abs_sum = shadow_up(abs_sum + std::abs(product));
+		}
+		// Keep away from overflow of any reassociated intermediate.
+		if (!std::isfinite(dot) || abs_sum > double(FLT_MAX) / 4.0) { return out; }
+		// Float gamma also comfortably dominates error in the 4-term double sum.
+		// Absolute term covers flushed subnormal products/intermediate results.
+		const double error = shadow_up(gamma8 * abs_sum + 32.0 * double(FLT_MIN));
+		c[row] = {shadow_down(dot - error), shadow_up(dot + error)};
+	}
+	const ShadowInterval w = c[3];
+	if (!(w.lo > double(FLT_MIN))) { return out; }
+	// Require the entire interval box strictly inside Vulkan clip volume.
+	// Reversed Z changes which plane is near, not inequalities 0 < z < w.
+	if (!(c[0].lo > -w.lo && c[0].hi < w.lo &&
+		c[1].lo > -w.lo && c[1].hi < w.lo &&
+		c[2].lo > 0.0 && c[2].hi < w.lo)) { return out; }
+	double screen_lo[2], screen_hi[2];
+	for (int axis = 0; axis < 2; ++axis) {
+		// Positive denominator: all four corners bound the rational interval.
+		const double q[4] = {c[axis].lo / w.lo, c[axis].lo / w.hi,
+				c[axis].hi / w.lo, c[axis].hi / w.hi};
+		double lo = shadow_down(*std::min_element(q, q + 4));
+		double hi = shadow_up(*std::max_element(q, q + 4));
+		// Fork(Lestoroer): prototype coverage bounds. Vulkan's non-shader
+		// arithmetic requires about 1e-5 relative precision, not FP32 precision.
+		// Use a wider 2e-5 envelope at each operation, including absolute
+		// viewport origin in the complete strip. This is an engineering bound,
+		// not a device-independent strict interpretation of "about" in the spec.
+		constexpr double fixed_error = 2e-5;
+		const double divide_error = shadow_up(fixed_error * std::max(1.0, std::max(std::abs(lo), std::abs(hi))));
+		lo = shadow_down(lo - divide_error);
+		hi = shadow_up(hi + divide_error);
+		const double scale = double(viewport.size[axis]) * 0.5;
+		lo = shadow_down(lo * scale);
+		hi = shadow_up(hi * scale);
+		const double multiply_error = shadow_up(fixed_error * std::max(std::abs(lo), std::abs(hi)));
+		lo = shadow_down(lo - multiply_error);
+		hi = shadow_up(hi + multiply_error);
+		const double origin = double(viewport.position[axis]) + scale;
+		lo = shadow_down(lo + origin);
+		hi = shadow_up(hi + origin);
+		const double add_error = shadow_up(fixed_error * std::max(std::abs(lo), std::abs(hi)));
+		screen_lo[axis] = shadow_down(lo - add_error);
+		screen_hi[axis] = shadow_up(hi + add_error);
+		if (!std::isfinite(screen_lo[axis]) || !std::isfinite(screen_hi[axis])) { return out; }
+	}
+	out.xmin = screen_lo[0]; out.xmax = screen_hi[0];
+	out.ymin = screen_lo[1]; out.ymax = screen_hi[1];
+	out.usable = true;
+	return out;
+}
+bool shadow_sample_in_box(double x0, double x1, double y0, double y1) {
+	for (double s : {0.25, 0.75}) {
+		if (std::ceil(x0 - s) <= std::floor(x1 - s) &&
+				std::ceil(y0 - s) <= std::floor(y1 - s)) { return true; }
+	}
+	return false;
+}
+} // anonymous namespace
+
+// Fork(Lestoroer): opt-in experiment for the project's 512px MSAA2 shadow strip.
+Vector<int32_t> Geometry3D::filter_shadow_sample_coverage(
+		const Vector<Vector3> &p_vertices, const Vector<int32_t> &p_indices,
+		const Vector<uint8_t> &p_packed_mvp, const Rect2i &p_viewport) const {
+	ERR_FAIL_COND_V(p_indices.size() % 3 != 0, Vector<int32_t>());
+	ERR_FAIL_COND_V(p_packed_mvp.size() < 64, p_indices);
+	ERR_FAIL_COND_V(p_viewport.size != Vector2i(512, 512) || p_viewport.position.x != 0 ||
+			p_viewport.position.y < 0 || p_viewport.position.y > 3584 || p_viewport.position.y % 512 != 0, p_indices);
+	if (p_indices.is_empty()) {
+		return p_indices;
+	}
+	const Vector<int32_t> &original = p_indices;
+	const int32_t *indices = original.ptr();
+	for (int i = 0; i < original.size(); ++i) {
+		ERR_FAIL_INDEX_V(indices[i], p_vertices.size(), Vector<int32_t>());
+	}
+	Projection p_mvp;
+	for (int column = 0; column < 4; ++column) {
+		for (int row = 0; row < 4; ++row) {
+			p_mvp[column][row] = decode_float(p_packed_mvp.ptr() + (column * 4 + row) * 4);
+		}
+	}
+	// One 1/16px subpixel unit also covers devices with four fractional bits.
+	const double margin = 0.0625;
+	Vector<ShadowSampleVertex> projected;
+	projected.resize(p_vertices.size());
+	ShadowSampleVertex *pv = projected.ptrw();
+	const Vector3 *vertices = p_vertices.ptr();
+	for (int i = 0; i < p_vertices.size(); ++i) {
+		pv[i] = shadow_project(vertices[i], p_mvp, p_viewport);
+	}
+	Vector<int32_t> result;
+	result.resize(original.size());
+	int32_t *dst = result.ptrw();
+	int used = 0;
+	for (int i = 0; i < original.size(); i += 3) {
+		const ShadowSampleVertex &a = pv[indices[i]], &b = pv[indices[i + 1]], &c = pv[indices[i + 2]];
+		bool retain = !a.usable || !b.usable || !c.usable;
+		if (!retain) {
+			const double x0 = shadow_down(std::min({a.xmin, b.xmin, c.xmin}) - margin);
+			const double x1 = shadow_up(std::max({a.xmax, b.xmax, c.xmax}) + margin);
+			const double y0 = shadow_down(std::min({a.ymin, b.ymin, c.ymin}) - margin);
+			const double y1 = shadow_up(std::max({a.ymax, b.ymax, c.ymax}) + margin);
+			retain = shadow_sample_in_box(x0, x1, y0, y1);
+		}
+		if (retain) {
+			dst[used++] = indices[i]; dst[used++] = indices[i + 1]; dst[used++] = indices[i + 2];
+		}
+	}
+	result.resize(used);
+	return result;
+}
+
 void Geometry3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("filter_shadow_sample_coverage", "vertices", "indices", "packed_mvp", "viewport"), &Geometry3D::filter_shadow_sample_coverage);
 	ClassDB::bind_method(D_METHOD("compute_convex_mesh_points", "planes"), &Geometry3D::compute_convex_mesh_points);
 	ClassDB::bind_method(D_METHOD("build_box_planes", "extents"), &Geometry3D::build_box_planes);
 	ClassDB::bind_method(D_METHOD("build_cylinder_planes", "radius", "height", "sides", "axis"), &Geometry3D::build_cylinder_planes, DEFVAL(Vector3::AXIS_Z));
