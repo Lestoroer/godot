@@ -3238,10 +3238,10 @@ void TextureStorage::_texture_format_from_rd(RD::DataFormat p_rd_format, Texture
 		case RD::DATA_FORMAT_D16_UNORM: {
 			r_format.image_format = Image::FORMAT_R16;
 			r_format.rd_format = RD::DATA_FORMAT_D16_UNORM;
-			// Fork(Lestoroer): swizzle stays identity (upstream had R,ZERO,ZERO,ONE):
-			// Vulkan forbids non-identity swizzle with Dref (compare) sampling, and a
-			// D16 shadow atlas is sampled through Texture2DArrayRD + sampler2DArrayShadow
-			// (same reasoning as the packed depth formats below).
+			r_format.swizzle_r = RD::TEXTURE_SWIZZLE_R;
+			r_format.swizzle_g = RD::TEXTURE_SWIZZLE_ZERO;
+			r_format.swizzle_b = RD::TEXTURE_SWIZZLE_ZERO;
+			r_format.swizzle_a = RD::TEXTURE_SWIZZLE_ONE;
 		} break;
 		case RD::DATA_FORMAT_D32_SFLOAT: {
 			r_format.image_format = Image::FORMAT_RF;
@@ -3310,36 +3310,6 @@ void TextureStorage::_texture_format_from_rd(RD::DataFormat p_rd_format, Texture
 		case RD::DATA_FORMAT_R16G16B16A16_UINT: {
 			r_format.image_format = Image::FORMAT_RGBA16I;
 			r_format.rd_format = RD::DATA_FORMAT_R16G16B16A16_UINT;
-			r_format.swizzle_r = RD::TEXTURE_SWIZZLE_R;
-			r_format.swizzle_g = RD::TEXTURE_SWIZZLE_G;
-			r_format.swizzle_b = RD::TEXTURE_SWIZZLE_B;
-			r_format.swizzle_a = RD::TEXTURE_SWIZZLE_A;
-		} break;
-
-		// Fork(Lestoroer): packed depth(+stencil) formats, so TextureXDRD wrappers can expose
-		// depth textures (e.g. a custom shadow atlas sampled via sampler2DArrayShadow).
-		// Image::Format has no depth equivalents — report RF metadata; CPU get_data of such
-		// wrappers is unsupported. Unlike the D16/D32F cases above, swizzle stays identity:
-		// Vulkan forbids non-identity swizzle with Dref (compare) sampling.
-		case RD::DATA_FORMAT_X8_D24_UNORM_PACK32: {
-			r_format.image_format = Image::FORMAT_RF;
-			r_format.rd_format = RD::DATA_FORMAT_X8_D24_UNORM_PACK32;
-		} break;
-		case RD::DATA_FORMAT_D24_UNORM_S8_UINT: {
-			r_format.image_format = Image::FORMAT_RF;
-			r_format.rd_format = RD::DATA_FORMAT_D24_UNORM_S8_UINT;
-		} break;
-		case RD::DATA_FORMAT_D32_SFLOAT_S8_UINT: {
-			r_format.image_format = Image::FORMAT_RF;
-			r_format.rd_format = RD::DATA_FORMAT_D32_SFLOAT_S8_UINT;
-		} break;
-
-		// Fork(Lestoroer): 128-bit uint texel data (usampler2D globals, e.g. packed-half
-		// light slots). Image::Format has no 4x32 uint equivalent — report RGBAF metadata
-		// (same 16 B/texel); CPU get_data of such wrappers is unsupported.
-		case RD::DATA_FORMAT_R32G32B32A32_UINT: {
-			r_format.image_format = Image::FORMAT_RGBAF;
-			r_format.rd_format = RD::DATA_FORMAT_R32G32B32A32_UINT;
 			r_format.swizzle_r = RD::TEXTURE_SWIZZLE_R;
 			r_format.swizzle_g = RD::TEXTURE_SWIZZLE_G;
 			r_format.swizzle_b = RD::TEXTURE_SWIZZLE_B;

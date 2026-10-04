@@ -677,7 +677,6 @@ static const GLenum target_from_type[ShaderLanguage::TYPE_MAX] = {
 	GL_TEXTURE_CUBE_MAP, // TYPE_SAMPLERCUBE,
 	GL_TEXTURE_CUBE_MAP, // TYPE_SAMPLERCUBEARRAY,
 	_GL_TEXTURE_EXTERNAL_OES, // TYPE_SAMPLEREXT
-	GL_TEXTURE_2D_ARRAY, // TYPE_SAMPLER2DARRAYSHADOW (Fork(Lestoroer); not supported in Compatibility)
 	GL_TEXTURE_2D, // TYPE_STRUCT
 };
 
@@ -1057,9 +1056,6 @@ RID MaterialData::get_default_texture_id(ShaderLanguage::DataType p_type, Shader
 		} break;
 		case ShaderLanguage::TYPE_SAMPLEREXT: {
 			gl_texture = texture_storage->texture_gl_get_default(DEFAULT_GL_TEXTURE_EXT);
-		} break;
-		case ShaderLanguage::TYPE_SAMPLER2DARRAYSHADOW: { // Fork(Lestoroer)
-			ERR_PRINT_ONCE("Type: sampler2DArrayShadow is not supported in the Compatibility renderer, please use another type.");
 		} break;
 
 		case ShaderLanguage::TYPE_ISAMPLER3D:
@@ -2053,9 +2049,7 @@ void MaterialStorage::global_shader_parameters_load_settings(bool p_load_texture
 				"sampler2DArray",
 				"sampler3D",
 				"samplerCube",
-				"samplerExternalOES",
-				"sampler2DArrayShadow", // Fork(Lestoroer)
-				"usampler2D" // Fork(Lestoroer)
+				"samplerExternalOES"
 			};
 
 			RSE::GlobalShaderParameterType gvtype = RSE::GLOBAL_VAR_TYPE_MAX;

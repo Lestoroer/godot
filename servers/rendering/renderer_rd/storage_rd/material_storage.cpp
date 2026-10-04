@@ -1138,11 +1138,6 @@ RID MaterialStorage::MaterialData::get_default_texture_id(ShaderLanguage::DataTy
 			}
 		} break;
 
-		case ShaderLanguage::TYPE_SAMPLER2DARRAYSHADOW: {
-			// Fork(Lestoroer): compare sampling requires a depth-format view; color defaults are illegal for Dref.
-			rd_texture = texture_storage->texture_rd_get_default(TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_DEPTH);
-		} break;
-
 		default: {
 		}
 	}
@@ -1985,8 +1980,6 @@ void MaterialStorage::global_shader_parameters_load_settings(bool p_load_texture
 				"sampler3D",
 				"samplerCube",
 				"samplerExternalOES",
-				"sampler2DArrayShadow", // Fork(Lestoroer)
-				"usampler2D", // Fork(Lestoroer)
 			};
 
 			RSE::GlobalShaderParameterType gvtype = RSE::GLOBAL_VAR_TYPE_MAX;
