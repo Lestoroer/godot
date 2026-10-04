@@ -9,6 +9,16 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="filter_shadow_sample_coverage" qualifiers="const">
+			<return type="PackedInt32Array" />
+			<param index="0" name="vertices" type="PackedVector3Array" />
+			<param index="1" name="indices" type="PackedInt32Array" />
+			<param index="2" name="packed_mvp" type="PackedByteArray" />
+			<param index="3" name="viewport" type="Rect2i" />
+			<description>
+				Experimental fork helper. Filters indexed filled triangles whose projected bounds contain no standard MSAA2 sample, preserving source index order. Inputs must match the actual FP32 vertex buffer and column-major MVP push bytes. The viewport must be a 512 by 512 tile in a vertical strip of at most eight tiles. Requires standard MSAA2 sample locations, no conservative rasterization, and at least four subpixel bits. Uncertain clipping and non-finite projections retain the original triangle. Empty output means skip the draw. Fixed-function arithmetic uses an engineering error envelope and still requires device validation; this method is not enabled by the renderer automatically.
+			</description>
+		</method>
 		<method name="build_box_planes">
 			<return type="Plane[]" />
 			<param index="0" name="extents" type="Vector3" />
