@@ -131,7 +131,6 @@ const char *ShaderLanguage::token_names[TK_MAX] = {
 	"TYPE_SAMPLERCUBE",
 	"TYPE_SAMPLERCUBEARRAY",
 	"TYPE_SAMPLEREXT",
-	"TYPE_SAMPLER2DARRAYSHADOW", // Fork(Lestoroer)
 	"INTERPOLATION_FLAT",
 	"INTERPOLATION_SMOOTH",
 	"CONST",
@@ -325,7 +324,6 @@ const ShaderLanguage::KeyWord ShaderLanguage::keyword_list[] = {
 	{ TK_TYPE_SAMPLERCUBE, "samplerCube", KCF_SAMPLER_DATATYPE, {}, {} },
 	{ TK_TYPE_SAMPLERCUBEARRAY, "samplerCubeArray", KCF_SAMPLER_DATATYPE, {}, {} },
 	{ TK_TYPE_SAMPLEREXT, "samplerExternalOES", KCF_SAMPLER_DATATYPE, {}, {} },
-	{ TK_TYPE_SAMPLER2DARRAYSHADOW, "sampler2DArrayShadow", KCF_SAMPLER_DATATYPE, {}, {} }, // Fork(Lestoroer)
 
 	// interpolation qualifiers
 
@@ -1046,8 +1044,7 @@ bool ShaderLanguage::is_token_datatype(TokenType p_type) {
 			p_type == TK_TYPE_USAMPLER3D ||
 			p_type == TK_TYPE_SAMPLERCUBE ||
 			p_type == TK_TYPE_SAMPLERCUBEARRAY ||
-			p_type == TK_TYPE_SAMPLEREXT ||
-			p_type == TK_TYPE_SAMPLER2DARRAYSHADOW); // Fork(Lestoroer)
+			p_type == TK_TYPE_SAMPLEREXT);
 }
 
 ShaderLanguage::DataType ShaderLanguage::get_token_datatype(TokenType p_type) {
@@ -1184,8 +1181,6 @@ String ShaderLanguage::get_datatype_name(DataType p_type) {
 			return "samplerCubeArray";
 		case TYPE_SAMPLEREXT:
 			return "samplerExternalOES";
-		case TYPE_SAMPLER2DARRAYSHADOW: // Fork(Lestoroer)
-			return "sampler2DArrayShadow";
 		case TYPE_STRUCT:
 			return "struct";
 		case TYPE_MAX:
@@ -3229,8 +3224,6 @@ const ShaderLanguage::BuiltinFuncDef ShaderLanguage::builtin_func_defs[] = {
 	{ "texture", TYPE_VEC4, { TYPE_SAMPLERCUBEARRAY, TYPE_VEC4, TYPE_FLOAT, TYPE_VOID }, { "sampler", "coords", "bias" }, TAG_GLOBAL, false },
 	{ "texture", TYPE_VEC4, { TYPE_SAMPLEREXT, TYPE_VEC2, TYPE_VOID }, { "sampler", "coords" }, TAG_GLOBAL, false },
 	{ "texture", TYPE_VEC4, { TYPE_SAMPLEREXT, TYPE_VEC2, TYPE_FLOAT, TYPE_VOID }, { "sampler", "coords", "bias" }, TAG_GLOBAL, false },
-	// Fork(Lestoroer): hardware depth-compare fetch; coords = (uv.xy, layer, compare_ref). No bias/Lod overloads (GLSL forbids them for 2DArrayShadow).
-	{ "texture", TYPE_FLOAT, { TYPE_SAMPLER2DARRAYSHADOW, TYPE_VEC4, TYPE_VOID }, { "sampler", "coords" }, TAG_GLOBAL, false },
 
 	// textureProj
 
@@ -4613,8 +4606,7 @@ Variant ShaderLanguage::constant_value_to_variant(const Vector<Scalar> &p_value,
 			case ShaderLanguage::TYPE_USAMPLER3D:
 			case ShaderLanguage::TYPE_SAMPLERCUBE:
 			case ShaderLanguage::TYPE_SAMPLERCUBEARRAY:
-			case ShaderLanguage::TYPE_SAMPLEREXT:
-			case ShaderLanguage::TYPE_SAMPLER2DARRAYSHADOW: { // Fork(Lestoroer)
+			case ShaderLanguage::TYPE_SAMPLEREXT: {
 				// Texture types, likely not relevant here.
 				break;
 			}
@@ -5141,17 +5133,6 @@ PropertyInfo ShaderLanguage::uniform_to_property_info(const ShaderNode::Uniform 
 				pi.hint_string = "ExternalTexture";
 			}
 		} break;
-		case ShaderLanguage::TYPE_SAMPLER2DARRAYSHADOW: { // Fork(Lestoroer): depth-format layered texture (e.g. Texture2DArrayRD over a depth atlas).
-			if (p_uniform.array_size > 0) {
-				pi.type = Variant::ARRAY;
-				pi.hint = PROPERTY_HINT_ARRAY_TYPE;
-				pi.hint_string = MAKE_RESOURCE_TYPE_HINT("TextureLayered");
-			} else {
-				pi.type = Variant::OBJECT;
-				pi.hint = PROPERTY_HINT_RESOURCE_TYPE;
-				pi.hint_string = "TextureLayered";
-			}
-		} break;
 		case ShaderLanguage::TYPE_STRUCT: {
 			// FIXME: Implement this.
 		} break;
@@ -5226,8 +5207,6 @@ uint32_t ShaderLanguage::get_datatype_size(ShaderLanguage::DataType p_type) {
 		case TYPE_SAMPLERCUBEARRAY:
 			return 16;
 		case TYPE_SAMPLEREXT:
-			return 16;
-		case TYPE_SAMPLER2DARRAYSHADOW: // Fork(Lestoroer)
 			return 16;
 		case TYPE_STRUCT:
 			return 0;
@@ -5371,7 +5350,6 @@ ShaderLanguage::DataType ShaderLanguage::get_scalar_type(DataType p_type) {
 		TYPE_FLOAT,
 		TYPE_FLOAT,
 		TYPE_FLOAT,
-		TYPE_FLOAT, // Fork(Lestoroer): TYPE_SAMPLER2DARRAYSHADOW
 		TYPE_VOID,
 	};
 
@@ -5414,7 +5392,6 @@ int ShaderLanguage::get_cardinality(DataType p_type) {
 		1,
 		1,
 		1,
-		1, // Fork(Lestoroer): TYPE_SAMPLER2DARRAYSHADOW
 		1,
 	};
 
