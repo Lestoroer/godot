@@ -1986,7 +1986,6 @@ void MaterialStorage::global_shader_parameters_load_settings(bool p_load_texture
 				"samplerCube",
 				"samplerExternalOES",
 				"sampler2DArrayShadow", // Fork(Lestoroer)
-				"usampler2D", // Fork(Lestoroer)
 			};
 
 			RSE::GlobalShaderParameterType gvtype = RSE::GLOBAL_VAR_TYPE_MAX;

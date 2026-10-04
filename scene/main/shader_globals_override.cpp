@@ -209,11 +209,6 @@ void ShaderGlobalsOverride::_get_property_list(List<PropertyInfo> *p_list) const
 				pinfo.hint = PROPERTY_HINT_RESOURCE_TYPE;
 				pinfo.hint_string = "TextureLayered";
 			} break;
-			case RSE::GLOBAL_VAR_TYPE_USAMPLER2D: { // Fork(Lestoroer)
-				pinfo.type = Variant::OBJECT;
-				pinfo.hint = PROPERTY_HINT_RESOURCE_TYPE;
-				pinfo.hint_string = "Texture2D";
-			} break;
 			default: {
 			} break;
 		}

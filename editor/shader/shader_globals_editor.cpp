@@ -73,7 +73,6 @@ static const char *global_var_type_names[RSE::GLOBAL_VAR_TYPE_MAX] = {
 	"samplerCube",
 	"samplerExternalOES",
 	"sampler2DArrayShadow", // Fork(Lestoroer)
-	"usampler2D", // Fork(Lestoroer)
 };
 
 class ShaderGlobalsEditorInterface : public Object {
@@ -251,11 +250,6 @@ protected:
 					pinfo.hint = PROPERTY_HINT_RESOURCE_TYPE;
 					pinfo.hint_string = "TextureLayered";
 				} break;
-				case RSE::GLOBAL_VAR_TYPE_USAMPLER2D: { // Fork(Lestoroer)
-					pinfo.type = Variant::OBJECT;
-					pinfo.hint = PROPERTY_HINT_RESOURCE_TYPE;
-					pinfo.hint_string = "Texture2D";
-				} break;
 				default: {
 				} break;
 			}
@@ -367,9 +361,6 @@ static Variant create_var(RSE::GlobalShaderParameterType p_type) {
 			return "";
 		}
 		case RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAYSHADOW: { // Fork(Lestoroer)
-			return "";
-		}
-		case RSE::GLOBAL_VAR_TYPE_USAMPLER2D: { // Fork(Lestoroer)
 			return "";
 		}
 		default: {
