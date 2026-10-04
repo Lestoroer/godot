@@ -140,7 +140,7 @@ git push origin 4.7-base
 Движок в APK приходит НЕ из редактора, а из `godot-lib.template_release.aar` в gradle-шаблоне
 проекта (`<проект>/android/build/libs/release/`) — после ЛЮБОГО форк-патча движка пересобрать,
 иначе APK живёт без патчей. Симптомы: старая версия движка на шлеме; SCRIPT ERROR
-`viewport_get_depth_texture_rd() not found` на шлеме при живом десктопе (поймали 05.07.2026).
+о ненайденном методе форка на шлеме при живом десктопе (поймали 05.07.2026).
 Рецепт (Windows, ~5 мин; NDK 29.0.14206865 через sdkmanager, cmdline-tools лежат как `11.0`):
 ```bash
 cd /d/Godot/godot
@@ -189,59 +189,23 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 
 ## Текущая база
 **`4.7.2-stable`** — официальный тег Godot, commit `ed1daf0bf0`. Влит в
-`lestoroer/main` 22.08.2026 merge-коммитом `4ae2727fa6`; семь групп патчей форка из
-инвентаря ниже сохранены. Якорь состояния непосредственно до обновления — теги
+`lestoroer/main` 22.08.2026 merge-коммитом `4ae2727fa6`. Сейчас в `lestoroer/main` четыре
+группы патчей из инвентаря ниже; четыре неиспользуемых удалены 05.10.2026. Якорь состояния непосредственно до обновления — теги
 `fork-pre-update` и `fork-pre-4.7.2-stable`; исторические якоря —
 `fork-pre-4.7-stable` и `fork-pre-4.7-upgrade`.
 
 ## Инвентарь патчей
 Все строки патчей помечены `Fork(Lestoroer)` в комментарии — greppable. Формат: ветка | файлы | зачем.
 
-1. **viewport depth-доступ** | `lestoroer/feat-vu-shadows` | `rendering_server.{h,cpp}`,
-   `rendering_server_default.h`, `renderer_viewport.{h,cpp}`, `storage/render_scene_buffers.h`,
-   `storage_rd/render_scene_buffers_rd.{h,cpp}`, `storage_rd/texture_storage.cpp`,
-   `doc/classes/RenderingServer.xml` | `RenderingServer.viewport_get_depth_texture_rd(viewport)`
-   — сырой RD-RID depth-текстуры 3D-рендера вьюпорта (кастомные тени Voxel Underworld: копия
-   depth-тайла в свой атлас). Плюс: depth получает `CAN_COPY_FROM` usage (attachment-ветка
-   `get_depth_usage_bits`), packed depth(+stencil) форматы поддержаны в `TextureXDRD`-обёртках
-   (`_texture_format_from_rd`, identity-swizzle — обязателен для Dref).
+Удалены 05.10.2026 как неиспользуемые: ни Voxel Underworld, ни Interior Star их не вызывали
+(тени VU перешли на VSM с обычным `sampler2DArray` и R16G16, данные света — на RGBA16F):
+доступ к depth-текстуре вьюпорта (`viewport_get_depth_texture_rd`), `sampler2DArrayShadow` в
+языке шейдеров и Shader Globals, identity-swizzle D16, `usampler2D` в Shader Globals с форматом
+`R32G32B32A32_UINT`. Откат — revert-коммиты ветки `lestoroer/chore-remove-unused-vu-patches`;
+исходные ветки `lestoroer/feat-vu-shadows`, `lestoroer/fix-d16-swizzle`,
+`lestoroer/feat-vu-uint-globals` сохранены — понадобятся снова, вливать их обратно merge'ем.
 
-2. **sampler2DArrayShadow в gdshader** | `lestoroer/feat-vu-shadows` | `shader_language.{h,cpp}`,
-   `shader_compiler.cpp`, `storage_rd/material_storage.cpp`, `gles3/storage/material_storage.cpp`
-   | Новый сэмплер-тип шейдерного языка: аппаратный depth-compare семпл (2x2 PCF бесплатно на
-   Adreno/Apple). Использует ГОТОВЫЙ immutable `shadow_sampler` сцены (set0/binding2, GREATER,
-   linear) — работает только в spatial-шейдерах (в canvas/sky/particles GLSL-ошибка «undeclared
-   shadow_sampler»; ок для нашего использования). В Compatibility (GLES3) тип не поддержан
-   (ERR_PRINT_ONCE, как samplerCubeArray). ВАЖНО про enum: тип вставлен между `TYPE_SAMPLEREXT`
-   и `TYPE_STRUCT` СИНХРОННО в TokenType/DataType/token_names (get_token_datatype — арифметика,
-   is_sampler_type — диапазон); DataType-индексированные таблицы (`scalar_types`,
-   `cardinality_table`, gles3 `target_from_type`) дополнены — при апгрейде свежедобавленные
-   upstream'ом таблицы ловятся их же static_assert'ами.
-
-3. **identity-swizzle для D16** | `lestoroer/fix-d16-swizzle` | `storage_rd/texture_storage.cpp`
-   (`_texture_format_from_rd`, кейс `DATA_FORMAT_D16_UNORM`) | Upstream задавал swizzle
-   R,ZERO,ZERO,ONE — Vulkan запрещает non-identity swizzle при Dref (compare) семпле; D16-атлас
-   теней Voxel Underworld (вариант D: RD depth-only пасс) семплится через Texture2DArrayRD +
-   sampler2DArrayShadow и требует identity (как packed depth-форматы патча №1).
-
-4. **usampler2D в Shader Globals + uint-формат RD-обёрток** | `lestoroer/feat-vu-uint-globals` |
-   global-тип: `rendering_server_enums.h`, `rendering_server.cpp`, три таблицы
-   `global_var_type_names` (storage_rd/dummy/gles3 material_storage), `shader_globals_editor.cpp`,
-   `shader_globals_override.cpp`; формат: `storage_rd/texture_storage.cpp`
-   (`_texture_format_from_rd`, кейс `R32G32B32A32_UINT`)
-   | Тип `usampler2D` для Shader Globals (`GLOBAL_VAR_TYPE_USAMPLER2D`, добавлен В КОНЕЦ enum'а;
-   сам язык шейдеров usampler2D знает апстримно — патч лишь проводит тип через глобалы) +
-   маппинг `DATA_FORMAT_R32G32B32A32_UINT` в `_texture_format_from_rd` (метаданные RGBAF,
-   те же 16 Б/тексель; CPU get_data не поддержан). Без формата RS-обёртка
-   `texture_rd_create` над uint-текстурой МОЛЧА остаётся неинициализированной (ERR в
-   ОТЛОЖЕННОЙ инициализации не всплывает к вызывающему), и глобал-семплер вечно
-   резолвится в движковый 4x4-дефолт — ловили сутки 06.07.2026. Потребитель:
-   `vu_cull_data` (упакованные half-слоты света). NB для потребителей: RS-обёртку для
-   глобала создавать синхронным `RenderingServer.texture_rd_create(rd_rid)`, НЕ через
-   `Texture2DRD.get_rid()` — тот до исполнения отложенного колбэка отдаёт
-   placeholder-RID, который никогда не станет настоящей текстурой.
-
-5. **offscreen Vulkan для агентных тестов на Windows** | `lestoroer/feat-offscreen-display` |
+1. **offscreen Vulkan для агентных тестов на Windows** | `lestoroer/feat-offscreen-display` |
    `servers/display/display_server_offscreen.{h,cpp}`, `platform/windows/display_server_windows.cpp`,
    `main/main.cpp`, `servers/rendering/rendering_device.{h,cpp}`,
    `tests/servers/test_display_server_registration.cpp` | Опциональный CLI-режим `--offscreen`:
@@ -263,7 +227,7 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    служебные HWND; они не являются окном Godot, не видны, не получают foreground и не входят в
    taskbar/Alt-Tab.
 
-6. **renderer-integrated outline в Forward Mobile** | `lestoroer/feat-highlight-outline` |
+2. **renderer-integrated outline в Forward Mobile** | `lestoroer/feat-highlight-outline` |
    API и instance state: `rendering_server.{h,cpp}`, `rendering_server_default.h`,
    `rendering_method.h`, `renderer_scene_cull.{h,cpp}`, `renderer_geometry_instance.{h,cpp}`,
    `doc/classes/RenderingServer.xml`; Forward Mobile:
@@ -309,7 +273,7 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    штатным счётчиком стенда (`118840` против `118836`). Предыдущий вариант с отдельным R8 MRT
    стоил около `+1.70 ms GPU` на этом же стенде и полностью удалён.
 
-7. **fast automated Android export** | `lestoroer/feat-fast-headless-android-export` |
+3. **fast automated Android export** | `lestoroer/feat-fast-headless-android-export` |
    `platform/android/export/export_plugin.cpp`, `editor/editor_interface.{h,cpp}`,
    `doc/classes/EditorInterface.xml` | Android exporter сохраняет рядом с
    установленным build template время последней Gradle-сборки, build-каталог и набор
@@ -325,7 +289,7 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    editor-плагину узкий способ запустить export из прогретого процесса без
    автоматизации GUI.
 
-8. **Dynamic viewport в RD из GDScript** | `codex/shadow-batch-viewport` |
+4. **Dynamic viewport в RD из GDScript** | `lestoroer/feat-rd-draw-list-viewport` |
    `servers/rendering/rendering_device.cpp`, `doc/classes/RenderingDevice.xml` |
    Привязан существующий `draw_list_set_viewport(draw_list, rect)` для пакетного
    рисования независимых тайлов теней в одном render pass. Реализация viewport,
@@ -341,7 +305,7 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 2. Порядок кадра сохранён: `call_on_render_thread` Callable исполняется в FIFO command_queue
    ДО `_draw` того же кадра (rendering_server_default: sync/draw).
 3. Барьеры RD всё ещё автоматические (RenderingDeviceGraph; ручные barrier() — no-op).
-4. Кейс D16 в `_texture_format_from_rd` остался identity (патч №3 не потерялся в конфликте).
+4. `draw_list_set_viewport` по-прежнему привязан в ClassDB (патч №4 не потерялся в конфликте).
 
 ### Чеклист апгрейда offscreen-режима
 1. `DisplayServer::register_create_function()` всё ещё оставляет headless последним;

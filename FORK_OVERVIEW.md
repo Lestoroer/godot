@@ -8,29 +8,6 @@
 
 ## Что изменено
 
-### Доступ к depth-текстуре viewport
-
-- Добавлен `RenderingServer.viewport_get_depth_texture_rd(viewport)` для
-  получения RD RID depth-текстуры 3D-вьюпорта.
-- Depth-текстуры создаются с возможностью копирования.
-- RD-обёртки поддерживают используемые проектом packed depth(+stencil) форматы.
-
-### Depth compare в gdshader
-
-- В язык шейдеров и Shader Globals добавлен `sampler2DArrayShadow`.
-- Он использует штатный shadow sampler сцены и предназначен для spatial-шейдеров.
-- Compatibility renderer (GLES3), canvas, sky и particles этот путь не поддерживают.
-
-### D16 depth-текстуры
-
-- Для `DATA_FORMAT_D16_UNORM` используется identity swizzle, необходимый Vulkan
-  для compare-семплинга.
-
-### Беззнаковые текстуры в Shader Globals
-
-- В Shader Globals добавлен `usampler2D`.
-- RD-обёртки поддерживают `DATA_FORMAT_R32G32B32A32_UINT` для этого пути.
-
 ### Фоновый GPU-рендеринг без окна
 
 - На Windows флаг `--offscreen` запускает настоящий Vulkan Mobile/Forward renderer
