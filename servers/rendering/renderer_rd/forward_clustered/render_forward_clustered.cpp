@@ -808,7 +808,7 @@ void RenderForwardClustered::SceneState::grow_instance_buffer(RenderListType p_r
 	}
 }
 
-void RenderForwardClustered::_fill_instance_data(RenderListType p_render_list, int *p_render_info, uint32_t p_offset, int32_t p_max_elements, bool p_update_buffer) {
+void RenderForwardClustered::_fill_instance_data(RenderListType p_render_list, int *p_render_info, uint32_t p_offset, int32_t p_max_elements, bool p_update_buffer, RenderGeometryInstanceBase *p_capture_geometry) {
 	RenderList *rl = &render_list[p_render_list];
 	uint32_t element_total = p_max_elements >= 0 ? uint32_t(p_max_elements) : rl->elements.size();
 
@@ -866,12 +866,14 @@ void RenderForwardClustered::_fill_instance_data(RenderListType p_render_list, i
 		instance_data.set_lightmap_uv_scale(inst->lightmap_uv_scale);
 
 		AABB surface_aabb = AABB(Vector3(0.0, 0.0, 0.0), Vector3(1.0, 1.0, 1.0));
-		uint64_t format = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_format(surface->surface);
+		// Decode the stream being drawn; material and instance state still belong to the source.
+		void *geometry_surface = p_capture_geometry ? RendererRD::MeshStorage::get_singleton()->mesh_get_surface(p_capture_geometry->data->base, surface->surface_index) : surface->surface;
+		uint64_t format = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_format(geometry_surface);
 		Vector4 uv_scale = Vector4(0.0, 0.0, 0.0, 0.0);
 
 		if (format & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES) {
-			surface_aabb = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_aabb(surface->surface);
-			uv_scale = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_uv_scale(surface->surface);
+			surface_aabb = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_aabb(geometry_surface);
+			uv_scale = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_uv_scale(geometry_surface);
 		}
 
 		instance_data.set_compressed_aabb(surface_aabb);
@@ -3041,6 +3043,11 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	cull_argument[0] = p_source;
 	RenderSceneDataRD scene_data;
 	scene_data.material_uv2_mode = true;
+	scene_data.camera_visible_layers = 0xFFFFFFFF;
+	scene_data.radiance_pixel_size = 0.0;
+	scene_data.radiance_border_size = 0.0;
+	scene_data.cam_projection.set_orthogonal(-1.0, 1.0, -1.0, 1.0, 0.1, 100.0);
+	scene_data.view_projection[0] = scene_data.cam_projection;
 	scene_data.surface_cache_capture = true;
 	scene_data.surface_cache_back_side = p_back_side;
 	scene_data.time = time;
@@ -3056,7 +3063,7 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	uint32_t uniform_buffer_index = _setup_environment(&render_data, true, RD::get_singleton()->framebuffer_get_size(p_framebuffer), p_region.size, Color());
 	_fill_render_list(RENDER_LIST_SECONDARY, &render_data, PASS_MODE_DEPTH_MATERIAL);
 	render_list[RENDER_LIST_SECONDARY].sort_by_key();
-	_fill_instance_data(RENDER_LIST_SECONDARY);
+	_fill_instance_data(RENDER_LIST_SECONDARY, nullptr, 0, -1, true, chart);
 	RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SECONDARY, nullptr, RID(), RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default(), uniform_buffer_index);
 	RenderListParameters params(render_list[RENDER_LIST_SECONDARY].elements.ptr(), render_list[RENDER_LIST_SECONDARY].element_info.ptr(), render_list[RENDER_LIST_SECONDARY].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
 	params.capture_geometry = chart;
