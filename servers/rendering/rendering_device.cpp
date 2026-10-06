@@ -6101,7 +6101,8 @@ void RenderingDevice::draw_list_draw(DrawListID p_list, bool p_use_indices, uint
 				_uniform_set_update_shared(uniform_set);
 				_uniform_set_update_clears(uniform_set);
 
-				draw_graph.add_draw_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
+				_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RASTERIZATION);
+			draw_graph.add_draw_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 				draw_list.state.sets[i].bound = true;
 
 				last_set_index = i;
@@ -6241,6 +6242,7 @@ void RenderingDevice::draw_list_draw_indirect(DrawListID p_list, bool p_use_indi
 			_uniform_set_update_shared(uniform_set);
 			_uniform_set_update_clears(uniform_set);
 
+			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RASTERIZATION);
 			draw_graph.add_draw_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 
 			draw_list.state.sets[i].bound = true;
@@ -6603,6 +6605,7 @@ void RenderingDevice::raytracing_list_trace_rays(RaytracingListID p_list, uint32
 			UniformSet *uniform_set = uniform_set_owner.get_or_null(raytracing_list.state.sets[i].uniform_set);
 			_uniform_set_update_shared(uniform_set);
 
+			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RAYTRACING);
 			draw_graph.add_raytracing_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 
 			raytracing_list.state.sets[i].bound = true;
@@ -6917,6 +6920,7 @@ void RenderingDevice::compute_list_dispatch(ComputeListID p_list, uint32_t p_x_g
 			_uniform_set_update_shared(uniform_set);
 			_uniform_set_update_clears(uniform_set);
 
+			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_COMPUTE);
 			draw_graph.add_compute_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 			compute_list.state.sets[i].bound = true;
 		}
@@ -7054,6 +7058,7 @@ void RenderingDevice::compute_list_dispatch_indirect(ComputeListID p_list, RID p
 			_uniform_set_update_shared(uniform_set);
 			_uniform_set_update_clears(uniform_set);
 
+			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_COMPUTE);
 			draw_graph.add_compute_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 			compute_list.state.sets[i].bound = true;
 		}
@@ -7537,6 +7542,28 @@ bool RenderingDevice::_index_array_make_mutable(IndexArray *p_index_array, RDG::
 		// Index array should assign the tracker from the buffer.
 		p_index_array->draw_tracker = p_resource_tracker;
 		return true;
+	}
+}
+
+// Fork(Lestoroer): a query reads every BLAS reachable through its TLAS. Track the
+// current references at dispatch time, since a uniform set can outlive a TLAS rebuild.
+void RenderingDevice::_uniform_set_track_acceleration_structures(UniformSet *p_uniform_set, PipelineType p_pipeline_type) {
+	for (RID tlas_id : p_uniform_set->acceleration_structures) {
+		AccelerationStructure *tlas = acceleration_structure_owner.get_or_null(tlas_id);
+		ERR_FAIL_NULL(tlas);
+		ERR_FAIL_COND_MSG(tlas->invalidated, "A shader cannot read an unbuilt or invalidated TLAS.");
+		for (RID blas_id : tlas->acceleration_structure_dependencies) {
+			AccelerationStructure *blas = acceleration_structure_owner.get_or_null(blas_id);
+			ERR_FAIL_NULL(blas);
+			RDG::ResourceUsage usage = RDG::RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ;
+			if (p_pipeline_type == PIPELINE_TYPE_COMPUTE) {
+				draw_graph.add_compute_list_usages(blas->draw_tracker, usage);
+			} else if (p_pipeline_type == PIPELINE_TYPE_RAYTRACING) {
+				draw_graph.add_raytracing_list_usages(blas->draw_tracker, usage);
+			} else {
+				draw_graph.add_draw_list_usages(blas->draw_tracker, usage);
+			}
+		}
 	}
 }
 

@@ -1741,6 +1741,7 @@ private:
 	bool _buffer_make_mutable(Buffer *p_buffer, RID p_buffer_id);
 	bool _vertex_array_make_mutable(VertexArray *p_vertex_array, RID p_resource_id, RDG::ResourceTracker *p_resource_tracker);
 	bool _index_array_make_mutable(IndexArray *p_index_array, RDG::ResourceTracker *p_resource_tracker);
+	void _uniform_set_track_acceleration_structures(UniformSet *p_uniform_set, PipelineType p_pipeline_type);
 	bool _uniform_set_make_mutable(UniformSet *p_uniform_set, RID p_resource_id, RDG::ResourceTracker *p_resource_tracker);
 	bool _acceleration_structure_make_mutable(AccelerationStructure *p_acceleration_structure, RID p_resource_id, RDG::ResourceTracker *p_resource_tracker);
 	bool _dependency_make_mutable(RID p_id, RID p_resource_id, RDG::ResourceTracker *p_resource_tracker);

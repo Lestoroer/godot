@@ -584,6 +584,11 @@ void RenderingDeviceGraph::_add_command_to_graph(ResourceTracker **p_resource_tr
 				r_command->memory_barrier.src_access = r_command->memory_barrier.src_access | resource_tracker->usage_access;
 				r_command->memory_barrier.dst_access = r_command->memory_barrier.dst_access | new_usage_access;
 			} else if (resource_tracker->acceleration_structure_driver_id.id != 0) {
+				// Fork(Lestoroer): preserve the normal AS dependency, extending only shader consumption.
+				if (driver_workarounds.ray_query_needs_memory_read_barrier && new_resource_usage == RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ &&
+						(r_command->self_stages.has_flag(RDD::PIPELINE_STAGE_COMPUTE_SHADER_BIT) || r_command->self_stages.has_flag(RDD::PIPELINE_STAGE_FRAGMENT_SHADER_BIT))) {
+					r_command->memory_barrier.dst_access = r_command->memory_barrier.dst_access | RDD::BARRIER_ACCESS_MEMORY_READ_BIT;
+				}
 				// Make sure the acceleration structure has been built before accessing it from raytracing shaders.
 				_add_acceleration_structure_barrier_to_command(resource_tracker->acceleration_structure_driver_id, resource_tracker->usage_access, new_usage_access, command_acceleration_structure_barriers, r_command->acceleration_structure_barrier_index, r_command->acceleration_structure_barrier_count);
 				r_command->memory_barrier.src_access = r_command->memory_barrier.src_access | resource_tracker->usage_access;

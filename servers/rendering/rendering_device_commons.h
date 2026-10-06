@@ -1051,6 +1051,7 @@ public:
 
 	// Driver workarounds that require higher level code and cannot be solely implemented in RenderingDeviceDriver.
 	struct DriverWorkarounds {
+		bool ray_query_needs_memory_read_barrier = false; // Fork(Lestoroer): NVIDIA 610.88 visibility regression.
 		bool avoid_compute_after_draw = false;
 		bool dont_print_on_render_pipeline_creation_failure = false;
 		bool disable_ubershaders = false;

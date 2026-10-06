@@ -498,7 +498,7 @@ void vertex_shader(vec3 vertex_input,
 
 #ifdef TANGENT_USED
 	tangent_interp = normalize(tangent);
-	binormal_interp = normalize(binormal);
+	binormal_interp = binormal * inversesqrt(max(dot(binormal, binormal), 1e-20));
 #endif
 
 #ifdef MODE_RENDER_DEPTH
@@ -759,7 +759,8 @@ void _unpack_vertex_attributes(vec4 p_vertex_in, vec3 p_compressed_aabb_position
 		vec2 signed_tangent_attrib = p_normal_in.zw * 2.0 - 1.0;
 		r_tangent = oct_to_vec3(vec2(signed_tangent_attrib.x, abs(signed_tangent_attrib.y) * 2.0 - 1.0));
 		binormal_sign = sign(signed_tangent_attrib.y);
-		r_binormal = normalize(cross(r_normal, r_tangent) * binormal_sign);
+		r_binormal = cross(r_normal, r_tangent) * binormal_sign;
+		r_binormal *= inversesqrt(max(dot(r_binormal, r_binormal), 1e-20));
 	} else {
 		// Compressed format.
 		float angle = p_vertex_in.w;

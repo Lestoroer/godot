@@ -689,6 +689,12 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 }
 
 void RenderingDeviceDriverVulkan::_check_driver_workarounds(const VkPhysicalDeviceProperties &p_device_properties, const VkPhysicalDeviceDriverPropertiesKHR *p_driver_properties) {
+	// Fork(Lestoroer): narrowly scoped to the driver verified by the build/write/query probe.
+	driver_workarounds.ray_query_needs_memory_read_barrier =
+			p_device_properties.vendorID == RenderingContextDriver::Vendor::VENDOR_NVIDIA &&
+			(p_device_properties.driverVersion >> 22) == 610 &&
+			((p_device_properties.driverVersion >> 14) & 0xFF) == 88 &&
+			!OS::get_singleton()->has_environment("SURFACE_CACHE_DISABLE_AS_VISIBILITY");
 	// Workaround a driver bug on Adreno 5XX GPUs that causes a crash when
 	// there are empty descriptor set layouts placed between non-empty ones.
 	adreno_5xx_empty_descriptor_set_layout_workaround =
