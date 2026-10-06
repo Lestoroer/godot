@@ -428,3 +428,9 @@ LOD пока не имеет соответствия primitive-to-chart. Это
 
 Дескрипторы Surface Cache объявлены во всех вариантах Forward+ (включая depth,
 shadow, unshaded), чтобы общий render-pass uniform set имел совместимый layout.
+
+### Surface Cache: TLAS для ray queries
+
+`hit_sbt_range = 0` допустим для query-only TLAS: Vulkan ray queries не читают
+SBT. RD больше не требует создавать фиктивный RT pipeline только ради query.
+Трассировка RT pipeline по-прежнему задаёт свои диапазоны SBT.

@@ -16,6 +16,7 @@
 			Flags for the instance.
 		</member>
 		<member name="hit_sbt_range" type="int" setter="set_hit_sbt_range" getter="get_hit_sbt_range" default="0">
+			Use [code]0[/code] for acceleration structures used only by ray queries; they do not access a shader binding table.
 			Hit shader binding table range used for this instance, allocated using the [method RenderingDevice.hit_sbt_range_alloc] method.
 		</member>
 		<member name="id" type="int" setter="set_id" getter="get_id" default="0">
