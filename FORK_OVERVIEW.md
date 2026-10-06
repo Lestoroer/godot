@@ -112,3 +112,6 @@ callback за кадр мира. Доступ к skin/morph-буферу не т
 
 Forward+ может выбирать diffuse irradiance из world-owned Surface Cache по
 исходной поверхности. Пользовательский IRRADIANCE заменяется до AO и тонемапа.
+
+Экспериментальная RT-интеграция использует Vulkan AS device addresses и раздельные
+диапазоны данных нескольких TLAS build в одном кадре.

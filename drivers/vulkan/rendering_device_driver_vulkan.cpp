@@ -1555,6 +1555,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 			device_functions.CreateAccelerationStructureKHR = PFN_vkCreateAccelerationStructureKHR(functions.GetDeviceProcAddr(vk_device, "vkCreateAccelerationStructureKHR"));
 			device_functions.DestroyAccelerationStructureKHR = PFN_vkDestroyAccelerationStructureKHR(functions.GetDeviceProcAddr(vk_device, "vkDestroyAccelerationStructureKHR"));
 			device_functions.GetAccelerationStructureBuildSizesKHR = PFN_vkGetAccelerationStructureBuildSizesKHR(functions.GetDeviceProcAddr(vk_device, "vkGetAccelerationStructureBuildSizesKHR"));
+			device_functions.GetAccelerationStructureDeviceAddressKHR = PFN_vkGetAccelerationStructureDeviceAddressKHR(functions.GetDeviceProcAddr(vk_device, "vkGetAccelerationStructureDeviceAddressKHR"));
 			device_functions.CmdBuildAccelerationStructuresKHR = PFN_vkCmdBuildAccelerationStructuresKHR(functions.GetDeviceProcAddr(vk_device, "vkCmdBuildAccelerationStructuresKHR"));
 		}
 
@@ -6439,7 +6440,8 @@ void RenderingDeviceDriverVulkan::acceleration_structure_instance_write(uint8_t 
 
 	if (p_instance.blas) {
 		const AccelerationStructureInfo *blas_info = (const AccelerationStructureInfo *)p_instance.blas.id;
-		vk_instance->accelerationStructureReference = buffer_get_device_address(blas_info->buffer);
+		// Fork(Lestoroer): an AS address is not necessarily its backing buffer address.
+		vk_instance->accelerationStructureReference = blas_info->device_address;
 	} else {
 		vk_instance->accelerationStructureReference = 0;
 	}
@@ -6468,6 +6470,10 @@ void RenderingDeviceDriverVulkan::_acceleration_structure_create(VkAccelerationS
 	accel_create_info.buffer = ((const BufferInfo *)buffer.id)->vk_buffer;
 	VkResult err = device_functions.CreateAccelerationStructureKHR(vk_device, &accel_create_info, nullptr, &r_accel_info->vk_acceleration_structure);
 	ERR_FAIL_COND_MSG(err, vformat("Couldn't create Vulkan raytracing acceleration structure (VkResult error %d).", err));
+	VkAccelerationStructureDeviceAddressInfoKHR address_info = {};
+	address_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+	address_info.accelerationStructure = r_accel_info->vk_acceleration_structure;
+	r_accel_info->device_address = device_functions.GetAccelerationStructureDeviceAddressKHR(vk_device, &address_info);
 	r_accel_info->build_info.dstAccelerationStructure = r_accel_info->vk_acceleration_structure;
 #endif
 }
