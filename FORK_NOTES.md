@@ -447,3 +447,6 @@ UV2 bake (смещённый wireframe и затем внутренний про
 Регрессия: main RD, build → compute-запись вершин → rebuild → query в одном кадре;
 проверка `lighting/surface_cache/probes/main_rd_query.gd` в изолированной игре.
 
+
+Временная диагностика этого дефекта: `SURFACE_CACHE_GRAPH_TRACE` включает
+порядок команд и зависимости сборки AS; по умолчанию выключена.
