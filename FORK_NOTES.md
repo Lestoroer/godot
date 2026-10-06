@@ -438,3 +438,12 @@ SBT. RD больше не требует создавать фиктивный R
 Capture хранит нормаль напрямую в RGBA16F: нормализация лучей не зависит от
 8-bit best-fit lookup. Тонкие границы chart покрываются штатной стратегией
 UV2 bake (смещённый wireframe и затем внутренний проход), без слияния chart ID.
+
+### Surface Cache: глобальная видимость AS для ray query
+
+В экспериментальной ветке Vulkan при включённом `rayQuery` сохраняет
+`ACCELERATION_STRUCTURE_READ` в глобальных memory barriers. Барьер только
+на буфере TLAS не покрывает читаемые через него BLAS и scratch повторной сборки.
+Регрессия: main RD, build → compute-запись вершин → rebuild → query в одном кадре;
+проверка `lighting/surface_cache/probes/main_rd_query.gd` в изолированной игре.
+
