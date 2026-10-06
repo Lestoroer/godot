@@ -380,7 +380,7 @@ public:
 	void _surface_cache_queue(Instance *p_instance, uint32_t p_flags) const;
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) override;
 	virtual Array scenario_surface_cache_poll(RID p_scenario) override;
-	virtual void scenario_set_surface_cache_buffers(RID p_scenario, const Vector<RID> &p_buffers) override;
+	virtual void scenario_set_surface_cache_buffers(RID p_scenario, const TypedArray<RID> &p_buffers) override;
 	virtual void instance_set_surface_cache_ids(RID p_instance, const Vector<int32_t> &p_ids) override;
 	virtual Dictionary instance_get_deformed_surface(RID p_instance, int p_surface) const override;
 	virtual void scenario_set_environment(RID p_scenario, RID p_environment);

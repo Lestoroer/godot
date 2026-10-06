@@ -546,11 +546,12 @@ void RendererSceneCull::scenario_set_surface_cache_callback(RID p_scenario, cons
 	}
 }
 
-void RendererSceneCull::scenario_set_surface_cache_buffers(RID p_scenario, const Vector<RID> &p_buffers) {
+void RendererSceneCull::scenario_set_surface_cache_buffers(RID p_scenario, const TypedArray<RID> &p_buffers) {
 	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
 	ERR_FAIL_NULL(scenario);
 	ERR_FAIL_COND(p_buffers.size() != 0 && p_buffers.size() != 4);
-	scenario->surface_cache_buffers = p_buffers;
+	scenario->surface_cache_buffers.resize(p_buffers.size());
+	for (int i = 0; i < p_buffers.size(); i++) scenario->surface_cache_buffers.write[i] = p_buffers[i];
 }
 
 void RendererSceneCull::instance_set_surface_cache_ids(RID p_instance, const Vector<int32_t> &p_ids) {
