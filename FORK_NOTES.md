@@ -196,6 +196,13 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 `fork-pre-4.7-stable` и `fork-pre-4.7-upgrade`.
 
 ## Инвентарь патчей
+
+Эксперимент Interior Star GI: `servers/rendering/rendering_shader_container.cpp`
+исправляет маску доступности ресурсов и push constants для стадий трассировки:
+значения `ShaderStage` — индексы, поэтому маска собирается через `1U << stage`.
+Бинарь из отдельного worktree используется только для `lab/gi.tscn`; обычный
+редактор в `D:\Godot\godot\bin` этим экспериментом не заменяется.
+
 Все строки патчей помечены `Fork(Lestoroer)` в комментарии — greppable. Формат: ветка | файлы | зачем.
 
 Удалены 05.10.2026 как неиспользуемые: ни Voxel Underworld, ни Interior Star их не вызывали
