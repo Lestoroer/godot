@@ -8,13 +8,13 @@
 
 ## Что изменено
 
-### Архив GI для Interior Star
+### Архив surface path tracing GI для Interior Star
 
 Эта ветка содержит незавершённый эксперимент аппаратного рассеянного GI:
 сбор видимых поверхностей, трассировку и выборку освещения в Forward+, включая
 деформированную геометрию. Она изолирована от `lestoroer/main`; обычная сборка
 Godot не содержит этих возможностей. Воспроизводимая сборка и проверки принадлежат
-`lighting/gi` ветки `codex/gi-architecture` игры Interior Star.
+`lighting/gi` ветки `codex/gi-surface-path-tracing` игры Interior Star.
 
 ### Фоновый GPU-рендеринг без окна
 

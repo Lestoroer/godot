@@ -197,12 +197,12 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 
 ## Инвентарь патчей
 
-### Архив эксперимента Interior Star GI
+### Архив surface path tracing GI для Interior Star
 
-Ветка `codex/gi-architecture` сохраняет эксперимент на базе `c4e9b0fd43777eaa8ddbe0170f7cc9e5878e4457`.
+Ветка `codex/gi-surface-path-tracing` сохраняет эксперимент на базе `c4e9b0fd43777eaa8ddbe0170f7cc9e5878e4457`.
 Он не входит в `lestoroer/main` и не используется обычным редактором. Парная ветка
-игры — `codex/gi-architecture` в `gitlab.com/joijta/is-game`. Предыдущий вариант DDGI
-сохранён отдельно в `codex/gi-ddgi-archive` обоих репозиториев.
+игры — `codex/gi-surface-path-tracing` в `gitlab.com/joijta/is-game`. Предыдущий вариант DDGI
+сохранён отдельно в `codex/gi-ddgi-probes` обоих репозиториев.
 
 В этой ветке сохранены исправление RT stage mask и Vulkan ray-query feature chain;
 получение текущих GPU-вершин деформированных мешей; привязки сценария и идентификаторов
