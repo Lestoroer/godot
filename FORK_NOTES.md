@@ -407,3 +407,17 @@ Content notification не запускает лишнюю пересборку r
 skin/morph, layout и version; читать только на render thread и не хранить RID
 после callback. Чтения вершин с GPU на CPU в этом API нет. Произвольная
 vertex-shader деформация этим accessor не поддерживается.
+
+### Surface Cache: выборка в Forward+
+
+`scenario_set_surface_cache_buffers` задаёт четыре RD storage buffer: таблицу
+поверхностей, мировые треугольники с chart UV, материальные texel и irradiance/PI.
+`instance_set_surface_cache_ids` связывает поверхности экземпляра с таблицей.
+Forward+ заменяет ambient после пользовательского IRRADIANCE, до AO/albedo/tonemap.
+Источником выбора является реальный raster primitive и мировая позиция; фильтр
+не смешивает charts и стороны. Отсутствие покрытия показывается пурпурным.
+
+Для зарегистрированных экземпляров используется исходная геометрия без mesh LOD:
+LOD пока не имеет соответствия primitive-to-chart. Это сохраняет детализацию,
+но его дополнительную стоимость требуется учитывать. Capture position.w теперь
+содержит primitive+1 (0 — отсутствие покрытия), без изменения авторских UV.

@@ -109,3 +109,6 @@ Vulkan корректно включает поддерживаемый
 
 Scenario может передавать Surface Cache адресные изменения объектов и один
 callback за кадр мира. Доступ к skin/morph-буферу не требует GPU readback.
+
+Forward+ может выбирать diffuse irradiance из world-owned Surface Cache по
+исходной поверхности. Пользовательский IRRADIANCE заменяется до AO и тонемапа.

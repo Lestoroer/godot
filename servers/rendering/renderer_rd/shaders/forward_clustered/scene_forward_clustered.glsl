@@ -1089,6 +1089,7 @@ layout(location = 2) out vec2 motion_vector;
 #include "../scene_forward_lights_inc.glsl"
 
 #include "../scene_forward_gi_inc.glsl"
+#include "../surface_cache_inc.glsl"
 
 #endif //!defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
 
@@ -1766,6 +1767,12 @@ void fragment_shader(in SceneData scene_data) {
 #if defined(CUSTOM_IRRADIANCE_USED)
 	ambient_light = mix(ambient_light, custom_irradiance.rgb, custom_irradiance.a);
 #endif
+	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
+		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
+		if (cache_surface > 0u) {
+			ambient_light = surface_cache_irradiance(cache_surface - 1u, uint(gl_PrimitiveID), (inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal));
+		}
+	}
 
 #ifdef LIGHT_CLEARCOAT_USED
 	vec3 cc_specular_light = vec3(0.0);
@@ -3011,7 +3018,7 @@ void fragment_shader(in SceneData scene_data) {
 
 	normal_output_buffer.rgb = encode24(normal) * 0.5 + 0.5;
 	normal_output_buffer.a = 0.0;
-	depth_output_buffer = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? vec4(vertex, 1.0) : vec4(-vertex.z, 0.0, 0.0, 0.0);
+	depth_output_buffer = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? vec4(vertex, float(gl_PrimitiveID + 1)) : vec4(-vertex.z, 0.0, 0.0, 0.0);
 
 	orm_output_buffer.r = ao;
 	orm_output_buffer.g = roughness;

@@ -73,6 +73,7 @@ public:
 	float dual_paraboloid_side = 0.0;
 	float opaque_prepass_threshold = 0.0;
 	bool material_uv2_mode = false;
+	bool surface_cache_enabled = false;
 	bool surface_cache_capture = false; // Fork(Lestoroer)
 	bool surface_cache_back_side = false;
 	float emissive_exposure_normalization = 0.0;
@@ -115,6 +116,7 @@ private:
 		SCENE_DATA_FLAGS_IN_SHADOW_PASS = 1 << 7, // Only used by Forward+ renderer.
 		SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE = 1 << 8, // Fork(Lestoroer)
 		SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE = 1 << 9,
+		SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED = 1 << 10,
 		SCENE_DATA_FLAGS_MAX
 	};
 

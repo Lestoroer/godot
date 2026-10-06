@@ -3288,6 +3288,8 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("instance_surface_cache_capture", "instance", "chart_instance", "framebuffer", "region", "back_side"), &RenderingServer::instance_surface_cache_capture); // Fork(Lestoroer)
 	ClassDB::bind_method(D_METHOD("scenario_set_surface_cache_callback", "scenario", "callback"), &RenderingServer::scenario_set_surface_cache_callback);
 	ClassDB::bind_method(D_METHOD("scenario_surface_cache_poll", "scenario"), &RenderingServer::scenario_surface_cache_poll);
+	ClassDB::bind_method(D_METHOD("scenario_set_surface_cache_buffers", "scenario", "buffers"), &RenderingServer::scenario_set_surface_cache_buffers);
+	ClassDB::bind_method(D_METHOD("instance_set_surface_cache_ids", "instance", "surface_ids"), &RenderingServer::instance_set_surface_cache_ids);
 	ClassDB::bind_method(D_METHOD("instance_get_deformed_surface", "instance", "surface"), &RenderingServer::instance_get_deformed_surface);
 	ClassDB::bind_method(D_METHOD("bake_render_uv2", "base", "material_overrides", "image_size"), &RenderingServer::bake_render_uv2);
 

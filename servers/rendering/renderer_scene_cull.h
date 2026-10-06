@@ -347,6 +347,7 @@ public:
 
 		// Fork(Lestoroer): one opt-in Surface Cache controller per world.
 		Callable surface_cache_callback;
+		Vector<RID> surface_cache_buffers;
 		HashMap<RID, uint32_t> surface_cache_dirty;
 		uint64_t surface_cache_frame = UINT64_MAX;
 		SelfList<Instance>::List instances;
@@ -379,6 +380,8 @@ public:
 	void _surface_cache_queue(Instance *p_instance, uint32_t p_flags) const;
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) override;
 	virtual Array scenario_surface_cache_poll(RID p_scenario) override;
+	virtual void scenario_set_surface_cache_buffers(RID p_scenario, const Vector<RID> &p_buffers) override;
+	virtual void instance_set_surface_cache_ids(RID p_instance, const Vector<int32_t> &p_ids) override;
 	virtual Dictionary instance_get_deformed_surface(RID p_instance, int p_surface) const override;
 	virtual void scenario_set_environment(RID p_scenario, RID p_environment);
 	virtual void scenario_set_camera_attributes(RID p_scenario, RID p_attributes);
@@ -491,6 +494,7 @@ public:
 		uint64_t version; // changes to this, and changes to base increase version
 
 		InstanceBaseData *base_data = nullptr;
+		Vector<int32_t> surface_cache_ids;
 
 		SelfList<InstancePair>::List pairs;
 		uint64_t pair_check;

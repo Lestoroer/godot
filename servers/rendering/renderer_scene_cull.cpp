@@ -546,6 +546,22 @@ void RendererSceneCull::scenario_set_surface_cache_callback(RID p_scenario, cons
 	}
 }
 
+void RendererSceneCull::scenario_set_surface_cache_buffers(RID p_scenario, const Vector<RID> &p_buffers) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	ERR_FAIL_COND(p_buffers.size() != 0 && p_buffers.size() != 4);
+	scenario->surface_cache_buffers = p_buffers;
+}
+
+void RendererSceneCull::instance_set_surface_cache_ids(RID p_instance, const Vector<int32_t> &p_ids) {
+	Instance *instance = instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL(instance);
+	instance->surface_cache_ids = p_ids;
+	if (instance->base_type == RSE::INSTANCE_MESH && instance->base_data) {
+		static_cast<InstanceGeometryData *>(instance->base_data)->geometry_instance->set_surface_cache_ids(p_ids);
+	}
+}
+
 Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
 	ERR_FAIL_NULL_V(scenario, Array());
@@ -801,6 +817,7 @@ void RendererSceneCull::instance_set_base(RID p_instance, RID p_base) {
 				geom->geometry_instance->set_transparency(instance->transparency);
 				geom->geometry_instance->set_highlighted(instance->highlighted); // Fork(Lestoroer)
 				geom->geometry_instance->set_use_baked_light(instance->baked_light);
+				geom->geometry_instance->set_surface_cache_ids(instance->surface_cache_ids);
 				geom->geometry_instance->set_use_dynamic_gi(instance->dynamic_gi);
 				geom->geometry_instance->set_use_lightmap(RID(), instance->lightmap_uv_scale, instance->lightmap_slice_index);
 				geom->geometry_instance->set_instance_shader_uniforms_offset(instance->instance_uniforms.location());
@@ -3819,6 +3836,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 		scenario->surface_cache_frame = surface_cache_frame;
 		scenario->surface_cache_callback.call();
 	}
+	scene_render->surface_cache_set_context(scenario->surface_cache_buffers);
 	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, p_window_output_max_value, &sdfgi_update_data, r_render_info);
 
 	if (p_viewport.is_valid()) {
@@ -3886,6 +3904,7 @@ void RendererSceneCull::render_empty_scene(const Ref<RenderSceneBuffers> &p_rend
 	RendererSceneRender::CameraData camera_data;
 	camera_data.set_camera(Transform3D(), Projection(), true, false);
 
+	scene_render->surface_cache_set_context(scenario->surface_cache_buffers);
 	scene_render->render_scene(p_render_buffers, &camera_data, &camera_data, PagedArray<RenderGeometryInstance *>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), environment, RID(), compositor, p_shadow_atlas, RID(), scenario->reflection_atlas, RID(), 0, 0, nullptr, 0, nullptr, 0, p_window_output_max_value, nullptr);
 #endif
 }

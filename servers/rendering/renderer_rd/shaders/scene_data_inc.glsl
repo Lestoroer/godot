@@ -14,6 +14,7 @@
 // Fork(Lestoroer): independent of chart winding and camera.
 #define SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE (1 << 8)
 #define SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE (1 << 9)
+#define SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED (1 << 10)
 
 struct SceneData {
 	mat4 projection_matrix;

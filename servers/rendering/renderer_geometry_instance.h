@@ -58,6 +58,7 @@ public:
 	virtual void set_highlighted(bool p_enabled) {} // Fork(Lestoroer): Forward Mobile outline mask; unsupported renderers keep the default no-op.
 	virtual void set_use_baked_light(bool p_enable) = 0;
 	virtual void set_use_dynamic_gi(bool p_enable) = 0;
+	virtual void set_surface_cache_ids(const Vector<int32_t> &p_ids) {} // Fork(Lestoroer)
 	virtual void set_use_lightmap(RID p_lightmap_instance, const Rect2 &p_lightmap_uv_scale, int p_lightmap_slice_index) = 0;
 	virtual void set_lightmap_capture(const Color *p_sh9) = 0;
 	virtual void set_instance_shader_uniforms_offset(int32_t p_offset) = 0;
