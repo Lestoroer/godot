@@ -8429,6 +8429,14 @@ Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServ
 		transfer_queue_family = main_queue_family;
 	}
 
+	// Fork(Lestoroer): temporary opt-in diagnostics for first-use ray queries.
+	if (OS::get_singleton()->has_environment("SURFACE_CACHE_GRAPH_TRACE")) {
+		print_line(vformat("QUEUE FAMILIES main=%d transfer=%d", main_queue_family.id, transfer_queue_family.id));
+	}
+	if (OS::get_singleton()->has_environment("SURFACE_CACHE_MAIN_TRANSFER")) {
+		transfer_queue_family = main_queue_family;
+	}
+
 	// Create the transfer queue.
 	transfer_queue = driver->command_queue_create(transfer_queue_family);
 	ERR_FAIL_COND_V(!transfer_queue, FAILED);
