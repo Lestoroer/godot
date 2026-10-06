@@ -115,3 +115,6 @@ Forward+ может выбирать diffuse irradiance из world-owned Surface
 
 Экспериментальная RT-интеграция использует Vulkan AS device addresses и раздельные
 диапазоны данных нескольких TLAS build в одном кадре.
+
+В эксперименте Surface Cache неактивный normal mapping не зависит от
+вырожденного tangent basis; адреса тонких треугольников вычисляются устойчивее.

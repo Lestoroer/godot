@@ -1446,7 +1446,13 @@ void fragment_shader(in SceneData scene_data) {
 
 	// Tangent-space transformation is performed using unnormalized TBN vectors, per MikkTSpace.
 	// See: http://www.mikktspace.com/
-	normal = normalize(mix(normal, tangent * normal_map.x + binormal * normal_map.y + normal * normal_map.z, normal_map_depth));
+	// Fork(Lestoroer): an unused normal map must not evaluate an undefined TBN
+	// (e.g. constant-UV geometry with parallel normal and tangent attributes).
+	if (normal_map_depth != 0.0 && any(notEqual(normal_map.xy, vec2(0.0)))) {
+		normal = normalize(mix(normal, tangent * normal_map.x + binormal * normal_map.y + normal * normal_map.z, normal_map_depth));
+	} else {
+		normal = normalize(normal);
+	}
 #elif defined(NORMAL_USED)
 	normal = geo_normal;
 #endif // NORMAL_MAP_USED

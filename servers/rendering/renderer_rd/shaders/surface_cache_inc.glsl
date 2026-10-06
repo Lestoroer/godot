@@ -10,9 +10,10 @@ vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 
     uvec4 mapping=surface_cache_surfaces.data[surface];
     SurfaceCacheTriangle triangle=surface_cache_triangles.data[mapping.x+primitive];
     vec3 ab=triangle.b.xyz-triangle.a.xyz, ac=triangle.c.xyz-triangle.a.xyz, ap=position-triangle.a.xyz;
-    float aa=dot(ab,ab), cc=dot(ac,ac), cross_term=dot(ab,ac);
-    float determinant=max(aa*cc-cross_term*cross_term,1e-30);
-    vec2 barycentric=vec2(cc*dot(ap,ab)-cross_term*dot(ap,ac),aa*dot(ap,ac)-cross_term*dot(ap,ab))/determinant;
+    vec3 geometric=cross(ab,ac), absolute_normal=abs(geometric);
+    uint axis=absolute_normal.x>absolute_normal.y?0u:1u;
+    if(absolute_normal.z>absolute_normal[axis]) axis=2u;
+    vec2 barycentric=vec2(cross(ap,ac)[axis],cross(ab,ap)[axis])/geometric[axis];
     vec2 uv=triangle.uv_ab.xy*(1.0-barycentric.x-barycentric.y)+triangle.uv_ab.zw*barycentric.x+triangle.uv_c.xy*barycentric.y;
     uint side=dot(normal,cross(ab,ac)*triangle.a.w)<0.0?1u:0u;
     uint chart=floatBitsToUint(triangle.uv_c.z);
