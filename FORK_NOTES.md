@@ -353,8 +353,12 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 ### Эксперимент Surface Cache GI: Vulkan RT foundation
 
 Только ветка `codex/gi-surface-cache`, отдельный worktree. Основной движок
-не получает этот патч. `drivers/vulkan/rendering_device_driver_vulkan.cpp`:
+не получает этот патч. `drivers/vulkan/rendering_device_driver_vulkan.cpp`
+и `servers/rendering/rendering_shader_container.cpp`:
 
+- Маска видимости RT-uniform использует `SHADER_STAGE_*_BIT`, а не номера
+  enum stages. Номера давали маску graphics stages и закрывали descriptors
+  для RT: compute hit работал, но RT pipeline возвращал miss.
 - Запрос и включение `VK_KHR_ray_query` по фактическим capabilities устройства.
 - RT shader stages и shaders с acceleration-structure descriptor обходят
   re-spirv: он не поддерживает соответствующие инструкции. Vulkan получает

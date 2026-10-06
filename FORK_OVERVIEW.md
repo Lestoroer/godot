@@ -98,6 +98,7 @@ ShapeCast. Для них ожидается поведение официаль�
 
 ## Экспериментальная ветка Surface Cache GI
 
-Только `codex/gi-surface-cache`: Vulkan корректно включает поддерживаемый
+Только `codex/gi-surface-cache`: RT descriptors получают правильную stage mask,
+Vulkan корректно включает поддерживаемый
 `VK_KHR_ray_query` и передаёт RT/query SPIR-V драйверу без неподдерживаемой
 обработки re-spirv. Самого Surface Cache GI этот патч ещё не добавляет.
