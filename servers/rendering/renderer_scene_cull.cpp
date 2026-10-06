@@ -525,7 +525,72 @@ void RendererSceneCull::scenario_add_viewport_visibility_mask(RID p_scenario, RI
 
 /* INSTANCING API */
 
+// Fork(Lestoroer): events are coalesced by generation-safe RID, not object names.
+void RendererSceneCull::_surface_cache_queue(Instance *p_instance, uint32_t p_flags) const {
+	if (p_instance->scenario && p_instance->scenario->surface_cache_callback.is_valid()) {
+		p_instance->scenario->surface_cache_dirty[p_instance->self] |= p_flags;
+	}
+}
+
+void RendererSceneCull::scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	ERR_FAIL_COND_MSG(p_callback.is_valid() && scenario->surface_cache_callback.is_valid() && p_callback != scenario->surface_cache_callback, "A Surface Cache controller already owns this World3D.");
+	scenario->surface_cache_callback = p_callback;
+	scenario->surface_cache_dirty.clear();
+	scenario->surface_cache_frame = UINT64_MAX;
+	if (p_callback.is_valid()) {
+		for (SelfList<Instance> *item = scenario->instances.first(); item; item = item->next()) {
+			_surface_cache_queue(item->self(), 15);
+		}
+	}
+}
+
+Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL_V(scenario, Array());
+	update_dirty_instances();
+	Array result;
+	for (const KeyValue<RID, uint32_t> &entry : scenario->surface_cache_dirty) {
+		Instance *instance = instance_owner.get_or_null(entry.key);
+		Dictionary data;
+		data["instance"] = entry.key;
+		data["changes"] = entry.value;
+		bool active = instance && instance->scenario == scenario && instance->visible &&
+				((instance->base_type == RSE::INSTANCE_MESH && (instance->baked_light || instance->dynamic_gi)) || instance->base_type == RSE::INSTANCE_LIGHT);
+		data["active"] = active;
+		if (active) {
+			data["base"] = instance->base;
+			data["type"] = instance->base_type;
+			data["transform"] = instance->transform;
+			data["layers"] = instance->layer_mask;
+			data["bounds"] = instance->transformed_aabb;
+			if (instance->base_type == RSE::INSTANCE_LIGHT) {
+				data["light_type"] = RSG::light_storage->light_get_type(instance->base);
+				data["color"] = RSG::light_storage->light_get_color(instance->base);
+				Vector<float> params;
+				params.resize(RSE::LIGHT_PARAM_MAX);
+				for (int i=0;i<RSE::LIGHT_PARAM_MAX;i++) params.write[i]=RSG::light_storage->light_get_param(instance->base,RSE::LightParam(i));
+				data["light_params"] = params;
+			} else {
+				data["deformed"] = instance->mesh_instance.is_valid();
+			}
+		}
+		result.push_back(data);
+	}
+	scenario->surface_cache_dirty.clear();
+	return result;
+}
+
+Dictionary RendererSceneCull::instance_get_deformed_surface(RID p_instance, int p_surface) const {
+	const Instance *instance = instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL_V(instance, Dictionary());
+	if (instance->mesh_instance.is_null()) return Dictionary();
+	return RSG::mesh_storage->mesh_instance_get_deformed_surface(instance->mesh_instance, p_surface);
+}
+
 void RendererSceneCull::_instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies) const {
+	_surface_cache_queue(p_instance, (p_update_aabb ? 2u : 4u) | (p_update_dependencies ? 1u : 0u));
 	if (p_update_aabb) {
 		p_instance->update_aabb = true;
 	}
@@ -827,6 +892,7 @@ void RendererSceneCull::instance_set_scenario(RID p_instance, RID p_scenario) {
 	ERR_FAIL_NULL(instance);
 
 	if (instance->scenario) {
+		_surface_cache_queue(instance, 15);
 		instance->scenario->instances.remove(&instance->scenario_item);
 
 		if (instance->indexer_id.is_valid()) {
@@ -1045,6 +1111,7 @@ void RendererSceneCull::instance_set_blend_shape_weight(RID p_instance, int p_sh
 
 	if (instance->mesh_instance.is_valid()) {
 		RSG::mesh_storage->mesh_instance_set_blend_shape_weight(instance->mesh_instance, p_shape, p_weight);
+		_surface_cache_queue(instance, 8);
 	}
 
 	_instance_queue_update(instance, false, false);
@@ -1075,6 +1142,7 @@ void RendererSceneCull::instance_set_visible(RID p_instance, bool p_visible) {
 	}
 
 	instance->visible = p_visible;
+	_surface_cache_queue(instance, 15);
 
 	if (p_visible) {
 		if (instance->scenario != nullptr) {
@@ -1272,6 +1340,7 @@ void RendererSceneCull::instance_geometry_set_flag(RID p_instance, RSE::Instance
 	switch (p_flags) {
 		case RSE::INSTANCE_FLAG_USE_BAKED_LIGHT: {
 			instance->baked_light = p_enabled;
+			_surface_cache_queue(instance, 15);
 
 			if (instance->scenario && instance->array_index >= 0) {
 				InstanceData &idata = instance->scenario->instance_data[instance->array_index];
@@ -1302,6 +1371,7 @@ void RendererSceneCull::instance_geometry_set_flag(RID p_instance, RSE::Instance
 
 			//once out of octree, can be changed
 			instance->dynamic_gi = p_enabled;
+			_surface_cache_queue(instance, 15);
 
 			if ((1 << instance->base_type) & RSE::INSTANCE_GEOMETRY_MASK && instance->base_data) {
 				InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(instance->base_data);
@@ -1591,6 +1661,7 @@ void RendererSceneCull::instance_geometry_set_shader_parameter(RID p_instance, c
 	ERR_FAIL_NULL(instance);
 
 	instance->instance_uniforms.set(instance->self, p_parameter, p_value);
+	_surface_cache_queue(instance, 4);
 }
 
 // Fork(Lestoroer): source owns material, transform and instance-uniform state.
@@ -3742,6 +3813,12 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	}
 
 	RENDER_TIMESTAMP("Render 3D Scene");
+	// A mirror's camera consumes the same world snapshot; it cannot update it twice.
+	uint64_t surface_cache_frame = RSG::rasterizer->get_frame_number();
+	if (scenario->surface_cache_callback.is_valid() && scenario->surface_cache_frame != surface_cache_frame) {
+		scenario->surface_cache_frame = surface_cache_frame;
+		scenario->surface_cache_callback.call();
+	}
 	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, p_window_output_max_value, &sdfgi_update_data, r_render_info);
 
 	if (p_viewport.is_valid()) {

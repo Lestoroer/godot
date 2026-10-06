@@ -393,3 +393,17 @@ albedo/alpha, encoded normal, AO/roughness/metallic/specular, emission и мир
 Capture читает параметры распаковки с фактически рисуемого chart-потока,
 а не со сжатого исходного mesh. Поля view uniform задаются детерминированно;
 материальные ветки не наследуют состояние камеры предыдущего прохода.
+
+### Surface Cache: события мира и GPU-деформация
+
+Scenario хранит одного opt-in владельца обновлений. Callback вызывается перед
+рендером мира один раз за renderer frame; дополнительные камеры используют
+тот же результат. `scenario_surface_cache_poll` отдаёт coalesced изменения
+экземпляров по RID (регистрация/удаление, трансформ, материал, pose, свет).
+Подписка начинает с одного снимка; покадрового обхода SceneTree нет.
+Content notification не запускает лишнюю пересборку raster-материалов.
+
+`instance_get_deformed_surface` предоставляет заимствованный GPU buffer
+skin/morph, layout и version; читать только на render thread и не хранить RID
+после callback. Чтения вершин с GPU на CPU в этом API нет. Произвольная
+vertex-shader деформация этим accessor не поддерживается.

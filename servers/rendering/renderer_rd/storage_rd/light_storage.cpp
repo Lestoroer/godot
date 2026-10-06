@@ -213,7 +213,9 @@ void LightStorage::light_set_color(RID p_light, const Color &p_color) {
 	Light *light = light_owner.get_or_null(p_light);
 	ERR_FAIL_NULL(light);
 
+	if (light->color == p_color) return;
 	light->color = p_color;
+	light->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT);
 }
 
 void LightStorage::light_set_param(RID p_light, RSE::LightParam p_param, float p_value) {
@@ -249,6 +251,7 @@ void LightStorage::light_set_param(RID p_light, RSE::LightParam p_param, float p
 	}
 
 	light->param[p_param] = p_value;
+	light->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT);
 }
 
 void LightStorage::light_set_shadow(RID p_light, bool p_enabled) {

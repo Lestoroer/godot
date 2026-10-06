@@ -345,6 +345,10 @@ public:
 		uint64_t used_viewport_visibility_bits;
 		HashMap<RID, uint64_t> viewport_visibility_masks;
 
+		// Fork(Lestoroer): one opt-in Surface Cache controller per world.
+		Callable surface_cache_callback;
+		HashMap<RID, uint32_t> surface_cache_dirty;
+		uint64_t surface_cache_frame = UINT64_MAX;
 		SelfList<Instance>::List instances;
 
 		LocalVector<RID> dynamic_lights;
@@ -372,6 +376,10 @@ public:
 	virtual RID scenario_allocate();
 	virtual void scenario_initialize(RID p_rid);
 
+	void _surface_cache_queue(Instance *p_instance, uint32_t p_flags) const;
+	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) override;
+	virtual Array scenario_surface_cache_poll(RID p_scenario) override;
+	virtual Dictionary instance_get_deformed_surface(RID p_instance, int p_surface) const override;
 	virtual void scenario_set_environment(RID p_scenario, RID p_environment);
 	virtual void scenario_set_camera_attributes(RID p_scenario, RID p_attributes);
 	virtual void scenario_set_fallback_environment(RID p_scenario, RID p_environment);
@@ -491,7 +499,13 @@ public:
 
 		static void dependency_changed(Dependency::DependencyChangedNotification p_notification, DependencyTracker *tracker) {
 			Instance *instance = (Instance *)tracker->userdata;
+			if (p_notification == Dependency::DEPENDENCY_CHANGED_SKELETON_DATA || p_notification == Dependency::DEPENDENCY_CHANGED_SKELETON_BONES) {
+				singleton->_surface_cache_queue(instance, 8);
+			}
 			switch (p_notification) {
+				case Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT: {
+					singleton->_surface_cache_queue(instance, 4);
+				} break;
 				case Dependency::DEPENDENCY_CHANGED_SKELETON_DATA:
 				case Dependency::DEPENDENCY_CHANGED_SKELETON_BONES:
 				case Dependency::DEPENDENCY_CHANGED_AABB: {

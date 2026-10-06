@@ -1183,6 +1183,33 @@ void MeshStorage::mesh_instance_set_canvas_item_transform(RID p_mesh_instance, c
 	mi->canvas_item_transform_2d = p_transform;
 }
 
+Dictionary MeshStorage::mesh_instance_get_deformed_surface(RID p_instance, int p_surface) {
+	MeshInstance *mi = mesh_instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL_V(mi, Dictionary());
+	ERR_FAIL_INDEX_V(p_surface, int(mi->surfaces.size()), Dictionary());
+	// A secondary ray can see a deforming mesh outside all raster camera frusta.
+	mesh_instance_check_for_update(p_instance);
+	update_mesh_instances();
+	const Mesh::Surface *source = mi->mesh->surfaces[p_surface];
+	const MeshInstance::Surface &surface = mi->surfaces[p_surface];
+	if (surface.vertex_buffer[surface.current_buffer].is_null() || source->vertex_count == 0) {
+		return Dictionary();
+	}
+	Dictionary result;
+	const bool has_normal = source->format & RSE::ARRAY_FORMAT_NORMAL;
+	const uint32_t normal_stride = (has_normal ? 1 : 0) + ((source->format & RSE::ARRAY_FORMAT_TANGENT) ? 1 : 0);
+	const uint32_t vertex_stride = source->vertex_buffer_size / source->vertex_count / 4 - normal_stride;
+	result["vertex_buffer"] = surface.vertex_buffer[surface.current_buffer];
+	result["vertex_count"] = source->vertex_count;
+	result["vertex_stride_words"] = vertex_stride;
+	result["normal_offset_words"] = source->vertex_count * vertex_stride;
+	result["normal_stride_words"] = normal_stride;
+	result["has_normal"] = has_normal;
+	result["version"] = mi->deformation_version;
+	return result;
+}
+
+
 void MeshStorage::update_mesh_instances() {
 	while (dirty_mesh_instance_weights.first()) {
 		MeshInstance *mi = dirty_mesh_instance_weights.first()->self();
@@ -1290,6 +1317,7 @@ void MeshStorage::update_mesh_instances() {
 			RD::get_singleton()->compute_list_dispatch_threads(compute_list, push_constant.vertex_count, 1, 1);
 		}
 
+		mi->deformation_version++;
 		mi->dirty = false;
 		if (sk) {
 			mi->skeleton_version = sk->version;

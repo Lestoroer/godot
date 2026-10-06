@@ -978,6 +978,9 @@ public:
 	FUNC2SC(instance_geometry_get_shader_parameter_list, RID, List<PropertyInfo> *)
 
 	FUNC5(instance_surface_cache_capture, RID, RID, RID, const Rect2i &, bool) // Fork(Lestoroer)
+	FUNC2(scenario_set_surface_cache_callback, RID, const Callable &)
+	FUNC1R(Array, scenario_surface_cache_poll, RID)
+	FUNC2RC(Dictionary, instance_get_deformed_surface, RID, int)
 	FUNC3R(TypedArray<Image>, bake_render_uv2, RID, const TypedArray<RID> &, const Size2i &)
 	FUNC4R(PackedByteArray, bake_render_area_light_atlas, const TypedArray<RID> &, const TypedArray<Rect2> &, const Size2i &, int)
 

@@ -2551,6 +2551,7 @@ void MaterialStorage::material_set_param(RID p_material, const StringName &p_par
 	if (material->shader && material->shader->data) { //shader is valid
 		bool is_texture = material->shader->data->is_parameter_texture(p_param);
 		_material_queue_update(material, !is_texture, is_texture);
+		material->dependency.changed_notify(is_texture ? Dependency::DEPENDENCY_CHANGED_MATERIAL : Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT);
 	} else {
 		_material_queue_update(material, true, true);
 	}
