@@ -2150,6 +2150,46 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 			remapped_indices.write[tri + corner] = mapped;
 		}
 	}
+	// xatlas excludes nearly degenerate faces even when RT can still hit them.
+	// Give each excluded, nonzero-area primitive a small chart instead of making
+	// an unshaded hole. Only UV/remap data changes; source geometry stays exact.
+	Vector<int> excluded;
+	int next_chart = 1;
+	for (int chart : charts) {
+		next_chart = MAX(next_chart, chart + 1);
+	}
+	for (int tri = 0; tri < index_count; tri += 3) {
+		if (charts[remapped_indices[tri]] == 0) {
+			const Vector3 &a = positions[indices[tri]];
+			const Vector3 &b = positions[indices[tri + 1]];
+			const Vector3 &c = positions[indices[tri + 2]];
+			if ((b - a).cross(c - a).length_squared() > 0.0f) {
+				excluded.push_back(tri);
+			}
+		}
+	}
+	if (!excluded.is_empty()) {
+		const int cell = 6;
+		const int new_width = MAX(width, cell);
+		const int columns = new_width / cell;
+		const int new_height = height + ((excluded.size() + columns - 1) / columns) * cell;
+		for (int i = 0; i < coordinates.size(); i++) {
+			coordinates.write[i] *= Vector2(float(width) / new_width, float(height) / new_height);
+		}
+		for (int i = 0; i < excluded.size(); i++) {
+			const int tri = excluded[i];
+			const Vector2 origin((i % columns) * cell + 2, height + (i / columns) * cell + 2);
+			const Vector2 corners[3] = { Vector2(0.25f, 0.25f), Vector2(1.75f, 0.25f), Vector2(0.25f, 1.75f) };
+			for (int corner = 0; corner < 3; corner++) {
+				remapped_indices.write[tri + corner] = coordinates.size();
+				coordinates.push_back((origin + corners[corner]) / Vector2(new_width, new_height));
+				remap.push_back(indices[tri + corner]);
+				charts.push_back(next_chart + i);
+			}
+		}
+		width = new_width;
+		height = new_height;
+	}
 	Dictionary result;
 	result["uv"] = coordinates;
 	result["source_vertices"] = remap;
