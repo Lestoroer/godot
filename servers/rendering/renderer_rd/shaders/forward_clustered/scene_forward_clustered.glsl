@@ -1078,6 +1078,7 @@ layout(location = 2) out vec2 motion_vector;
 #endif
 
 #include "../scene_forward_aa_inc.glsl"
+#include "../surface_cache_inc.glsl"
 
 #if !defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
 
@@ -1089,7 +1090,6 @@ layout(location = 2) out vec2 motion_vector;
 #include "../scene_forward_lights_inc.glsl"
 
 #include "../scene_forward_gi_inc.glsl"
-#include "../surface_cache_inc.glsl"
 
 #endif //!defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
 

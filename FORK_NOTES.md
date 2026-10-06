@@ -425,3 +425,6 @@ LOD пока не имеет соответствия primitive-to-chart. Это
 Выборка проверяет также surface ID: одинаковые локальные номера chart разных
 поверхностей не смешиваются. Повторная установка того же material parameter
 не создаёт ложное событие обновления Surface Cache.
+
+Дескрипторы Surface Cache объявлены во всех вариантах Forward+ (включая depth,
+shadow, unshaded), чтобы общий render-pass uniform set имел совместимый layout.
