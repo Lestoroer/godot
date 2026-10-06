@@ -434,3 +434,7 @@ shadow, unshaded), чтобы общий render-pass uniform set имел сов
 `hit_sbt_range = 0` допустим для query-only TLAS: Vulkan ray queries не читают
 SBT. RD больше не требует создавать фиктивный RT pipeline только ради query.
 Трассировка RT pipeline по-прежнему задаёт свои диапазоны SBT.
+
+Capture хранит нормаль напрямую в RGBA16F: нормализация лучей не зависит от
+8-bit best-fit lookup. Тонкие границы chart покрываются штатной стратегией
+UV2 bake (смещённый wireframe и затем внутренний проход), без слияния chart ID.

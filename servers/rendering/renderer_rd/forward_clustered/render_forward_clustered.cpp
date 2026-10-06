@@ -3072,6 +3072,17 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	params.capture_geometry = chart;
 	Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
 	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, RD::DRAW_CLEAR_ALL, clear, 0.0f, 0, p_region);
+	// Preserve sub-texel chart edges using the same conservative border strategy
+	// as native UV2 baking. The final interior pass owns covered texel centers.
+	params.force_wireframe = true;
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			params.uv_offset = Vector2(float(x) / p_region.size.x, float(y) / p_region.size.y);
+			_render_list(draw_list, RD::get_singleton()->framebuffer_get_format(p_framebuffer), &params, 0, params.element_count);
+		}
+	}
+	params.force_wireframe = false;
+	params.uv_offset = Vector2();
 	_render_list(draw_list, RD::get_singleton()->framebuffer_get_format(p_framebuffer), &params, 0, params.element_count);
 	RD::get_singleton()->draw_list_end();
 	cull_argument[0] = nullptr;
