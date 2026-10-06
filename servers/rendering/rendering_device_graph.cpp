@@ -1425,6 +1425,17 @@ void RenderingDeviceGraph::_group_barriers_for_render_commands(RDD::CommandBuffe
 		barrier_group.memory_barrier.dst_access = RDD::BARRIER_ACCESS_MEMORY_READ_BIT | RDD::BARRIER_ACCESS_MEMORY_WRITE_BIT;
 	}
 
+	static const String diagnostic_masks = OS::get_singleton()->get_environment("SURFACE_CACHE_BARRIER_MASKS");
+	if (!diagnostic_masks.is_empty()) {
+		const PackedStringArray fields = diagnostic_masks.split(",");
+		if (fields.size() == 4) {
+			barrier_group.src_stages |= fields[0].to_int();
+			barrier_group.dst_stages |= fields[1].to_int();
+			barrier_group.memory_barrier.src_access |= fields[2].to_int();
+			barrier_group.memory_barrier.dst_access |= fields[3].to_int();
+		}
+	}
+
 	const bool is_memory_barrier_empty = barrier_group.memory_barrier.src_access.is_empty() && barrier_group.memory_barrier.dst_access.is_empty();
 	const bool are_texture_barriers_empty = barrier_group.normalization_barriers.is_empty() && barrier_group.transition_barriers.is_empty();
 #if USE_BUFFER_BARRIERS

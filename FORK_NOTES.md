@@ -470,3 +470,6 @@ instance buffer сразу резервирует свой диапазон; с�
 `SURFACE_CACHE_MAIN_TRANSFER` проверяет загрузку на семействе main queue;
 `SURFACE_CACHE_GRAPH_TRACE` также печатает выбранные семейства. Это временная
 диагностика first-use ray queries, выключенная по умолчанию.
+
+`SURFACE_CACHE_BARRIER_MASKS` диагностически добавляет четыре числовые маски
+(src stage, dst stage, src access, dst access) для локализации зависимости.
