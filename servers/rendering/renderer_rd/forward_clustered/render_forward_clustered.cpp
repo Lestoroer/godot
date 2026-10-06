@@ -384,6 +384,10 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 			mesh_surface = surf->surface;
 		}
 
+		// Fork(Lestoroer): original material state, chart vertex/index streams.
+		if (p_params->capture_geometry) {
+			mesh_surface = mesh_storage->mesh_get_surface(p_params->capture_geometry->data->base, surf->surface_index);
+		}
 		if (!mesh_surface) {
 			continue;
 		}
@@ -500,8 +504,9 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 			RD::VertexFormatID vertex_format = -1;
 			bool pipeline_motion_vectors = pipeline_key.color_pass_flags & SceneShaderForwardClustered::PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS;
 			uint64_t input_mask = shader->get_vertex_input_mask(pipeline_key.version, pipeline_key.color_pass_flags, pipeline_key.ubershader);
-			if (surf->owner->mesh_instance.is_valid()) {
-				mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(surf->owner->mesh_instance, surf->surface_index, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
+			RID geometry_mesh_instance = p_params->capture_geometry ? p_params->capture_geometry->mesh_instance : surf->owner->mesh_instance; // Fork(Lestoroer)
+			if (geometry_mesh_instance.is_valid()) {
+				mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(geometry_mesh_instance, surf->surface_index, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
 			} else {
 				mesh_storage->mesh_surface_get_vertex_arrays_and_format(mesh_surface, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
 			}
@@ -3014,6 +3019,52 @@ void RenderForwardClustered::_render_material(const Transform3D &p_cam_transform
 	}
 
 	RD::get_singleton()->draw_command_end_label();
+}
+
+// Fork(Lestoroer): source material is rasterized on chart streams, entirely on GPU.
+void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side) {
+	ERR_FAIL_NULL(p_source);
+	ERR_FAIL_NULL(p_chart);
+	ERR_FAIL_COND(p_region.size.x <= 0 || p_region.size.y <= 0);
+	RenderGeometryInstanceBase *source = static_cast<RenderGeometryInstanceBase *>(p_source);
+	RenderGeometryInstanceBase *chart = static_cast<RenderGeometryInstanceBase *>(p_chart);
+	ERR_FAIL_COND(RSG::mesh_storage->mesh_get_surface_count(source->data->base) != RSG::mesh_storage->mesh_get_surface_count(chart->data->base));
+	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+	if (chart->mesh_instance.is_valid()) {
+		mesh_storage->mesh_instance_copy_pose(source->mesh_instance, chart->mesh_instance);
+		mesh_storage->mesh_instance_check_for_update(chart->mesh_instance);
+		mesh_storage->update_mesh_instances();
+	}
+	if (cull_argument.size() == 0) {
+		cull_argument.push_back(nullptr);
+	}
+	cull_argument[0] = p_source;
+	RenderSceneDataRD scene_data;
+	scene_data.material_uv2_mode = true;
+	scene_data.surface_cache_capture = true;
+	scene_data.surface_cache_back_side = p_back_side;
+	scene_data.time = time;
+	scene_data.time_step = time_step;
+	scene_data.emissive_exposure_normalization = -1.0;
+	RenderDataRD render_data;
+	render_data.scene_data = &scene_data;
+	render_data.cluster_size = 1;
+	render_data.cluster_max_elements = 32;
+	render_data.instances = &cull_argument;
+	scene_shader.enable_advanced_shader_group();
+	_update_render_base_uniform_set();
+	uint32_t uniform_buffer_index = _setup_environment(&render_data, true, RD::get_singleton()->framebuffer_get_size(p_framebuffer), p_region.size, Color());
+	_fill_render_list(RENDER_LIST_SECONDARY, &render_data, PASS_MODE_DEPTH_MATERIAL);
+	render_list[RENDER_LIST_SECONDARY].sort_by_key();
+	_fill_instance_data(RENDER_LIST_SECONDARY);
+	RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SECONDARY, nullptr, RID(), RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default(), uniform_buffer_index);
+	RenderListParameters params(render_list[RENDER_LIST_SECONDARY].elements.ptr(), render_list[RENDER_LIST_SECONDARY].element_info.ptr(), render_list[RENDER_LIST_SECONDARY].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
+	params.capture_geometry = chart;
+	Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
+	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, RD::DRAW_CLEAR_ALL, clear, 0.0f, 0, p_region);
+	_render_list(draw_list, RD::get_singleton()->framebuffer_get_format(p_framebuffer), &params, 0, params.element_count);
+	RD::get_singleton()->draw_list_end();
+	cull_argument[0] = nullptr;
 }
 
 void RenderForwardClustered::_render_uv2(const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) {

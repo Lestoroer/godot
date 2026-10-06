@@ -520,6 +520,9 @@ void MeshStorage::_mesh_surface_clear(Mesh *p_mesh, int p_surface) {
 	if (s.vertex_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(s.vertex_buffer); // Clears arrays as dependency automatically, including all versions.
 	}
+	if (s.capture_uv_buffer.is_valid()) { // Fork(Lestoroer)
+		RD::get_singleton()->free_rid(s.capture_uv_buffer);
+	}
 	if (s.attribute_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(s.attribute_buffer);
 	}
@@ -566,6 +569,40 @@ RSE::BlendShapeMode MeshStorage::mesh_get_blend_shape_mode(RID p_mesh) const {
 	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL_V(mesh, RSE::BLEND_SHAPE_MODE_NORMALIZED);
 	return mesh->blend_shape_mode;
+}
+
+// Fork(Lestoroer): immutable chart data is assigned before this private mesh gets VAOs or instances.
+void MeshStorage::mesh_surface_set_capture_uv(RID p_mesh, int p_surface, const Vector<Vector2> &p_uv) {
+	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
+	ERR_FAIL_NULL(mesh);
+	ERR_FAIL_UNSIGNED_INDEX((uint32_t)p_surface, mesh->surface_count);
+	Mesh::Surface *surface = mesh->surfaces[p_surface];
+	ERR_FAIL_COND(p_uv.size() != surface->vertex_count);
+	ERR_FAIL_COND(surface->capture_uv_buffer.is_valid());
+	ERR_FAIL_COND(surface->version_count != 0 || !mesh->instances.is_empty());
+	Vector<uint8_t> bytes;
+	bytes.resize(p_uv.size() * 2 * sizeof(float));
+	float *uv = reinterpret_cast<float *>(bytes.ptrw());
+	for (int i = 0; i < p_uv.size(); i++) {
+		uv[i * 2] = p_uv[i].x;
+		uv[i * 2 + 1] = p_uv[i].y;
+	}
+	surface->capture_uv_buffer = RD::get_singleton()->vertex_buffer_create(bytes.size(), bytes);
+}
+
+// Fork(Lestoroer): same skeleton and morph state on a remapped mesh.
+void MeshStorage::mesh_instance_copy_pose(RID p_source, RID p_target) {
+	MeshInstance *source = mesh_instance_owner.get_or_null(p_source);
+	MeshInstance *target = mesh_instance_owner.get_or_null(p_target);
+	ERR_FAIL_NULL(source);
+	ERR_FAIL_NULL(target);
+	ERR_FAIL_COND(source->blend_weights.size() != target->blend_weights.size());
+	mesh_instance_set_skeleton(p_target, source->skeleton);
+	for (uint32_t i = 0; i < source->blend_weights.size(); i++) {
+		if (source->blend_weights[i] != target->blend_weights[i]) {
+			mesh_instance_set_blend_shape_weight(p_target, i, source->blend_weights[i]);
+		}
+	}
 }
 
 void MeshStorage::mesh_surface_update_vertex_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
@@ -1263,7 +1300,7 @@ void MeshStorage::update_mesh_instances() {
 	RD::get_singleton()->compute_list_end();
 }
 
-RD::VertexFormatID MeshStorage::_mesh_surface_generate_vertex_format(uint64_t p_surface_format, uint64_t p_input_mask, bool p_instanced_surface, bool p_input_motion_vectors, bool p_point_size_emulated, uint32_t &r_position_stride) {
+RD::VertexFormatID MeshStorage::_mesh_surface_generate_vertex_format(uint64_t p_surface_format, uint64_t p_input_mask, bool p_instanced_surface, bool p_input_motion_vectors, bool p_point_size_emulated, uint32_t &r_position_stride, bool p_capture_stream) {
 	Vector<RD::VertexAttribute> attributes;
 	uint32_t normal_tangent_stride = 0;
 	uint32_t attribute_stride = 0;
@@ -1452,12 +1489,20 @@ RD::VertexFormatID MeshStorage::_mesh_surface_generate_vertex_format(uint64_t p_
 		}
 	}
 
+	// Fork(Lestoroer): location 14 is used only by the material pass.
+	if (p_input_mask & (1ULL << 14)) {
+		RD::VertexAttribute attribute;
+		attribute.location = 14;
+		attribute.format = RD::DATA_FORMAT_R32G32_SFLOAT;
+		attribute.stride = p_capture_stream ? sizeof(float) * 2 : 0;
+		attributes.push_back(attribute);
+	}
 	return RD::get_singleton()->vertex_format_create(attributes);
 }
 
 void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::Version &v, Mesh::Surface *s, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, MeshInstance::Surface *mis, uint32_t p_current_buffer, uint32_t p_previous_buffer) {
 	uint32_t position_stride = 0;
-	v.vertex_format = _mesh_surface_generate_vertex_format(s->format, p_input_mask, mis != nullptr, p_input_motion_vectors, p_point_size_emulated, position_stride);
+	v.vertex_format = _mesh_surface_generate_vertex_format(s->format, p_input_mask, mis != nullptr, p_input_motion_vectors, p_point_size_emulated, position_stride, s->capture_uv_buffer.is_valid());
 
 	Vector<RID> buffers;
 	Vector<uint64_t> offsets;
@@ -1517,6 +1562,10 @@ void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::V
 		}
 	}
 
+	if (p_input_mask & (1ULL << 14)) { // Fork(Lestoroer)
+		buffers.push_back(s->capture_uv_buffer.is_valid() ? s->capture_uv_buffer : mesh_default_rd_buffers[RSE::ARRAY_TEX_UV2]);
+		offsets.push_back(0);
+	}
 	v.input_mask = p_input_mask;
 	v.current_buffer = p_current_buffer;
 	v.previous_buffer = p_previous_buffer;

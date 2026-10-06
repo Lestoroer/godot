@@ -31,6 +31,9 @@ layout(location = 1) in vec4 axis_tangent_attrib;
 #endif
 
 // Location 2 is unused.
+#ifdef MODE_RENDER_MATERIAL
+layout(location = 14) in vec2 surface_cache_uv_attrib; // Fork(Lestoroer): preserves authored UV/UV2/CUSTOM.
+#endif
 
 #if defined(COLOR_USED)
 layout(location = 3) in vec4 color_attrib;
@@ -691,6 +694,9 @@ void vertex_shader(vec3 vertex_input,
 			uv_dest_attrib = uv2_attrib.xy;
 		}
 
+		if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)) {
+			uv_dest_attrib = surface_cache_uv_attrib;
+		}
 		vec2 uv_offset = unpackHalf2x16(draw_call.uv_offset);
 		gl_Position.xy = (uv_dest_attrib + uv_offset) * 2.0 - 1.0;
 		gl_Position.z = 0.00001;
@@ -1042,7 +1048,7 @@ layout(location = 0) out vec4 albedo_output_buffer;
 layout(location = 1) out vec4 normal_output_buffer;
 layout(location = 2) out vec4 orm_output_buffer;
 layout(location = 3) out vec4 emission_output_buffer;
-layout(location = 4) out float depth_output_buffer;
+layout(location = 4) out vec4 depth_output_buffer; // Fork(Lestoroer): capture world position.
 
 #endif // MODE_RENDER_MATERIAL
 
@@ -1261,7 +1267,7 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef NORMAL_USED
 	vec3 normal_highp = normal_interp;
 #if defined(DO_SIDE_CHECK)
-	if (!gl_FrontFacing) {
+	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE) : !gl_FrontFacing) {
 		normal_highp = -normal_highp;
 	}
 #endif // DO_SIDE_CHECK
@@ -3005,12 +3011,12 @@ void fragment_shader(in SceneData scene_data) {
 
 	normal_output_buffer.rgb = encode24(normal) * 0.5 + 0.5;
 	normal_output_buffer.a = 0.0;
-	depth_output_buffer.r = -vertex.z;
+	depth_output_buffer = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? vec4(vertex, 1.0) : vec4(-vertex.z, 0.0, 0.0, 0.0);
 
 	orm_output_buffer.r = ao;
 	orm_output_buffer.g = roughness;
 	orm_output_buffer.b = metallic;
-	orm_output_buffer.a = sss_strength;
+	orm_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? specular : sss_strength;
 
 	emission_output_buffer.rgb = emission;
 	emission_output_buffer.a = 0.0;

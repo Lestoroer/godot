@@ -1294,6 +1294,7 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["E"] = String::num(Math::E);
 		actions.renames["OUTPUT_IS_SRGB"] = "SHADER_IS_SRGB";
 		actions.renames["CLIP_SPACE_FAR"] = "SHADER_SPACE_FAR";
+		actions.renames["IN_SURFACE_CACHE_PASS"] = "false"; // Fork(Lestoroer)
 		actions.renames["IN_SHADOW_PASS"] = "IN_SHADOW_PASS";
 		actions.renames["VIEWPORT_SIZE"] = "scene_data_block.data.viewport_size";
 

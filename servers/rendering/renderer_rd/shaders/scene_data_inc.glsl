@@ -11,6 +11,9 @@
 #define SCENE_DATA_FLAGS_USE_UV2_MATERIAL (1 << 5)
 #define SCENE_DATA_FLAGS_USE_PANCAKE_SHADOWS (1 << 6)
 #define SCENE_DATA_FLAGS_IN_SHADOW_PASS (1 << 7)
+// Fork(Lestoroer): independent of chart winding and camera.
+#define SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE (1 << 8)
+#define SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE (1 << 9)
 
 struct SceneData {
 	mat4 projection_matrix;

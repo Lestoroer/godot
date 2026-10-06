@@ -1593,6 +1593,22 @@ void RendererSceneCull::instance_geometry_set_shader_parameter(RID p_instance, c
 	instance->instance_uniforms.set(instance->self, p_parameter, p_value);
 }
 
+// Fork(Lestoroer): source owns material, transform and instance-uniform state.
+void RendererSceneCull::instance_surface_cache_capture(RID p_instance, RID p_chart_instance, RID p_framebuffer, const Rect2i &p_region, bool p_back_side) {
+	Instance *source = instance_owner.get_or_null(p_instance);
+	Instance *chart = instance_owner.get_or_null(p_chart_instance);
+	ERR_FAIL_NULL(source);
+	ERR_FAIL_NULL(chart);
+	ERR_FAIL_COND(source->base_type != RSE::INSTANCE_MESH || chart->base_type != RSE::INSTANCE_MESH);
+	instance_attach_skeleton(p_chart_instance, source->skeleton);
+	update_dirty_instances();
+	InstanceGeometryData *source_geometry = static_cast<InstanceGeometryData *>(source->base_data);
+	InstanceGeometryData *chart_geometry = static_cast<InstanceGeometryData *>(chart->base_data);
+	ERR_FAIL_NULL(source_geometry);
+	ERR_FAIL_NULL(chart_geometry);
+	scene_render->surface_cache_capture(source_geometry->geometry_instance, chart_geometry->geometry_instance, p_framebuffer, p_region, p_back_side);
+}
+
 Variant RendererSceneCull::instance_geometry_get_shader_parameter(RID p_instance, const StringName &p_parameter) const {
 	const Instance *instance = instance_owner.get_or_null(p_instance);
 	ERR_FAIL_NULL_V(instance, Variant());

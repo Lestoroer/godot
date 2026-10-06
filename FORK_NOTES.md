@@ -368,3 +368,24 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 Это исправления технической основы, не реализация GI. Проверка принадлежит
 игровому эксперименту: `lighting/surface_cache/probes/hardware_rt.gd`. При
 обновлении re-spirv проверить поддержку RT/query до удаления обхода.
+
+### Surface Cache: GPU-захват материалов
+
+Только экспериментальная ветка. `Mesh.surface_cache_get_layout` возвращает
+недеструктивную xatlas-развёртку и remap исходных вершин/треугольников.
+`mesh_surface_set_capture_uv` назначает отдельный неизменяемый поток координат
+частному capture-мешу до создания экземпляров. Авторские UV/UV2/CUSTOM сохранены.
+`instance_surface_cache_capture` рисует на GPU материал исходного instance,
+используя remapped vertex/index streams второго instance. Трансформ, overrides
+и instance uniforms принадлежат исходному экземпляру; skin/morph-поза переносится
+на подготовленную геометрию. Результаты остаются в framebuffer вызывающего.
+
+Spatial built-in `IN_SURFACE_CACHE_PASS` позволяет отделить raw material от
+художественных преобразований. Сторона `FRONT_FACING` в этом проходе семантическая,
+а не вычисленная по winding UV. Захват Forward+ выдаёт пять targets:
+albedo/alpha, encoded normal, AO/roughness/metallic/specular, emission и мировую
+позицию/coverage. Материальная программа одна с raster. Остальные renderer-ы
+возвращают false для built-in и явно отвергают GPU capture API.
+
+Проверки актуальных материалов и remap находятся в игровом эксперименте.
+Наличие API не означает готовность GI или прохождение материальной приёмки.

@@ -2373,6 +2373,7 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("mesh_surface_set_material", "mesh", "surface", "material"), &RenderingServer::mesh_surface_set_material);
 	ClassDB::bind_method(D_METHOD("mesh_surface_get_material", "mesh", "surface"), &RenderingServer::mesh_surface_get_material);
 	ClassDB::bind_method(D_METHOD("mesh_get_surface", "mesh", "surface"), &RenderingServer::_mesh_get_surface);
+	ClassDB::bind_method(D_METHOD("mesh_surface_set_capture_uv", "mesh", "surface", "uv"), &RenderingServer::mesh_surface_set_capture_uv); // Fork(Lestoroer)
 	ClassDB::bind_method(D_METHOD("mesh_surface_get_arrays", "mesh", "surface"), &RenderingServer::mesh_surface_get_arrays);
 	ClassDB::bind_method(D_METHOD("mesh_surface_get_blend_shape_arrays", "mesh", "surface"), &RenderingServer::mesh_surface_get_blend_shape_arrays);
 	ClassDB::bind_method(D_METHOD("mesh_get_surface_count", "mesh"), &RenderingServer::mesh_get_surface_count);
@@ -3284,6 +3285,7 @@ void RenderingServer::_bind_methods() {
 
 	/* Bake 3D Object */
 
+	ClassDB::bind_method(D_METHOD("instance_surface_cache_capture", "instance", "chart_instance", "framebuffer", "region", "back_side"), &RenderingServer::instance_surface_cache_capture); // Fork(Lestoroer)
 	ClassDB::bind_method(D_METHOD("bake_render_uv2", "base", "material_overrides", "image_size"), &RenderingServer::bake_render_uv2);
 
 	BIND_ENUM_CONSTANT(RSE::BAKE_CHANNEL_ALBEDO_ALPHA);

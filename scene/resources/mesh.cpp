@@ -814,6 +814,7 @@ Ref<Resource> Mesh::create_placeholder() const {
 }
 
 void Mesh::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("surface_cache_get_layout", "surface", "texel_size"), &Mesh::surface_cache_get_layout); // Fork(Lestoroer)
 	ClassDB::bind_method(D_METHOD("set_lightmap_size_hint", "size"), &Mesh::set_lightmap_size_hint);
 	ClassDB::bind_method(D_METHOD("get_lightmap_size_hint"), &Mesh::get_lightmap_size_hint);
 	ClassDB::bind_method(D_METHOD("get_aabb"), &Mesh::get_aabb);
@@ -2069,6 +2070,88 @@ void ArrayMesh::regen_normal_maps() {
 
 //dirty hack
 bool (*array_mesh_lightmap_unwrap_callback)(float p_texel_size, const float *p_vertices, const float *p_normals, int p_vertex_count, const int *p_indices, int p_index_count, const uint8_t *p_cache_data, bool *r_use_cache, uint8_t **r_mesh_cache, int *r_mesh_cache_size, float **r_uv, int **r_vertex, int *r_vertex_count, int **r_index, int *r_index_count, int *r_size_hint_x, int *r_size_hint_y) = nullptr;
+
+// Fork(Lestoroer): retain the source vertex/primitive identities instead of rebuilding
+// a mesh through SurfaceTool, which drops CUSTOM data and refuses blend shapes.
+Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) const {
+	ERR_FAIL_NULL_V(array_mesh_lightmap_unwrap_callback, Dictionary());
+	ERR_FAIL_COND_V(!Math::is_finite(p_texel_size) || p_texel_size <= 0, Dictionary());
+	ERR_FAIL_INDEX_V(p_surface, get_surface_count(), Dictionary());
+	ERR_FAIL_COND_V(surface_get_primitive_type(p_surface) != PRIMITIVE_TRIANGLES, Dictionary());
+	Array arrays = surface_get_arrays(p_surface);
+	Vector<Vector3> positions = arrays[ARRAY_VERTEX];
+	Vector<Vector3> normals = arrays[ARRAY_NORMAL];
+	Vector<int> indices = arrays[ARRAY_INDEX];
+	ERR_FAIL_COND_V(positions.is_empty() || normals.size() != positions.size(), Dictionary());
+	if (indices.is_empty()) {
+		indices.resize(positions.size());
+		for (int i = 0; i < indices.size(); i++) {
+			indices.write[i] = i;
+		}
+	}
+	ERR_FAIL_COND_V(indices.size() % 3 != 0, Dictionary());
+	Vector<float> packed_positions;
+	Vector<float> packed_normals;
+	packed_positions.resize(positions.size() * 3);
+	packed_normals.resize(normals.size() * 3);
+	for (int i = 0; i < positions.size(); i++) {
+		for (int axis = 0; axis < 3; axis++) {
+			packed_positions.write[i * 3 + axis] = positions[i][axis];
+			packed_normals.write[i * 3 + axis] = normals[i][axis];
+		}
+	}
+	bool use_cache = false;
+	uint8_t *cache = nullptr;
+	int cache_size = 0;
+	float *uv = nullptr;
+	int *vertices = nullptr;
+	int vertex_count = 0;
+	int *chart_indices = nullptr;
+	int index_count = 0;
+	int width = 0;
+	int height = 0;
+	bool ok = array_mesh_lightmap_unwrap_callback(p_texel_size, packed_positions.ptr(), packed_normals.ptr(), positions.size(), indices.ptr(), indices.size(), nullptr, &use_cache, &cache, &cache_size, &uv, &vertices, &vertex_count, &chart_indices, &index_count, &width, &height);
+	Vector<Vector2> coordinates;
+	Vector<int> remap;
+	Vector<int> remapped_indices;
+	if (ok) {
+		coordinates.resize(vertex_count);
+		remap.resize(vertex_count);
+		for (int i = 0; i < vertex_count; i++) {
+			coordinates.write[i] = Vector2(uv[i * 2], uv[i * 2 + 1]);
+			remap.write[i] = vertices[i];
+		}
+		remapped_indices.resize(index_count);
+		memcpy(remapped_indices.ptrw(), chart_indices, index_count * sizeof(int));
+	}
+	if (uv) { memfree(uv); }
+	if (vertices) { memfree(vertices); }
+	if (chart_indices) { memfree(chart_indices); }
+	if (cache) { memfree(cache); }
+	ERR_FAIL_COND_V_MSG(!ok || index_count != indices.size(), Dictionary(), "Surface chart generation lost source primitives.");
+	// xatlas can fix winding. Restore exact source corner order for every primitive;
+	// the hit barycentrics must address the same corners as the original BLAS.
+	for (int tri = 0; tri < index_count; tri += 3) {
+		int generated[3] = { remapped_indices[tri], remapped_indices[tri + 1], remapped_indices[tri + 2] };
+		for (int corner = 0; corner < 3; corner++) {
+			int mapped = -1;
+			for (int candidate = 0; candidate < 3; candidate++) {
+				if (remap[generated[candidate]] == indices[tri + corner]) {
+					mapped = generated[candidate];
+					break;
+				}
+			}
+			ERR_FAIL_COND_V_MSG(mapped < 0, Dictionary(), "Chart primitive order does not match source geometry.");
+			remapped_indices.write[tri + corner] = mapped;
+		}
+	}
+	Dictionary result;
+	result["uv"] = coordinates;
+	result["source_vertices"] = remap;
+	result["indices"] = remapped_indices;
+	result["size"] = Vector2i(width, height);
+	return result;
+}
 
 struct ArrayMeshLightmapSurface {
 	Ref<Material> material;
