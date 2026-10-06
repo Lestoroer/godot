@@ -2069,7 +2069,7 @@ void ArrayMesh::regen_normal_maps() {
 }
 
 //dirty hack
-bool (*array_mesh_lightmap_unwrap_callback)(float p_texel_size, const float *p_vertices, const float *p_normals, int p_vertex_count, const int *p_indices, int p_index_count, const uint8_t *p_cache_data, bool *r_use_cache, uint8_t **r_mesh_cache, int *r_mesh_cache_size, float **r_uv, int **r_vertex, int *r_vertex_count, int **r_index, int *r_index_count, int *r_size_hint_x, int *r_size_hint_y) = nullptr;
+bool (*array_mesh_lightmap_unwrap_callback)(float p_texel_size, const float *p_vertices, const float *p_normals, int p_vertex_count, const int *p_indices, int p_index_count, const uint8_t *p_cache_data, bool *r_use_cache, uint8_t **r_mesh_cache, int *r_mesh_cache_size, float **r_uv, int **r_vertex, int *r_vertex_count, int **r_index, int *r_index_count, int *r_size_hint_x, int *r_size_hint_y, int **r_chart_ids) = nullptr;
 
 // Fork(Lestoroer): retain the source vertex/primitive identities instead of rebuilding
 // a mesh through SurfaceTool, which drops CUSTOM data and refuses blend shapes.
@@ -2107,19 +2107,23 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 	int *vertices = nullptr;
 	int vertex_count = 0;
 	int *chart_indices = nullptr;
+	int *chart_ids = nullptr;
 	int index_count = 0;
 	int width = 0;
 	int height = 0;
-	bool ok = array_mesh_lightmap_unwrap_callback(p_texel_size, packed_positions.ptr(), packed_normals.ptr(), positions.size(), indices.ptr(), indices.size(), nullptr, &use_cache, &cache, &cache_size, &uv, &vertices, &vertex_count, &chart_indices, &index_count, &width, &height);
+	bool ok = array_mesh_lightmap_unwrap_callback(p_texel_size, packed_positions.ptr(), packed_normals.ptr(), positions.size(), indices.ptr(), indices.size(), nullptr, &use_cache, &cache, &cache_size, &uv, &vertices, &vertex_count, &chart_indices, &index_count, &width, &height, &chart_ids);
 	Vector<Vector2> coordinates;
 	Vector<int> remap;
 	Vector<int> remapped_indices;
+	Vector<int> charts;
 	if (ok) {
 		coordinates.resize(vertex_count);
+		charts.resize(vertex_count);
 		remap.resize(vertex_count);
 		for (int i = 0; i < vertex_count; i++) {
 			coordinates.write[i] = Vector2(uv[i * 2], uv[i * 2 + 1]);
 			remap.write[i] = vertices[i];
+			charts.write[i] = chart_ids[i];
 		}
 		remapped_indices.resize(index_count);
 		memcpy(remapped_indices.ptrw(), chart_indices, index_count * sizeof(int));
@@ -2127,6 +2131,7 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 	if (uv) { memfree(uv); }
 	if (vertices) { memfree(vertices); }
 	if (chart_indices) { memfree(chart_indices); }
+	if (chart_ids) { memfree(chart_ids); }
 	if (cache) { memfree(cache); }
 	ERR_FAIL_COND_V_MSG(!ok || index_count != indices.size(), Dictionary(), "Surface chart generation lost source primitives.");
 	// xatlas can fix winding. Restore exact source corner order for every primitive;
@@ -2148,6 +2153,7 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 	Dictionary result;
 	result["uv"] = coordinates;
 	result["source_vertices"] = remap;
+	result["charts"] = charts;
 	result["indices"] = remapped_indices;
 	result["size"] = Vector2i(width, height);
 	return result;
@@ -2274,7 +2280,7 @@ Error ArrayMesh::lightmap_unwrap_cached(const Transform3D &p_base_transform, flo
 	int size_x;
 	int size_y;
 
-	bool ok = array_mesh_lightmap_unwrap_callback(p_texel_size, vertices.ptr(), normals.ptr(), vertices.size() / 3, indices.ptr(), indices.size(), p_src_cache.ptr(), &use_cache, &gen_cache, &gen_cache_size, &gen_uvs, &gen_vertices, &gen_vertex_count, &gen_indices, &gen_index_count, &size_x, &size_y);
+	bool ok = array_mesh_lightmap_unwrap_callback(p_texel_size, vertices.ptr(), normals.ptr(), vertices.size() / 3, indices.ptr(), indices.size(), p_src_cache.ptr(), &use_cache, &gen_cache, &gen_cache_size, &gen_uvs, &gen_vertices, &gen_vertex_count, &gen_indices, &gen_index_count, &size_x, &size_y, nullptr);
 
 	if (!ok) {
 		return ERR_CANT_CREATE;

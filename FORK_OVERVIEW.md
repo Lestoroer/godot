@@ -118,3 +118,6 @@ Forward+ может выбирать diffuse irradiance из world-owned Surface
 
 В эксперименте Surface Cache неактивный normal mapping не зависит от
 вырожденного tangent basis; адреса тонких треугольников вычисляются устойчивее.
+
+Surface layout сохраняет идентификаторы charts, выданные xatlas, для изоляции
+фильтрации света на несвязанных поверхностях.
