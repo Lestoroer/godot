@@ -1429,10 +1429,10 @@ void RenderingDeviceGraph::_group_barriers_for_render_commands(RDD::CommandBuffe
 	if (!diagnostic_masks.is_empty()) {
 		const PackedStringArray fields = diagnostic_masks.split(",");
 		if (fields.size() == 4) {
-			barrier_group.src_stages |= fields[0].to_int();
-			barrier_group.dst_stages |= fields[1].to_int();
-			barrier_group.memory_barrier.src_access |= fields[2].to_int();
-			barrier_group.memory_barrier.dst_access |= fields[3].to_int();
+			barrier_group.src_stages = barrier_group.src_stages | fields[0].to_int();
+			barrier_group.dst_stages = barrier_group.dst_stages | fields[1].to_int();
+			barrier_group.memory_barrier.src_access = barrier_group.memory_barrier.src_access | fields[2].to_int();
+			barrier_group.memory_barrier.dst_access = barrier_group.memory_barrier.dst_access | fields[3].to_int();
 		}
 	}
 
