@@ -480,6 +480,16 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 		}
 	}
 
+	if (p_pipeline_key.raytraced_gi_gather) {
+		depth_stencil_state.enable_depth_write = false;
+		depth_stencil_state.front_op.write_mask = 0;
+		depth_stencil_state.back_op.write_mask = 0;
+		for (RD::PipelineColorBlendState::Attachment &attachment : blend_state.attachments) {
+			attachment.enable_blend = false;
+			attachment.write_r = attachment.write_g = attachment.write_b = attachment.write_a = false;
+		}
+	}
+
 	// Convert the specialization from the key to pipeline specialization constants.
 	Vector<RD::PipelineSpecializationConstant> specialization_constants;
 	RD::PipelineSpecializationConstant sc;
@@ -496,6 +506,12 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 	sc = {}; // Sanitize value bits. "bool_value" only assigns 8 bits and keeps the remaining bits intact.
 	sc.constant_id = 2;
 	sc.bool_value = emulate_point_size_flag;
+	sc.type = RD::PIPELINE_SPECIALIZATION_CONSTANT_TYPE_BOOL;
+	specialization_constants.push_back(sc);
+
+	sc = {};
+	sc.constant_id = 3;
+	sc.bool_value = p_pipeline_key.raytraced_gi_gather;
 	sc.type = RD::PIPELINE_SPECIALIZATION_CONSTANT_TYPE_BOOL;
 	specialization_constants.push_back(sc);
 
@@ -689,7 +705,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 
 		Vector<uint64_t> dynamic_buffers;
 		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(RenderForwardClustered::RENDER_PASS_UNIFORM_SET, 2));
-		shader.initialize(shader_versions, p_defines, Vector<RD::PipelineImmutableSampler>(), dynamic_buffers);
+		shader.initialize(shader_versions, p_defines + "\n#define GI_TEXTURE_CAPACITY " + itos(MIN(1024, MIN(RD::get_singleton()->limit_get(RD::LIMIT_MAX_TEXTURES_PER_SHADER_STAGE), RD::get_singleton()->limit_get(RD::LIMIT_MAX_SAMPLERS_PER_SHADER_STAGE)) - 16)) + "\n", Vector<RD::PipelineImmutableSampler>(), dynamic_buffers);
 
 		if (RendererCompositorRD::get_singleton()->is_xr_enabled()) {
 			shader.enable_group(SHADER_GROUP_MULTIVIEW);
@@ -884,6 +900,8 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.render_mode_defines["specular_disabled"] = "#define SPECULAR_DISABLED\n";
 		actions.render_mode_defines["shadows_disabled"] = "#define SHADOWS_DISABLED\n";
 		actions.render_mode_defines["ambient_light_disabled"] = "#define AMBIENT_LIGHT_DISABLED\n";
+		actions.render_mode_defines["raytraced_irradiance"] = "#define RAYTRACED_IRRADIANCE\n#define CUSTOM_IRRADIANCE_USED\n";
+		actions.render_mode_defines["buffered_irradiance"] = "#define RAYTRACED_IRRADIANCE\n#define BUFFERED_IRRADIANCE\n#define CUSTOM_IRRADIANCE_USED\n";
 		actions.render_mode_defines["shadow_to_opacity"] = "#define USE_SHADOW_TO_OPACITY\n";
 		actions.render_mode_defines["unshaded"] = "#define MODE_UNSHADED\n";
 

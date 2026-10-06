@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #pragma once
+#include "core/object/class_db.h"
 
 #include "servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_scene_data_rd.h"
@@ -38,7 +39,20 @@
 class RenderDataRD : public RenderData {
 	GDCLASS(RenderDataRD, RenderData);
 
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("set_raytraced_gi_uniform_set", "uniform_set"), &RenderDataRD::set_raytraced_gi_uniform_set);
+		ClassDB::bind_method(D_METHOD("gather_raytraced_gi_surfaces", "uniform_set"), &RenderDataRD::gather_raytraced_gi_surfaces);
+	}
+
 public:
+	void set_raytraced_gi_uniform_set(RID p_uniform_set) { raytraced_gi_uniform_set = p_uniform_set; }
+	void (*raytraced_gi_gather_callback)(void *, RID) = nullptr;
+	void *raytraced_gi_gather_context = nullptr;
+	void gather_raytraced_gi_surfaces(RID p_uniform_set) {
+		ERR_FAIL_NULL_MSG(raytraced_gi_gather_callback, "GI raster gather is only available during this view's PRE_OPAQUE callback.");
+		raytraced_gi_gather_callback(raytraced_gi_gather_context, p_uniform_set);
+	}
 	// Access methods to expose data externally
 	virtual Ref<RenderSceneBuffers> get_render_scene_buffers() const override { return render_buffers; }
 	virtual RenderSceneData *get_render_scene_data() const override { return scene_data; }
@@ -59,6 +73,8 @@ public:
 	const PagedArray<RID> *fog_volumes = nullptr;
 	RID environment;
 	RID camera_attributes;
+	RID raytraced_gi_uniform_set;
+	RID raytraced_gi_compositor;
 	RID compositor;
 	RID shadow_atlas;
 	RID occluder_debug_tex;

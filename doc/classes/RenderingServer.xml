@@ -1988,6 +1988,14 @@
 				Sets the visibility range values for the given geometry instance. Equivalent to [member GeometryInstance3D.visibility_range_begin] and related properties.
 			</description>
 		</method>
+		<method name="instance_get_deformed_surface" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="instance" type="RID" />
+			<param index="1" name="surface" type="int" />
+			<description>
+				Returns the current GPU position/normal buffer for a skinned or blend-shape surface. For RenderingDevice compositors on the render thread; no GPU readback. Updates offscreen deformation when necessary. The buffer RID is borrowed and must not be freed or retained beyond the rendering callback. Layout keys are vertex_count, vertex_stride_words, normal_offset_words, normal_stride_words, has_normal (octahedral uint32 encoding), and version. An empty dictionary means no deformation buffer is needed or the renderer does not support this access.
+			</description>
+		</method>
 		<method name="instance_set_base">
 			<return type="void" />
 			<param index="0" name="instance" type="RID" />

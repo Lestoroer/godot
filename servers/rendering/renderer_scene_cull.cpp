@@ -464,6 +464,18 @@ void RendererSceneCull::scenario_set_camera_attributes(RID p_scenario, RID p_cam
 	scenario->camera_attributes = p_camera_attributes;
 }
 
+void RendererSceneCull::scenario_set_raytraced_gi_uniform_set(RID p_scenario, RID p_uniform_set) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	scenario->raytraced_gi_uniform_set = p_uniform_set;
+}
+
+void RendererSceneCull::scenario_set_raytraced_gi_compositor(RID p_scenario, RID p_compositor) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	scenario->raytraced_gi_compositor = p_compositor;
+}
+
 void RendererSceneCull::scenario_set_compositor(RID p_scenario, RID p_compositor) {
 	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
 	ERR_FAIL_NULL(scenario);
@@ -547,6 +559,15 @@ void RendererSceneCull::instance_initialize(RID p_rid) {
 	instance_owner.initialize_rid(p_rid);
 	Instance *instance = instance_owner.get_or_null(p_rid);
 	instance->self = p_rid;
+}
+
+Dictionary RendererSceneCull::instance_get_deformed_surface(RID p_instance, int p_surface) const {
+	const Instance *instance = instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL_V(instance, Dictionary());
+	if (instance->mesh_instance.is_null()) {
+		return Dictionary();
+	}
+	return RSG::mesh_storage->mesh_instance_get_deformed_surface(instance->mesh_instance, p_surface);
 }
 
 void RendererSceneCull::_instance_update_mesh_instance(Instance *p_instance) const {
@@ -727,6 +748,7 @@ void RendererSceneCull::instance_set_base(RID p_instance, RID p_base) {
 
 				geom->geometry_instance->set_skeleton(instance->skeleton);
 				geom->geometry_instance->set_material_override(instance->material_override);
+				geom->geometry_instance->set_raytraced_gi_surface_ids(instance->raytraced_gi_surface_ids);
 				geom->geometry_instance->set_material_overlay(instance->material_overlay);
 				geom->geometry_instance->set_surface_materials(instance->materials);
 				geom->geometry_instance->set_transform(instance->transform, instance->aabb, instance->transformed_aabb);
@@ -1370,6 +1392,15 @@ void RendererSceneCull::instance_geometry_set_cast_shadows_setting(RID p_instanc
 	}
 
 	_instance_queue_update(instance, false, true);
+}
+
+void RendererSceneCull::instance_set_raytraced_gi_surface_ids(RID p_instance, const Vector<int32_t> &p_ids) {
+	Instance *instance = instance_owner.get_or_null(p_instance);
+	ERR_FAIL_NULL(instance);
+	instance->raytraced_gi_surface_ids = p_ids;
+	if ((1 << instance->base_type) & RSE::INSTANCE_GEOMETRY_MASK && instance->base_data) {
+		static_cast<InstanceGeometryData *>(instance->base_data)->geometry_instance->set_raytraced_gi_surface_ids(p_ids);
+	}
 }
 
 void RendererSceneCull::instance_geometry_set_material_override(RID p_instance, RID p_material) {
@@ -3726,7 +3757,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	}
 
 	RENDER_TIMESTAMP("Render 3D Scene");
-	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, p_window_output_max_value, &sdfgi_update_data, r_render_info);
+	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, p_window_output_max_value, &sdfgi_update_data, r_render_info, scenario->raytraced_gi_uniform_set, scenario->raytraced_gi_compositor);
 
 	if (p_viewport.is_valid()) {
 		RSG::viewport->viewport_set_prev_camera_data(p_viewport, p_camera_data);

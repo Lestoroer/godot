@@ -200,6 +200,7 @@ private:
 
 		RID blend_weights_buffer;
 		List<MeshInstance *>::Element *I = nullptr; //used to erase itself
+		uint64_t deformation_version = 0;
 		uint64_t skeleton_version = 0;
 		bool dirty = false;
 		bool weights_dirty = false;
@@ -642,6 +643,7 @@ public:
 
 	bool owns_mesh_instance(RID p_rid) const { return mesh_instance_owner.owns(p_rid); }
 
+	virtual Dictionary mesh_instance_get_deformed_surface(RID p_instance, int p_surface) override;
 	virtual RID mesh_instance_create(RID p_base) override;
 	virtual void mesh_instance_free(RID p_rid) override;
 	virtual void mesh_instance_set_skeleton(RID p_mesh_instance, RID p_skeleton) override;

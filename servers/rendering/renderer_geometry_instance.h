@@ -45,6 +45,7 @@ public:
 
 	virtual void set_skeleton(RID p_skeleton) = 0;
 	virtual void set_material_override(RID p_override) = 0;
+	virtual void set_raytraced_gi_surface_ids(const Vector<int32_t> &p_ids) {}
 	virtual void set_material_overlay(RID p_overlay) = 0;
 	virtual void set_surface_materials(const Vector<RID> &p_materials) = 0;
 	virtual void set_mesh_instance(RID p_mesh_instance) = 0;

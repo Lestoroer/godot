@@ -930,10 +930,13 @@ public:
 	FUNC2(scenario_set_camera_attributes, RID, RID)
 	FUNC2(scenario_set_fallback_environment, RID, RID)
 	FUNC2(scenario_set_compositor, RID, RID)
+	FUNC2(scenario_set_raytraced_gi_uniform_set, RID, RID)
+	FUNC2(scenario_set_raytraced_gi_compositor, RID, RID)
 
 	/* INSTANCING API */
 	FUNCRIDSPLIT(instance)
 
+	FUNC2RC(Dictionary, instance_get_deformed_surface, RID, int)
 	FUNC2(instance_set_base, RID, RID)
 	FUNC2(instance_set_scenario, RID, RID)
 	FUNC2(instance_set_layer_mask, RID, uint32_t)
@@ -963,6 +966,7 @@ public:
 	FUNC3(instance_geometry_set_flag, RID, RSE::InstanceFlags, bool)
 	FUNC2(instance_geometry_set_cast_shadows_setting, RID, RSE::ShadowCastingSetting)
 	FUNC2(instance_geometry_set_material_override, RID, RID)
+	FUNC2(instance_set_raytraced_gi_surface_ids, RID, const Vector<int32_t> &)
 	FUNC2(instance_geometry_set_material_overlay, RID, RID)
 
 	FUNC6(instance_geometry_set_visibility_range, RID, float, float, float, float, RSE::VisibilityRangeFadeMode)

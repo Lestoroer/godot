@@ -292,11 +292,12 @@ Error RenderingShaderContainer::reflect_spirv(const String &p_shader_name, Span<
 		// This makes no practical difference in current graphics drivers, since Vulkan is the outlier.
 		BitField<RDC::ShaderStage> uniform_stage_flags;
 		if (pipeline_type == RDC::PIPELINE_TYPE_RAYTRACING) {
-			uniform_stage_flags = RDC::SHADER_STAGE_RAYGEN |
-					RDC::SHADER_STAGE_ANY_HIT |
-					RDC::SHADER_STAGE_CLOSEST_HIT |
-					RDC::SHADER_STAGE_MISS |
-					RDC::SHADER_STAGE_INTERSECTION;
+			// Fork(Lestoroer): ShaderStage values are indices, not stage masks.
+			uniform_stage_flags = (1U << RDC::SHADER_STAGE_RAYGEN) |
+					(1U << RDC::SHADER_STAGE_ANY_HIT) |
+					(1U << RDC::SHADER_STAGE_CLOSEST_HIT) |
+					(1U << RDC::SHADER_STAGE_MISS) |
+					(1U << RDC::SHADER_STAGE_INTERSECTION);
 		} else {
 			uniform_stage_flags = stage_flag;
 		}

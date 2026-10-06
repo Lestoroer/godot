@@ -229,6 +229,8 @@ private:
 		bool no_gi = false;
 		uint32_t view_count = 1;
 		RID render_pass_uniform_set;
+		RID raytraced_gi_uniform_set;
+		bool raytraced_gi_gather = false;
 		bool force_wireframe = false;
 		Vector2 uv_offset;
 		float lod_distance_multiplier = 0.0;
@@ -564,6 +566,8 @@ private:
 
 		//used during rendering
 
+		Vector<int32_t> raytraced_gi_surface_ids;
+		virtual void set_raytraced_gi_surface_ids(const Vector<int32_t> &p_ids) override { raytraced_gi_surface_ids = p_ids; }
 		uint32_t gi_offset_cache = 0;
 		bool store_transform_cache = true;
 		RID transforms_uniform_set;

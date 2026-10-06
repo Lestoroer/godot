@@ -2867,8 +2867,8 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("viewport_set_update_mode", "viewport", "update_mode"), &RenderingServer::viewport_set_update_mode);
 	ClassDB::bind_method(D_METHOD("viewport_get_update_mode", "viewport"), &RenderingServer::viewport_get_update_mode);
 	ClassDB::bind_method(D_METHOD("viewport_set_clear_mode", "viewport", "clear_mode"), &RenderingServer::viewport_set_clear_mode);
-	ClassDB::bind_method(D_METHOD("viewport_get_render_target", "viewport"), &RenderingServer::viewport_get_render_target);
 	ClassDB::bind_method(D_METHOD("viewport_get_texture", "viewport"), &RenderingServer::viewport_get_texture);
+	ClassDB::bind_method(D_METHOD("viewport_get_render_target", "viewport"), &RenderingServer::viewport_get_render_target);
 	ClassDB::bind_method(D_METHOD("viewport_set_disable_3d", "viewport", "disable"), &RenderingServer::viewport_set_disable_3d);
 	ClassDB::bind_method(D_METHOD("viewport_set_disable_2d", "viewport", "disable"), &RenderingServer::viewport_set_disable_2d);
 	ClassDB::bind_method(D_METHOD("viewport_set_environment_mode", "viewport", "mode"), &RenderingServer::viewport_set_environment_mode);
@@ -3206,11 +3206,14 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("scenario_set_fallback_environment", "scenario", "environment"), &RenderingServer::scenario_set_fallback_environment);
 	ClassDB::bind_method(D_METHOD("scenario_set_camera_attributes", "scenario", "effects"), &RenderingServer::scenario_set_camera_attributes);
 	ClassDB::bind_method(D_METHOD("scenario_set_compositor", "scenario", "compositor"), &RenderingServer::scenario_set_compositor);
+	ClassDB::bind_method(D_METHOD("scenario_set_raytraced_gi_uniform_set", "scenario", "uniform_set"), &RenderingServer::scenario_set_raytraced_gi_uniform_set);
+	ClassDB::bind_method(D_METHOD("scenario_set_raytraced_gi_compositor", "scenario", "compositor"), &RenderingServer::scenario_set_raytraced_gi_compositor);
 
 	/* INSTANCE */
 
 	ClassDB::bind_method(D_METHOD("instance_create2", "base", "scenario"), &RenderingServer::instance_create2);
 	ClassDB::bind_method(D_METHOD("instance_create"), &RenderingServer::instance_create);
+	ClassDB::bind_method(D_METHOD("instance_get_deformed_surface", "instance", "surface"), &RenderingServer::instance_get_deformed_surface);
 	ClassDB::bind_method(D_METHOD("instance_set_base", "instance", "base"), &RenderingServer::instance_set_base);
 	ClassDB::bind_method(D_METHOD("instance_set_scenario", "instance", "scenario"), &RenderingServer::instance_set_scenario);
 	ClassDB::bind_method(D_METHOD("instance_set_layer_mask", "instance", "mask"), &RenderingServer::instance_set_layer_mask);
@@ -3235,6 +3238,7 @@ void RenderingServer::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("instance_geometry_set_flag", "instance", "flag", "enabled"), &RenderingServer::instance_geometry_set_flag);
 	ClassDB::bind_method(D_METHOD("instance_geometry_set_cast_shadows_setting", "instance", "shadow_casting_setting"), &RenderingServer::instance_geometry_set_cast_shadows_setting);
+	ClassDB::bind_method(D_METHOD("instance_set_raytraced_gi_surface_ids", "instance", "surface_ids"), &RenderingServer::instance_set_raytraced_gi_surface_ids);
 	ClassDB::bind_method(D_METHOD("instance_geometry_set_material_override", "instance", "material"), &RenderingServer::instance_geometry_set_material_override);
 	ClassDB::bind_method(D_METHOD("instance_geometry_set_material_overlay", "instance", "material"), &RenderingServer::instance_geometry_set_material_overlay);
 	ClassDB::bind_method(D_METHOD("instance_geometry_set_visibility_range", "instance", "min", "max", "min_margin", "max_margin", "fade_mode"), &RenderingServer::instance_geometry_set_visibility_range);
@@ -3537,6 +3541,7 @@ void RenderingServer::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("is_render_loop_enabled"), &RenderingServer::is_render_loop_enabled);
 	ClassDB::bind_method(D_METHOD("set_render_loop_enabled", "enabled"), &RenderingServer::set_render_loop_enabled);
+	ClassDB::bind_method(D_METHOD("set_frame_profiling_enabled", "enabled"), &RenderingServer::set_frame_profiling_enabled);
 
 	ClassDB::bind_method(D_METHOD("get_frame_setup_time_cpu"), &RenderingServer::get_frame_setup_time_cpu);
 

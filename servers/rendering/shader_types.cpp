@@ -250,6 +250,8 @@ ShaderTypes::ShaderTypes() {
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("ensure_correct_normals") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("shadows_disabled") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("ambient_light_disabled") });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("raytraced_irradiance") });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("buffered_irradiance") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("shadow_to_opacity") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("vertex_lighting") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("particle_trails") });

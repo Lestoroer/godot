@@ -718,6 +718,8 @@ public:
 	virtual void scenario_set_fallback_environment(RID p_scenario, RID p_environment) = 0;
 	virtual void scenario_set_camera_attributes(RID p_scenario, RID p_camera_attributes) = 0;
 	virtual void scenario_set_compositor(RID p_scenario, RID p_compositor) = 0;
+	virtual void scenario_set_raytraced_gi_uniform_set(RID p_scenario, RID p_uniform_set) = 0;
+	virtual void scenario_set_raytraced_gi_compositor(RID p_scenario, RID p_compositor) = 0;
 
 	/* INSTANCING API */
 
@@ -725,6 +727,7 @@ public:
 
 	virtual RID instance_create() = 0;
 
+	virtual Dictionary instance_get_deformed_surface(RID p_instance, int p_surface) const = 0;
 	virtual void instance_set_base(RID p_instance, RID p_base) = 0;
 	virtual void instance_set_scenario(RID p_instance, RID p_scenario) = 0;
 	virtual void instance_set_layer_mask(RID p_instance, uint32_t p_mask) = 0;
@@ -758,6 +761,7 @@ public:
 	virtual void instance_geometry_set_flag(RID p_instance, RSE::InstanceFlags p_flags, bool p_enabled) = 0;
 	virtual void instance_geometry_set_cast_shadows_setting(RID p_instance, RSE::ShadowCastingSetting p_shadow_casting_setting) = 0;
 	virtual void instance_geometry_set_material_override(RID p_instance, RID p_material) = 0;
+	virtual void instance_set_raytraced_gi_surface_ids(RID p_instance, const Vector<int32_t> &p_ids) = 0;
 	virtual void instance_geometry_set_material_overlay(RID p_instance, RID p_material) = 0;
 	virtual void instance_geometry_set_visibility_range(RID p_instance, float p_min, float p_max, float p_min_margin, float p_max_margin, RSE::VisibilityRangeFadeMode p_fade_mode) = 0;
 	virtual void instance_geometry_set_lightmap(RID p_instance, RID p_lightmap, const Rect2 &p_lightmap_uv_scale, int p_lightmap_slice) = 0;

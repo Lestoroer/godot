@@ -340,6 +340,8 @@ public:
 		RID fallback_environment;
 		RID camera_attributes;
 		RID compositor;
+		RID raytraced_gi_uniform_set;
+		RID raytraced_gi_compositor;
 		RID reflection_probe_shadow_atlas;
 		RID reflection_atlas;
 		uint64_t used_viewport_visibility_bits;
@@ -376,6 +378,8 @@ public:
 	virtual void scenario_set_camera_attributes(RID p_scenario, RID p_attributes);
 	virtual void scenario_set_fallback_environment(RID p_scenario, RID p_environment);
 	virtual void scenario_set_compositor(RID p_scenario, RID p_compositor);
+	virtual void scenario_set_raytraced_gi_uniform_set(RID p_scenario, RID p_uniform_set) override;
+	virtual void scenario_set_raytraced_gi_compositor(RID p_scenario, RID p_compositor) override;
 	virtual void scenario_set_reflection_atlas_size(RID p_scenario, int p_reflection_size, int p_reflection_count);
 	virtual bool is_scenario(RID p_scenario) const;
 	virtual RID scenario_get_environment(RID p_scenario);
@@ -405,6 +409,7 @@ public:
 
 		RID skeleton;
 		RID material_override;
+		Vector<int32_t> raytraced_gi_surface_ids;
 		RID material_overlay;
 
 		RID mesh_instance; //only used for meshes and when skeleton/blendshapes exist
@@ -1025,6 +1030,7 @@ public:
 	virtual RID instance_allocate();
 	virtual void instance_initialize(RID p_rid);
 
+	virtual Dictionary instance_get_deformed_surface(RID p_instance, int p_surface) const override;
 	virtual void instance_set_base(RID p_instance, RID p_base);
 	virtual void instance_set_scenario(RID p_instance, RID p_scenario);
 	virtual void instance_set_layer_mask(RID p_instance, uint32_t p_mask);
@@ -1061,6 +1067,7 @@ public:
 	virtual void instance_geometry_set_flag(RID p_instance, RSE::InstanceFlags p_flags, bool p_enabled);
 	virtual void instance_geometry_set_cast_shadows_setting(RID p_instance, RSE::ShadowCastingSetting p_shadow_casting_setting);
 	virtual void instance_geometry_set_material_override(RID p_instance, RID p_material);
+	virtual void instance_set_raytraced_gi_surface_ids(RID p_instance, const Vector<int32_t> &p_ids);
 	virtual void instance_geometry_set_material_overlay(RID p_instance, RID p_material);
 
 	virtual void instance_geometry_set_visibility_range(RID p_instance, float p_min, float p_max, float p_min_margin, float p_max_margin, RSE::VisibilityRangeFadeMode p_fade_mode);

@@ -254,66 +254,41 @@ Ref<RenderSceneBuffers> RendererSceneRenderRD::render_buffers_create() {
 	return rb;
 }
 
-bool RendererSceneRenderRD::_compositor_effects_has_flag(const RenderDataRD *p_render_data, RSE::CompositorEffectFlags p_flag, RSE::CompositorEffectCallbackType p_callback_type) {
-	RendererCompositorStorage *comp_storage = RendererCompositorStorage::get_singleton();
-
-	if (p_render_data->compositor.is_null()) {
-		return false;
-	}
-
+Vector<RID> RendererSceneRenderRD::_get_compositor_effects(const RenderDataRD *p_render_data, RSE::CompositorEffectCallbackType p_callback_type) {
+	Vector<RID> effects;
 	if (p_render_data->reflection_probe.is_valid()) {
-		return false;
+		return effects;
 	}
+	RendererCompositorStorage *storage = RendererCompositorStorage::get_singleton();
+	for (RID compositor : { p_render_data->raytraced_gi_compositor, p_render_data->compositor }) {
+		if (compositor.is_valid()) {
+			ERR_FAIL_COND_V(!storage->is_compositor(compositor), effects);
+			effects.append_array(storage->compositor_get_compositor_effects(compositor, p_callback_type, true));
+		}
+	}
+	return effects;
+}
 
-	ERR_FAIL_COND_V(!comp_storage->is_compositor(p_render_data->compositor), false);
-	Vector<RID> re_rids = comp_storage->compositor_get_compositor_effects(p_render_data->compositor, p_callback_type, true);
-
-	for (RID rid : re_rids) {
-		if (comp_storage->compositor_effect_get_flag(rid, p_flag)) {
+bool RendererSceneRenderRD::_compositor_effects_has_flag(const RenderDataRD *p_render_data, RSE::CompositorEffectFlags p_flag, RSE::CompositorEffectCallbackType p_callback_type) {
+	RendererCompositorStorage *storage = RendererCompositorStorage::get_singleton();
+	for (RID effect : _get_compositor_effects(p_render_data, p_callback_type)) {
+		if (storage->compositor_effect_get_flag(effect, p_flag)) {
 			return true;
 		}
 	}
-
 	return false;
 }
 
 bool RendererSceneRenderRD::_has_compositor_effect(RSE::CompositorEffectCallbackType p_callback_type, const RenderDataRD *p_render_data) {
-	RendererCompositorStorage *comp_storage = RendererCompositorStorage::get_singleton();
-
-	if (p_render_data->compositor.is_null()) {
-		return false;
-	}
-
-	if (p_render_data->reflection_probe.is_valid()) {
-		return false;
-	}
-
-	ERR_FAIL_COND_V(!comp_storage->is_compositor(p_render_data->compositor), false);
-
-	Vector<RID> effects = comp_storage->compositor_get_compositor_effects(p_render_data->compositor, p_callback_type, true);
-
-	return effects.size() > 0;
+	return !_get_compositor_effects(p_render_data, p_callback_type).is_empty();
 }
 
 void RendererSceneRenderRD::_process_compositor_effects(RSE::CompositorEffectCallbackType p_callback_type, const RenderDataRD *p_render_data) {
-	RendererCompositorStorage *comp_storage = RendererCompositorStorage::get_singleton();
-
-	if (p_render_data->compositor.is_null()) {
-		return;
-	}
-
-	if (p_render_data->reflection_probe.is_valid()) {
-		return;
-	}
-
-	ERR_FAIL_COND(!comp_storage->is_compositor(p_render_data->compositor));
-
-	Vector<RID> re_rids = comp_storage->compositor_get_compositor_effects(p_render_data->compositor, p_callback_type, true);
-
-	for (RID rid : re_rids) {
-		Callable callback = comp_storage->compositor_effect_get_callback(rid);
-		Array arr = { p_callback_type, p_render_data };
-		callback.callv(arr);
+	RendererCompositorStorage *storage = RendererCompositorStorage::get_singleton();
+	for (RID effect : _get_compositor_effects(p_render_data, p_callback_type)) {
+		Callable callback = storage->compositor_effect_get_callback(effect);
+		Array arguments = { p_callback_type, p_render_data };
+		callback.callv(arguments);
 	}
 }
 
@@ -1361,7 +1336,7 @@ void RendererSceneRenderRD::_post_prepass_render(RenderDataRD *p_render_data, bo
 	}
 }
 
-void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data, RenderingServerTypes::RenderInfo *r_render_info) {
+void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render_buffers, const CameraData *p_camera_data, const CameraData *p_prev_camera_data, const PagedArray<RenderGeometryInstance *> &p_instances, const PagedArray<RID> &p_lights, const PagedArray<RID> &p_reflection_probes, const PagedArray<RID> &p_voxel_gi_instances, const PagedArray<RID> &p_decals, const PagedArray<RID> &p_lightmaps, const PagedArray<RID> &p_fog_volumes, RID p_environment, RID p_camera_attributes, RID p_compositor, RID p_shadow_atlas, RID p_occluder_debug_tex, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, const RenderShadowData *p_render_shadows, int p_render_shadow_count, const RenderSDFGIData *p_render_sdfgi_regions, int p_render_sdfgi_region_count, float p_window_output_max_value, const RenderSDFGIUpdateData *p_sdfgi_update_data, RenderingServerTypes::RenderInfo *r_render_info, RID p_raytraced_gi_uniform_set, RID p_raytraced_gi_compositor) {
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 
@@ -1447,6 +1422,8 @@ void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render
 
 	//assign render data
 	RenderDataRD render_data;
+	render_data.raytraced_gi_uniform_set = p_raytraced_gi_uniform_set;
+	render_data.raytraced_gi_compositor = p_raytraced_gi_compositor;
 	{
 		render_data.render_buffers = rb;
 		render_data.scene_data = &scene_data;

@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #pragma once
+#include "core/object/class_db.h"
 
 #include "servers/rendering/renderer_scene_render.h"
 #include "servers/rendering/storage/render_scene_data.h"
@@ -39,7 +40,19 @@
 class RenderSceneDataRD : public RenderSceneData {
 	GDCLASS(RenderSceneDataRD, RenderSceneData);
 
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("get_camera_visible_layers"), &RenderSceneDataRD::get_camera_visible_layers);
+		ClassDB::bind_method(D_METHOD("get_unjittered_view_projection", "view"), &RenderSceneDataRD::get_unjittered_view_projection);
+	}
 public:
+	uint32_t get_camera_visible_layers() const { return camera_visible_layers; }
+	Projection get_unjittered_view_projection(uint32_t p_view) const {
+		ERR_FAIL_UNSIGNED_INDEX_V(p_view, view_count, Projection());
+		Projection correction;
+		correction.set_depth_correction(flip_y);
+		return correction * view_projection[p_view];
+	}
 	bool calculate_motion_vectors = false;
 
 	Transform3D cam_transform;

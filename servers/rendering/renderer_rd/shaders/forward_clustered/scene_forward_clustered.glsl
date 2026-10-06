@@ -862,7 +862,7 @@ void main() {
 
 #[fragment]
 
-#version 450
+#version 460
 
 #VERSION_DEFINES
 
@@ -876,6 +876,12 @@ void main() {
 #endif
 
 /* Include half precision types. */
+#if defined(RAYTRACED_IRRADIANCE) && !defined(MODE_RENDER_DEPTH)
+// GI has no depth output. Reject hidden fragments before their ray queries.
+layout(early_fragment_tests) in;
+#include "raytraced_irradiance_inc.glsl"
+#endif
+
 #include "../half_inc.glsl"
 
 #include "scene_forward_clustered_inc.glsl"
@@ -1443,6 +1449,32 @@ void fragment_shader(in SceneData scene_data) {
 #elif defined(NORMAL_USED)
 	normal = geo_normal;
 #endif // NORMAL_MAP_USED
+
+#if defined(RAYTRACED_IRRADIANCE) && !defined(MODE_RENDER_DEPTH)
+	if (custom_irradiance.a < 0.0 && alpha > 0.0) {
+		vec3 gi_position = (inv_view_matrix * vec4(vertex, 1.0)).xyz;
+		vec3 gi_normal = normalize(mat3(inv_view_matrix) * normal);
+		vec3 gi_dx = dFdx(gi_position);
+		vec3 gi_dy = dFdy(gi_position);
+		float gi_footprint = max(length(gi_dx), length(gi_dy));
+		vec3 gi_geometric = normalize(cross(gi_dx, gi_dy));
+		if (dot(gi_geometric, gi_normal) < 0.0) { gi_geometric = -gi_geometric; }
+		uint gi_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
+		uint gi_primitive = (uint(gl_PrimitiveID) << 1u) | (gl_FrontFacing ? 0u : 1u);
+#ifdef BUFFERED_IRRADIANCE
+		const bool gi_transparent = false;
+#else
+		const bool gi_transparent = true;
+#endif
+		if (gi_gather_pass) {
+			gi_gather_surface(gi_position, gi_normal, gi_geometric, albedo * (1.0 - metallic),
+				gi_footprint, gi_surface, gi_primitive, int(ViewIndex), gi_transparent);
+			return;
+		}
+		custom_irradiance = vec4(gi_raster_irradiance(gi_surface, gi_primitive, gi_position, int(ViewIndex)), 1.0);
+	}
+	if (gi_gather_pass) { return; }
+#endif
 
 #ifdef BENT_NORMAL_MAP_USED
 	bent_normal_map.xy = bent_normal_map.xy * 2.0 - 1.0;
