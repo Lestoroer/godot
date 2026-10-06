@@ -1414,7 +1414,8 @@ void RenderingDeviceGraph::_group_barriers_for_render_commands(RDD::CommandBuffe
 		}
 	}
 
-	if (p_full_memory_barrier) {
+	static const bool trace_full_barriers = OS::get_singleton()->has_environment("SURFACE_CACHE_FULL_BARRIERS");
+	if (p_full_memory_barrier || trace_full_barriers) {
 		barrier_group.src_stages = RDD::PIPELINE_STAGE_ALL_COMMANDS_BIT;
 		barrier_group.dst_stages = RDD::PIPELINE_STAGE_ALL_COMMANDS_BIT;
 		barrier_group.memory_barrier.src_access = RDD::BARRIER_ACCESS_MEMORY_READ_BIT | RDD::BARRIER_ACCESS_MEMORY_WRITE_BIT;
