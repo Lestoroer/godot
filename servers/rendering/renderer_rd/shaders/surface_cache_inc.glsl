@@ -27,7 +27,7 @@ vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 
         ivec2 point=base+ivec2(x,y);
         if (any(lessThan(point,ivec2(0))) || any(greaterThanEqual(point,size))) continue;
         uint address=offset+uint(point.y)*mapping.z+uint(point.x);
-        if (surface_cache_materials.data[address].identity.x!=chart || surface_cache_materials.data[address].identity.w==0u) continue;
+        if (surface_cache_materials.data[address].identity.x!=chart || surface_cache_materials.data[address].identity.y!=surface || surface_cache_materials.data[address].identity.w==0u) continue;
         float weight=(x==0?1.0-fraction.x:fraction.x)*(y==0?1.0-fraction.y:fraction.y);
         irradiance+=surface_cache_light.data[address].rgb*weight;
         weight_sum+=weight;
@@ -40,7 +40,7 @@ vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 
         ivec2 point=base+ivec2(x,y);
         if (any(lessThan(point,ivec2(0))) || any(greaterThanEqual(point,size))) continue;
         uint address=offset+uint(point.y)*mapping.z+uint(point.x);
-        if (surface_cache_materials.data[address].identity.x!=chart || surface_cache_materials.data[address].identity.w==0u) continue;
+        if (surface_cache_materials.data[address].identity.x!=chart || surface_cache_materials.data[address].identity.y!=surface || surface_cache_materials.data[address].identity.w==0u) continue;
         float distance=dot(vec2(point)-pixel,vec2(point)-pixel);
         if (distance<nearest) { nearest=distance; irradiance=surface_cache_light.data[address].rgb; found=true; }
     }

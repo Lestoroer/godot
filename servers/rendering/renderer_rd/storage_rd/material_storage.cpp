@@ -2541,6 +2541,11 @@ void MaterialStorage::material_set_param(RID p_material, const StringName &p_par
 	Material *material = material_owner.get_or_null(p_material);
 	ERR_FAIL_NULL(material);
 
+	const Variant *previous = material->params.getptr(p_param);
+	if ((previous && *previous == p_value) || (!previous && p_value.get_type() == Variant::NIL)) {
+		return;
+	}
+
 	if (p_value.get_type() == Variant::NIL) {
 		material->params.erase(p_param);
 	} else {
