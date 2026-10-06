@@ -584,6 +584,8 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	_register_requested_device_extension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false);
+	// Fork(Lestoroer): request and enable the optional ray-query capability.
+	_register_requested_device_extension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, false);
 
@@ -914,6 +916,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDeviceVulkanMemoryModelFeatures memory_model_features = {};
 		VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features = {};
 		VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracing_pipeline_features = {};
+		VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
 		VkPhysicalDeviceSynchronization2FeaturesKHR sync_2_features = {};
 		VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
 
@@ -994,6 +997,12 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			next_features = &raytracing_pipeline_features;
 		}
 
+		if (enabled_device_extension_names.has(VK_KHR_RAY_QUERY_EXTENSION_NAME)) {
+			ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+			ray_query_features.pNext = next_features;
+			next_features = &ray_query_features;
+		}
+
 		if (enabled_device_extension_names.has(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME)) {
 			raytracing_validation_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV;
 			raytracing_validation_features.pNext = next_features;
@@ -1010,6 +1019,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		device_features_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 		device_features_2.pNext = next_features;
 		functions.GetPhysicalDeviceFeatures2(physical_device, &device_features_2);
+		ray_query_support = ray_query_features.rayQuery;
 
 		if (use_1_2_features) {
 #ifdef MACOS_ENABLED
@@ -1431,6 +1441,14 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		raytracing_pipeline_features.pNext = create_info_next;
 		raytracing_pipeline_features.rayTracingPipeline = raytracing_capabilities.raytracing_pipeline_support;
 		create_info_next = &raytracing_pipeline_features;
+	}
+
+	VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
+	if (ray_query_support) {
+		ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+		ray_query_features.pNext = create_info_next;
+		ray_query_features.rayQuery = true;
+		create_info_next = &ray_query_features;
 	}
 
 	VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
@@ -4332,7 +4350,21 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 	Vector<uint8_t> decompressed_code;
 	VkShaderModule vk_module;
 	PackedByteArray decoded_spirv;
-	const bool use_respv = (RESPV_ENABLED == 1) && !shader_container_format.get_debug_info_enabled();
+	bool use_respv = (RESPV_ENABLED == 1) && !shader_container_format.get_debug_info_enabled();
+	// Fork(Lestoroer): re-spirv cannot lower RT/query instructions. Preserve SPIR-V
+	// for the Vulkan driver, including hit/miss stages without an AS descriptor.
+	for (ShaderStage stage : shader_refl.stages_vector) {
+		if (stage == SHADER_STAGE_RAYGEN || stage == SHADER_STAGE_MISS || stage == SHADER_STAGE_CLOSEST_HIT || stage == SHADER_STAGE_ANY_HIT || stage == SHADER_STAGE_INTERSECTION) {
+			use_respv = false;
+		}
+	}
+	for (const Vector<ShaderUniform> &uniforms : shader_refl.uniform_sets) {
+		for (const ShaderUniform &uniform : uniforms) {
+			if (uniform.type == UNIFORM_TYPE_ACCELERATION_STRUCTURE) {
+				use_respv = false;
+			}
+		}
+	}
 	const bool store_respv = use_respv && !shader_refl.specialization_constants.is_empty();
 	const int64_t stage_count = shader_refl.stages_vector.size();
 	shader_info.vk_stages_create_info.reserve(stage_count);

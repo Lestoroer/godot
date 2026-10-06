@@ -349,3 +349,18 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
 7. При новых методах `DisplayServerHeadless` перепроверить virtual window size, screen list,
    `can_any_window_draw`, mouse-mode state и запрет subwindows в offscreen-наследнике.
 8. PR #94530 остаётся историческим источником требований, а не кодом для повторного merge.
+
+### Эксперимент Surface Cache GI: Vulkan RT foundation
+
+Только ветка `codex/gi-surface-cache`, отдельный worktree. Основной движок
+не получает этот патч. `drivers/vulkan/rendering_device_driver_vulkan.cpp`:
+
+- Запрос и включение `VK_KHR_ray_query` по фактическим capabilities устройства.
+- RT shader stages и shaders с acceleration-structure descriptor обходят
+  re-spirv: он не поддерживает соответствующие инструкции. Vulkan получает
+  исходный SPIR-V и сам применяет specialization constants. Без этого smoke
+  probe мог успешно создать pipeline, но возвращать miss для известного hit.
+
+Это исправления технической основы, не реализация GI. Проверка принадлежит
+игровому эксперименту: `lighting/surface_cache/probes/hardware_rt.gd`. При
+обновлении re-spirv проверить поддержку RT/query до удаления обхода.
