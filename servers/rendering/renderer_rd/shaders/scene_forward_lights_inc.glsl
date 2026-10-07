@@ -440,7 +440,11 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 
 	SPEC_CONSTANT_LOOP_ANNOTATION
 	for (uint i = 0; i < sc_directional_penumbra_shadow_samples(); i++) {
-		vec2 suv = pssm_coord.xy + (disk_rotation * scene_data_block.data.directional_penumbra_shadow_kernel[i].xy) * tex_scale;
+		// Rotate AND vary radius within equal-area strata. Rotation alone never
+		// samples the central disk and repeatedly misses small nearby blockers.
+		float radial_phase = fract(quick_hash(gl_FragCoord.xy + vec2(float(i) * 1.618034, 7.0)) + taa_frame_count * 0.618034);
+		vec2 kernel = scene_data_block.data.directional_penumbra_shadow_kernel[i].xy * sqrt((float(i) + radial_phase) / (float(i) + 0.5));
+		vec2 suv = pssm_coord.xy + (disk_rotation * kernel) * tex_scale;
 		// Compare actual texels before filtering: interpolating depth across a
 		// silhouette invents blockers whose distance changes with the kernel.
 		vec2 size = vec2(textureSize(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), 0));
@@ -466,7 +470,11 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 
 		SPEC_CONSTANT_LOOP_ANNOTATION
 		for (uint i = 0; i < sc_directional_penumbra_shadow_samples(); i++) {
-			vec2 suv = pssm_coord.xy + (disk_rotation * scene_data_block.data.directional_penumbra_shadow_kernel[i].xy) * tex_scale;
+			// Rotate AND vary radius within equal-area strata. Rotation alone never
+		// samples the central disk and repeatedly misses small nearby blockers.
+		float radial_phase = fract(quick_hash(gl_FragCoord.xy + vec2(float(i) * 1.618034, 7.0)) + taa_frame_count * 0.618034);
+		vec2 kernel = scene_data_block.data.directional_penumbra_shadow_kernel[i].xy * sqrt((float(i) + radial_phase) / (float(i) + 0.5));
+		vec2 suv = pssm_coord.xy + (disk_rotation * kernel) * tex_scale;
 			s += sample_receiver_plane_shadow(shadow, suv, pssm_coord, depth_gradient);
 		}
 
