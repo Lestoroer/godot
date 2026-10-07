@@ -461,6 +461,23 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 		blocker_count += dot(blockers, vec4(1.0));
 	}
 
+	// The wide search can miss a small close caster entirely. Before declaring
+	// the receiver lit, test its central footprint. This is a fallback depth
+	// estimate, not an extra equal-weight sample in the wide-disk average.
+	if (blocker_count == 0.0) {
+		vec2 size = vec2(textureSize(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), 0));
+		vec2 pixel = pssm_coord.xy * size - 0.5;
+		vec2 base = (floor(pixel) + 0.5) / size;
+		vec2 f = fract(pixel);
+		vec4 depths = textureGather(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), pssm_coord.xy, 0);
+		vec2 depth_step = depth_gradient / size;
+		vec4 offsets = dot(depth_gradient, base - pssm_coord.xy) + vec4(depth_step.y, depth_step.x + depth_step.y, depth_step.x, 0.0);
+		vec4 weights = vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
+		vec4 blockers = weights * vec4(greaterThan(depths, max(vec4(pssm_coord.z), vec4(pssm_coord.z) + offsets)));
+		blocker_average = dot(depths, blockers);
+		blocker_count = dot(blockers, vec4(1.0));
+	}
+
 	if (blocker_count > 0.0) {
 		//blockers found, do soft shadow
 		blocker_average /= blocker_count;
