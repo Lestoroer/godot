@@ -81,6 +81,7 @@ public:
 		virtual void set_code(const String &p_Code) = 0;
 		virtual bool is_animated() const = 0;
 		virtual bool has_shader_displacement() const { return false; }
+		virtual bool is_surface_cache_global_invariant() const { return false; }
 		virtual bool casts_shadows() const = 0;
 		virtual RenderingServerTypes::ShaderNativeSourceCode get_native_source_code() const = 0;
 		virtual Pair<ShaderRD *, RID> get_native_shader_and_version() const = 0;

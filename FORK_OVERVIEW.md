@@ -141,3 +141,8 @@ Surface Cache: depth/normal prepass сохраняет surface и primitive ID �
 Surface Cache propagates changes in mesh content, texture pixels and global
 shader inputs. Its material coverage is independent of fragment discard.
 Shader vertex displacement is an explicit unsupported transport contract.
+
+Spatial render mode `surface_cache_global_invariant` позволяет явно объявить
+независимость всех выходов Surface Cache capture от global shader uniforms.
+Корректность объявления проверяет автор шейдера. Без флага любые используемые
+глобальные параметры консервативно инвалидируют GI-материал.

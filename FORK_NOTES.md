@@ -545,3 +545,10 @@ instances through dependencies. Shader vertex/clip-space displacement is exposed
 as unsupported instead of letting raster and ray geometry silently diverge.
 Material capture first records geometric coverage, then shades it: fragment
 `discard` changes opacity without changing the allocation of transport rows.
+
+Surface Cache: `surface_cache_global_invariant` — явный контракт spatial shader:
+глобальные параметры не меняют ни один выход захвата материала или геометрии.
+Только такой shader освобождается от global-зависимостей GI; остальные изменения
+материала/текстур/instance и обычный raster сохраняют прежнее поведение.
+RenderingDevice публикует существующие subgroup limits в GDScript, чтобы
+выбирать dispatch без предположения о размере аппаратной subgroup.

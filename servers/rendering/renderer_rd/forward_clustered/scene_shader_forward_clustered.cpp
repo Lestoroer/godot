@@ -74,6 +74,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	wireframe = false;
 
 	unshaded = false;
+	surface_cache_global_invariant = false;
 	uses_vertex = false;
 	uses_position = false;
 	uses_sss = false;
@@ -118,6 +119,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.render_mode_values["cull_back"] = Pair<int *, int>(&cull_modei, RSE::CULL_MODE_BACK);
 
 	actions.render_mode_flags["unshaded"] = &unshaded;
+	actions.render_mode_flags["surface_cache_global_invariant"] = &surface_cache_global_invariant;
 	actions.render_mode_flags["wireframe"] = &wireframe;
 	actions.render_mode_flags["particle_trails"] = &uses_particle_trails;
 	actions.render_mode_flags["world_vertex_coords"] = &uses_world_coordinates;

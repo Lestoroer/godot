@@ -2967,6 +2967,21 @@
 		<constant name="LIMIT_MAX_VIEWPORT_DIMENSIONS_Y" value="36" enum="Limit">
 			Maximum viewport height (in pixels).
 		</constant>
+		<constant name="LIMIT_SUBGROUP_SIZE" value="37" enum="Limit">
+			The preferred hardware subgroup size.
+		</constant>
+		<constant name="LIMIT_SUBGROUP_MIN_SIZE" value="38" enum="Limit">
+			The minimum supported hardware subgroup size.
+		</constant>
+		<constant name="LIMIT_SUBGROUP_MAX_SIZE" value="39" enum="Limit">
+			The maximum supported hardware subgroup size.
+		</constant>
+		<constant name="LIMIT_SUBGROUP_IN_SHADERS" value="40" enum="Limit">
+			Bit mask of shader stages supporting subgroup operations.
+		</constant>
+		<constant name="LIMIT_SUBGROUP_OPERATIONS" value="41" enum="Limit">
+			Bit mask of supported subgroup operations.
+		</constant>
 		<constant name="LIMIT_METALFX_TEMPORAL_SCALER_MIN_SCALE" value="46" enum="Limit">
 			Returns the smallest value for [member ProjectSettings.rendering/scaling_3d/scale] when using the MetalFX temporal upscaler.
 			[b]Note:[/b] The returned value is multiplied by a factor of [code]1000000[/code] to preserve 6 digits of precision. It must be divided by [code]1000000.0[/code] to convert the value to a floating point number.

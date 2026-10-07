@@ -257,6 +257,7 @@ public:
 		bool wireframe = false;
 
 		bool unshaded = false;
+		bool surface_cache_global_invariant = false;
 		bool uses_vertex = false;
 		bool uses_position = false;
 		bool uses_sss = false;
@@ -306,6 +307,7 @@ public:
 
 		virtual bool is_animated() const;
 		bool has_shader_displacement() const override { return uses_vertex || uses_position || writes_modelview_or_projection; }
+		bool is_surface_cache_global_invariant() const override { return surface_cache_global_invariant; }
 		virtual bool casts_shadows() const;
 		virtual RenderingServerTypes::ShaderNativeSourceCode get_native_source_code() const;
 		virtual Pair<ShaderRD *, RID> get_native_shader_and_version() const;

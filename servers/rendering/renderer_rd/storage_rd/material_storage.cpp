@@ -2668,13 +2668,19 @@ void MaterialStorage::material_update_dependency(RID p_material, DependencyTrack
 	Material *material = material_owner.get_or_null(p_material);
 	ERR_FAIL_NULL(material);
 	p_instance->update_dependency(&material->dependency);
-    if (material->shader && material->shader->data) {
-        for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &uniform : material->shader->data->uniforms) {
-            if (uniform.value.scope != ShaderLanguage::ShaderNode::Uniform::SCOPE_GLOBAL) continue;
-            GlobalShaderUniforms::Variable *variable = global_shader_uniforms.variables.getptr(uniform.key);
-            if (variable) p_instance->update_dependency(&variable->surface_dependency);
-        }
-    }
+	// Opt-in author contract: every material/geometry capture output is invariant
+	// to global inputs. Other material, texture and instance dependencies remain.
+	if (material->shader && material->shader->data && !material->shader->data->is_surface_cache_global_invariant()) {
+		for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &uniform : material->shader->data->uniforms) {
+			if (uniform.value.scope != ShaderLanguage::ShaderNode::Uniform::SCOPE_GLOBAL) {
+				continue;
+			}
+			GlobalShaderUniforms::Variable *variable = global_shader_uniforms.variables.getptr(uniform.key);
+			if (variable) {
+				p_instance->update_dependency(&variable->surface_dependency);
+			}
+		}
+	}
 	if (material->next_pass.is_valid()) {
 		material_update_dependency(material->next_pass, p_instance);
 	}
