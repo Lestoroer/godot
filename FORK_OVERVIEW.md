@@ -189,3 +189,10 @@ Forward+ предоставляет `POST_TEMPORAL` после TAA/temporal upsc
 тонмаппинга. При обычном TAA `get_color_layer()` содержит сглаженный HDR.
 При temporal upscaling потребитель должен читать соответствующую upscaled
 текстуру; Surface Cache стенд использует обычный TAA без upscaling.
+
+Surface Cache: затенение IBL использует AO, шероховатость и угол взгляда
+(аппроксимация Lagarde), а не яркость diffuse GI. Это исключает усиление шума
+final gather на металлах. Bent normal сохраняет отдельный путь. Без Surface
+Cache поведение прежнее. Это скалярная оценка, не трассировка отражений:
+SSAO не видит препятствия вне кадра. Формула и ограничения:
+https://google.github.io/filament/main/filament.html#lighting/occlusion/specularocclusion
