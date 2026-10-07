@@ -21,7 +21,7 @@ layout(rgba8, set = 1, binding = 1) uniform restrict writeonly image2D dest_norm
 #ifdef VOXEL_GI_RESOLVE
 layout(set = 2, binding = 0) uniform usampler2DMS source_voxel_gi;
 #ifdef SURFACE_CACHE_RESOLVE
-layout(rg32ui, set = 3, binding = 0) uniform restrict writeonly uimage2D dest_voxel_gi;
+layout(rgba32ui, set = 3, binding = 0) uniform restrict writeonly uimage2D dest_voxel_gi;
 #else
 layout(rg8ui, set = 3, binding = 0) uniform restrict writeonly uimage2D dest_voxel_gi;
 #endif
@@ -59,7 +59,11 @@ void main() {
 	float best_depth = 1e20;
 	vec4 best_normal_roughness = vec4(0.0);
 #ifdef VOXEL_GI_RESOLVE
+#ifdef SURFACE_CACHE_RESOLVE
+	uvec4 best_voxel_gi;
+#else
 	uvec2 best_voxel_gi;
+#endif
 #endif
 
 #if 0
@@ -71,7 +75,11 @@ void main() {
 			best_normal_roughness = texelFetch(source_normal_roughness,pos,i);
 
 #ifdef VOXEL_GI_RESOLVE
+#ifdef SURFACE_CACHE_RESOLVE
+			best_voxel_gi = texelFetch(source_voxel_gi,pos,i).rgba;
+#else
 			best_voxel_gi = texelFetch(source_voxel_gi,pos,i).rg;
+#endif
 #endif
 		}
 	}
@@ -225,7 +233,11 @@ void main() {
 	best_depth = texelFetch(source_depth, pos, best_index).r;
 	best_normal_roughness = texelFetch(source_normal_roughness, pos, best_index);
 #ifdef VOXEL_GI_RESOLVE
+#ifdef SURFACE_CACHE_RESOLVE
+	best_voxel_gi = texelFetch(source_voxel_gi, pos, best_index).rgba;
+#else
 	best_voxel_gi = texelFetch(source_voxel_gi, pos, best_index).rg;
+#endif
 #endif
 
 #endif
@@ -233,7 +245,11 @@ void main() {
 	imageStore(dest_depth, pos, vec4(best_depth));
 	imageStore(dest_normal_roughness, pos, vec4(best_normal_roughness));
 #ifdef VOXEL_GI_RESOLVE
+#ifdef SURFACE_CACHE_RESOLVE
+	imageStore(dest_voxel_gi, pos, uvec4(best_voxel_gi));
+#else
 	imageStore(dest_voxel_gi, pos, uvec4(best_voxel_gi, 0, 0));
+#endif
 #endif
 
 #endif

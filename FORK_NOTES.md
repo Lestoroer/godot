@@ -552,3 +552,18 @@ Surface Cache: `surface_cache_global_invariant` — явный контракт 
 материала/текстур/instance и обычный raster сохраняют прежнее поведение.
 RenderingDevice публикует существующие subgroup limits в GDScript, чтобы
 выбирать dispatch без предположения о размере аппаратной subgroup.
+
+### Surface Cache: покрытие физической поверхности
+
+В изолированной ветке `codex/gi-surface-cache` capture получает отдельный домен
+каждого исходного примитива: тонкие участки материала не перетираются соседями.
+Плотность вдоль длинного ребра задаёт профиль; короткая ось имеет минимум два
+texel. Private stream сохраняет UV/UV2/CUSTOM и порядок исходных примитивов.
+Расширенная растеризация перечисляет пересечения с texel; material fragment
+вычисляется в центре площади пересечения. Пустые границы не создают строк GI.
+Capture uses analytic interpolation of built-in and custom smooth varyings.
+
+Primary visibility теперь RGBA32UI: surface/primitive и barycentrics покрытой
+centroid-позиции. MSAA resolve переносит их вместе с выбранными depth/normal.
+Это устраняет восстановление primary на ребре из непокрытого центра пикселя;
+дополнительная стоимость — 8 байт на resolved pixel и MSAA sample.

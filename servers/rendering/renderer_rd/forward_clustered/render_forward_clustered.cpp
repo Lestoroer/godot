@@ -76,9 +76,9 @@ void RenderForwardClustered::RenderBufferDataForwardClustered::ensure_surface_ca
 	ERR_FAIL_NULL(render_buffers);
 	if (!render_buffers->has_texture("surface_cache_visibility", "primary")) {
 		bool msaa = render_buffers->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED;
-		render_buffers->create_texture("surface_cache_visibility", "primary", RD::DATA_FORMAT_R32G32_UINT, get_normal_roughness_usage_bits(msaa, false, true));
+		render_buffers->create_texture("surface_cache_visibility", "primary", RD::DATA_FORMAT_R32G32B32A32_UINT, get_normal_roughness_usage_bits(msaa, false, true));
 		if (msaa) {
-			render_buffers->create_texture("surface_cache_visibility", "primary_msaa", RD::DATA_FORMAT_R32G32_UINT, get_normal_roughness_usage_bits(false, true, true), render_buffers->get_texture_samples());
+			render_buffers->create_texture("surface_cache_visibility", "primary_msaa", RD::DATA_FORMAT_R32G32B32A32_UINT, get_normal_roughness_usage_bits(false, true, true), render_buffers->get_texture_samples());
 		}
 	}
 }
@@ -3113,15 +3113,8 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	params.capture_geometry = chart;
 	Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
 	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, capture_pass == 0 ? RD::DRAW_CLEAR_ALL : RD::DRAW_DEFAULT_ALL, clear, 0.0f, 0, p_region);
-	// Preserve sub-texel chart edges using the same conservative border strategy
-	// as native UV2 baking. The final interior pass owns covered texel centers.
-	params.force_wireframe = true;
-	for (int y = -1; y <= 1; y++) {
-		for (int x = -1; x <= 1; x++) {
-			params.uv_offset = Vector2(float(x) / p_region.size.x, float(y) / p_region.size.y);
-			_render_list(draw_list, RD::get_singleton()->framebuffer_get_format(p_framebuffer), &params, 0, params.element_count);
-		}
-	}
+	// Fork(Lestoroer): vertex shader expands triangle coverage; material samples
+	// are analytically reconstructed inside the original triangle per texel.
 	params.force_wireframe = false;
 	params.uv_offset = Vector2();
 	_render_list(draw_list, RD::get_singleton()->framebuffer_get_format(p_framebuffer), &params, 0, params.element_count);

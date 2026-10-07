@@ -32,7 +32,12 @@ layout(location = 1) in vec4 axis_tangent_attrib;
 
 // Location 2 is unused.
 #ifdef MODE_RENDER_MATERIAL
-layout(location = 14) in vec2 surface_cache_uv_attrib; // Fork(Lestoroer): preserves authored UV/UV2/CUSTOM.
+// Fork(Lestoroer): deindexed capture stream, exact original triangle coordinates.
+layout(location = 15) in vec4 surface_cache_ab_attrib;
+layout(location = 16) in vec2 surface_cache_c_attrib;
+layout(location = 15) out flat vec4 surface_cache_ab_interp;
+layout(location = 16) out flat vec2 surface_cache_c_interp;
+layout(location = 17) out vec2 surface_cache_uv_interp;
 #endif
 
 #if defined(COLOR_USED)
@@ -93,6 +98,9 @@ void axis_angle_to_tbn(vec3 axis, float angle, out vec3 tangent, out vec3 binorm
 /* Varyings */
 
 layout(location = 0) out vec3 vertex_interp;
+#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE)
+layout(location = 18) centroid out vec3 surface_cache_vertex_centroid;
+#endif
 
 #ifdef NORMAL_USED
 layout(location = 1) out vec3 normal_interp;
@@ -489,6 +497,9 @@ void vertex_shader(vec3 vertex_input,
 #endif
 
 	vertex_interp = vertex;
+#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE)
+	surface_cache_vertex_centroid = vertex;
+#endif
 
 	// Normalize TBN vectors before interpolation, per MikkTSpace.
 	// See: http://www.mikktspace.com/
@@ -695,7 +706,22 @@ void vertex_shader(vec3 vertex_input,
 		}
 
 		if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)) {
-			uv_dest_attrib = surface_cache_uv_attrib;
+			vec2 corners[3] = vec2[](surface_cache_ab_attrib.xy, surface_cache_ab_attrib.zw, surface_cache_c_attrib);
+			int corner = gl_VertexIndex % 3;
+			surface_cache_ab_interp = surface_cache_ab_attrib;
+			surface_cache_c_interp = surface_cache_c_attrib;
+			surface_cache_uv_interp = corners[corner];
+			vec2 p = corners[corner] * scene_data.viewport_size;
+			vec2 previous = corners[(corner + 2) % 3] * scene_data.viewport_size;
+			vec2 next = corners[(corner + 1) % 3] * scene_data.viewport_size;
+			vec2 e0 = p - previous, e1 = next - p;
+			float winding = sign(e0.x * e1.y - e0.y * e1.x);
+			vec2 n0 = vec2(-e0.y, e0.x) * winding / max(length(e0), 1e-20);
+			vec2 n1 = vec2(-e1.y, e1.x) * winding / max(length(e1), 1e-20);
+			// One-pixel outward edge displacement covers each intersecting cell,
+			// including subpixel fragments. The fragment stage clips exact coverage.
+			vec2 expansion = -(n0 + n1) / max(1.0 + dot(n0, n1), 1e-8);
+			uv_dest_attrib = (p + expansion) / scene_data.viewport_size;
 		}
 		vec2 uv_offset = unpackHalf2x16(draw_call.uv_offset);
 		gl_Position.xy = (uv_dest_attrib + uv_offset) * 2.0 - 1.0;
@@ -890,6 +916,9 @@ void main() {
 /* Varyings */
 
 layout(location = 0) in vec3 vertex_interp;
+#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE)
+layout(location = 18) centroid in vec3 surface_cache_vertex_centroid;
+#endif
 
 #ifdef NORMAL_USED
 layout(location = 1) in vec3 normal_interp;
@@ -1039,6 +1068,13 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 /* clang-format on */
 #endif
 
+#ifdef MODE_RENDER_MATERIAL
+layout(location = 15) in flat vec4 surface_cache_ab_interp;
+layout(location = 16) in flat vec2 surface_cache_c_interp;
+layout(location = 17) in vec2 surface_cache_uv_interp;
+#endif
+#include "../surface_cache_capture_inc.glsl"
+
 #GLOBALS
 
 #ifdef MODE_RENDER_DEPTH
@@ -1056,7 +1092,7 @@ layout(location = 4) out vec4 depth_output_buffer; // Fork(Lestoroer): capture w
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
 layout(location = 0) out vec4 normal_roughness_output_buffer;
 #ifdef MODE_RENDER_SURFACE_CACHE
-layout(location = 1) out uvec2 surface_cache_primary_output;
+layout(location = 1) out uvec4 surface_cache_primary_output;
 #endif
 
 #ifdef MODE_RENDER_VOXEL_GI
@@ -1214,13 +1250,33 @@ vec3 encode24(vec3 v) {
 #endif // MODE_RENDER_NORMAL_ROUGHNESS
 
 void fragment_shader(in SceneData scene_data) {
+	// Fork(Lestoroer): material values and positions refer to the same physical
+	// sample, selected from the triangle's positive-area intersection with texel.
+#ifdef MODE_RENDER_MATERIAL
+	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)) {
+		vec2 cell = floor(gl_FragCoord.xy) + 0.5;
+		vec2 sample_point;
+		surface_cache_covered = surface_cache_sample_point(
+				surface_cache_ab_interp.xy * scene_data.viewport_size - cell,
+				surface_cache_ab_interp.zw * scene_data.viewport_size - cell,
+				surface_cache_c_interp * scene_data.viewport_size - cell, sample_point);
+		vec2 delta = (cell + sample_point) / scene_data.viewport_size - surface_cache_uv_interp;
+		vec2 du = dFdx(surface_cache_uv_interp), dv = dFdy(surface_cache_uv_interp);
+		float determinant = du.x * dv.y - du.y * dv.x;
+		if (surface_cache_covered && abs(determinant) > 1e-30) {
+			surface_cache_offset = vec2(delta.x * dv.y - delta.y * dv.x, du.x * delta.y - du.y * delta.x) / determinant;
+		}
+	}
+#endif
+#CODE : SURFACE_CACHE_VARYINGS
+
 	uint instance_index = instance_index_interp;
 
 #ifdef PREMUL_ALPHA_USED
 	float premul_alpha = 1.0;
 #endif // PREMUL_ALPHA_USED
 	//lay out everything, whatever is unused is optimized away anyway
-	vec3 vertex = vertex_interp;
+	vec3 vertex = surface_cache_sample(vertex_interp);
 #ifdef USE_MULTIVIEW
 	vec3 eye_offset = scene_data.eye_offset[ViewIndex].xyz;
 	vec3 view_highp = -normalize(vertex_interp - eye_offset);
@@ -1262,15 +1318,15 @@ void fragment_shader(in SceneData scene_data) {
 	float alpha_highp = float(instances.data[instance_index].flags >> INSTANCE_FLAGS_FADE_SHIFT) / float(255.0);
 
 #ifdef TANGENT_USED
-	vec3 binormal = binormal_interp;
-	vec3 tangent = tangent_interp;
+	vec3 binormal = surface_cache_sample(binormal_interp);
+	vec3 tangent = surface_cache_sample(tangent_interp);
 #else
 	vec3 binormal = vec3(0.0);
 	vec3 tangent = vec3(0.0);
 #endif
 
 #ifdef NORMAL_USED
-	vec3 normal_highp = normal_interp;
+	vec3 normal_highp = surface_cache_sample(normal_interp);
 #if defined(DO_SIDE_CHECK)
 	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE) : !gl_FrontFacing) {
 		normal_highp = -normal_highp;
@@ -1279,15 +1335,15 @@ void fragment_shader(in SceneData scene_data) {
 #endif // NORMAL_USED
 
 #ifdef UV_USED
-	vec2 uv = uv_interp;
+	vec2 uv = surface_cache_sample(uv_interp);
 #endif
 
 #if defined(UV2_USED) || defined(USE_LIGHTMAP)
-	vec2 uv2 = uv2_interp;
+	vec2 uv2 = surface_cache_sample(uv2_interp);
 #endif
 
 #if defined(COLOR_USED)
-	vec4 color = color_interp;
+	vec4 color = surface_cache_sample(color_interp);
 #endif
 
 #if defined(NORMAL_MAP_USED)
@@ -3038,6 +3094,7 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 
 #ifdef MODE_RENDER_MATERIAL
+	if (!surface_cache_covered) { discard; }
 
 	albedo_output_buffer.rgb = albedo;
 	albedo_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE) ? 0.0 : alpha;
@@ -3058,7 +3115,35 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
 	normal_roughness_output_buffer = vec4(encode24(normal) * 0.5 + 0.5, roughness);
 #ifdef MODE_RENDER_SURFACE_CACHE
-	surface_cache_primary_output = uvec2(uint(instances.data[instance_index].compressed_aabb_position_pad.w), uint(gl_PrimitiveID) + 1u);
+uint surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
+uint primitive = uint(gl_PrimitiveID);
+surface_cache_primary_output = uvec4(0u);
+if (surface > 0u && surface <= uint(surface_cache_surfaces.data.length())) {
+	SurfaceCacheMapping mapping = surface_cache_surfaces.data[surface - 1u];
+	uint triangle_index = mapping.material.x + primitive;
+	if (triangle_index < uint(surface_cache_triangles.data.length())) {
+		SurfaceCacheTriangle triangle = surface_cache_triangles.data[triangle_index];
+		vec3 ab = triangle.b.xyz - triangle.a.xyz;
+		vec3 ac = triangle.c.xyz - triangle.a.xyz;
+		vec3 normal = cross(ab, ac);
+		if (dot(normal, normal) > 1e-30) {
+			vec3 position = (inv_view_matrix * vec4(surface_cache_vertex_centroid, 1.0)).xyz;
+			vec3 offset = position - triangle.a.xyz;
+			vec3 major = abs(normal);
+			vec2 u = major.z >= max(major.x, major.y) ? ab.xy : (major.y >= major.x ? ab.xz : ab.yz);
+			vec2 v = major.z >= max(major.x, major.y) ? ac.xy : (major.y >= major.x ? ac.xz : ac.yz);
+			vec2 q = major.z >= max(major.x, major.y) ? offset.xy : (major.y >= major.x ? offset.xz : offset.yz);
+			float determinant = u.x * v.y - u.y * v.x;
+			if (abs(determinant) > 1e-15) {
+				float b = (q.x * v.y - q.y * v.x) / determinant;
+				float c = (u.x * q.y - u.y * q.x) / determinant;
+				vec3 bary = max(vec3(1.0 - b - c, b, c), vec3(1e-6));
+				bary /= bary.x + bary.y + bary.z;
+				surface_cache_primary_output = uvec4(surface, primitive + 1u, floatBitsToUint(bary.y), floatBitsToUint(bary.z));
+			}
+		}
+	}
+}
 #endif
 
 	// We encode the dynamic static into roughness.

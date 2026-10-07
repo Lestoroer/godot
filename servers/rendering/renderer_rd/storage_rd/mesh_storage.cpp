@@ -582,11 +582,15 @@ void MeshStorage::mesh_surface_set_capture_uv(RID p_mesh, int p_surface, const V
 	ERR_FAIL_COND(surface->capture_uv_buffer.is_valid());
 	ERR_FAIL_COND(surface->version_count != 0 || !mesh->instances.is_empty());
 	Vector<uint8_t> bytes;
-	bytes.resize(p_uv.size() * 2 * sizeof(float));
+	ERR_FAIL_COND(p_uv.size() % 3 != 0);
+	bytes.resize(p_uv.size() * 6 * sizeof(float));
 	float *uv = reinterpret_cast<float *>(bytes.ptrw());
 	for (int i = 0; i < p_uv.size(); i++) {
-		uv[i * 2] = p_uv[i].x;
-		uv[i * 2 + 1] = p_uv[i].y;
+		for (int corner = 0; corner < 3; corner++) {
+			const Vector2 &point = p_uv[(i / 3) * 3 + corner];
+			uv[i * 6 + corner * 2] = point.x;
+			uv[i * 6 + corner * 2 + 1] = point.y;
+		}
 	}
 	surface->capture_uv_buffer = RD::get_singleton()->vertex_buffer_create(bytes.size(), bytes);
 }
@@ -1528,13 +1532,16 @@ RD::VertexFormatID MeshStorage::_mesh_surface_generate_vertex_format(uint64_t p_
 		}
 	}
 
-	// Fork(Lestoroer): location 14 is used only by the material pass.
-	if (p_input_mask & (1ULL << 14)) {
-		RD::VertexAttribute attribute;
-		attribute.location = 14;
-		attribute.format = RD::DATA_FORMAT_R32G32_SFLOAT;
-		attribute.stride = p_capture_stream ? sizeof(float) * 2 : 0;
-		attributes.push_back(attribute);
+	// Fork(Lestoroer): private per-primitive chart coordinates, material pass only.
+	for (int location = 15; location <= 16; location++) {
+		if (p_input_mask & (1ULL << location)) {
+			RD::VertexAttribute attribute;
+			attribute.location = location;
+			attribute.format = location == 15 ? RD::DATA_FORMAT_R32G32B32A32_SFLOAT : RD::DATA_FORMAT_R32G32_SFLOAT;
+			attribute.stride = p_capture_stream ? sizeof(float) * 6 : 0;
+			attribute.offset = p_capture_stream && location == 16 ? sizeof(float) * 4 : 0;
+			attributes.push_back(attribute);
+		}
 	}
 	return RD::get_singleton()->vertex_format_create(attributes);
 }
@@ -1601,9 +1608,11 @@ void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::V
 		}
 	}
 
-	if (p_input_mask & (1ULL << 14)) { // Fork(Lestoroer)
-		buffers.push_back(s->capture_uv_buffer.is_valid() ? s->capture_uv_buffer : mesh_default_rd_buffers[RSE::ARRAY_TEX_UV2]);
-		offsets.push_back(0);
+	for (int location = 15; location <= 16; location++) { // Fork(Lestoroer)
+		if (p_input_mask & (1ULL << location)) {
+			buffers.push_back(s->capture_uv_buffer.is_valid() ? s->capture_uv_buffer : mesh_default_rd_buffers[RSE::ARRAY_COLOR]);
+			offsets.push_back(0);
+		}
 	}
 	v.input_mask = p_input_mask;
 	v.current_buffer = p_current_buffer;

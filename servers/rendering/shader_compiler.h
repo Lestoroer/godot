@@ -107,6 +107,7 @@ public:
 		uint32_t base_varying_index = 0;
 		bool apply_luminance_multiplier = false;
 		bool check_multiview_samplers = false;
+		bool surface_cache_sampling = false; // Fork(Lestoroer)
 	};
 
 private:

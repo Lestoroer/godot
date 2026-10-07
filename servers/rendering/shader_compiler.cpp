@@ -727,7 +727,22 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					r_gen_code.stage_globals[STAGE_FRAGMENT] += "layout(location=" + itos(index) + ") ";
 				}
 				r_gen_code.stage_globals[STAGE_VERTEX] += interp_mode + "out " + vcode;
-				r_gen_code.stage_globals[STAGE_FRAGMENT] += interp_mode + "in " + vcode;
+				if (p_default_actions.surface_cache_sampling) { // Fork(Lestoroer)
+					const String name = _mkid(varying_name);
+					const String input_name = name + "_cache_input";
+					r_gen_code.stage_globals[STAGE_FRAGMENT] += interp_mode + "in " + vcode.replace(name, input_name);
+					r_gen_code.stage_globals[STAGE_FRAGMENT] += vcode;
+					for (int element = 0; element < MAX(1, varying.array_size); element++) {
+						String suffix = varying.array_size > 0 ? "[" + itos(element) + "]" : "";
+						String value = input_name + suffix;
+						if (varying.interpolation != SL::INTERPOLATION_FLAT && ShaderLanguage::is_float_type(varying.type)) {
+							value = "surface_cache_sample(" + value + ")";
+						}
+						r_gen_code.code["surface_cache_varyings"] += name + suffix + " = " + value + ";\n";
+					}
+				} else {
+					r_gen_code.stage_globals[STAGE_FRAGMENT] += interp_mode + "in " + vcode;
+				}
 
 				index += inc;
 			}
