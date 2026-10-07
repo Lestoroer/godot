@@ -456,7 +456,8 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 		vec4 offsets = dot(depth_gradient, base - pssm_coord.xy) + vec4(depth_step.y, depth_step.x + depth_step.y, depth_step.x, 0.0);
 		vec4 weights = vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
 		vec4 blockers = weights * vec4(greaterThan(depths, vec4(pssm_coord.z) + offsets));
-		blocker_average += dot(depths - offsets, blockers);
+		// Plane bias classifies visibility; blocker distance stays physical.
+		blocker_average += dot(depths, blockers);
 		blocker_count += dot(blockers, vec4(1.0));
 	}
 
