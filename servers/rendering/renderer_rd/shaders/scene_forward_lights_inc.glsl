@@ -421,7 +421,7 @@ float sample_receiver_plane_shadow(texture2D shadow, vec2 uv, vec3 receiver, vec
 	return dot(step(depths, reference), vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y)));
 }
 
-half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_scale, float taa_frame_count, vec3 shadow_ddx, vec3 shadow_ddy) {
+half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_scale, vec2 filter_scale, float taa_frame_count, vec3 shadow_ddx, vec3 shadow_ddy) {
 	// Fork(Lestoroer): a wide PCSS kernel must compare against the receiver
 	// plane at each tap. A constant depth treats a sloping floor as its own blocker.
 	vec3 receiver_plane = cross(shadow_ddx, shadow_ddy);
@@ -464,8 +464,9 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 	if (blocker_count > 0.0) {
 		//blockers found, do soft shadow
 		blocker_average /= blocker_count;
-		float penumbra = (-pssm_coord.z + blocker_average) / (1.0 - blocker_average);
-		tex_scale *= penumbra;
+		// A directional emitter has parallel rays: width depends only on
+		// receiver/blocker separation, not distance from the shadow camera.
+		tex_scale = filter_scale * max(blocker_average - pssm_coord.z, 0.0);
 
 		float s = 0.0;
 
