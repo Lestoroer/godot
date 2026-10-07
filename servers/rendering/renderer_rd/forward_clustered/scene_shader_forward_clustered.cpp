@@ -51,6 +51,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	}
 
 	ShaderCompiler::GeneratedCode gen_code;
+	bool uses_surface_cache_transmission = false;
 
 	blend_mode = BLEND_MODE_MIX;
 	depth_test_disabledi = 0;
@@ -126,6 +127,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.render_mode_flags["particle_trails"] = &uses_particle_trails;
 	actions.render_mode_flags["world_vertex_coords"] = &uses_world_coordinates;
 
+	actions.usage_flag_pointers["SURFACE_CACHE_TRANSMISSION"] = &uses_surface_cache_transmission;
 	actions.usage_flag_pointers["ALPHA"] = &uses_alpha;
 	actions.usage_flag_pointers["ALPHA_SCISSOR_THRESHOLD"] = &uses_alpha_clip;
 	actions.usage_flag_pointers["ALPHA_HASH_SCALE"] = &uses_alpha_clip;
@@ -203,7 +205,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	}
 	cull_mode = RSE::CullMode(cull_modei);
 	uses_screen_texture_mipmaps = gen_code.uses_screen_texture_mipmaps;
-	uses_screen_texture = gen_code.uses_screen_texture;
+	uses_screen_texture = gen_code.uses_screen_texture || uses_surface_cache_transmission;
 	uses_depth_texture = gen_code.uses_depth_texture;
 	uses_normal_texture = gen_code.uses_normal_roughness_texture;
 	uses_vertex_time = gen_code.uses_vertex_time;

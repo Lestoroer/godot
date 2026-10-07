@@ -3910,13 +3910,13 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		u.append_id(reflection.is_valid() ? reflection : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
 		uniforms.push_back(u);
 	}
-	for (int i = 0; i < 2; i++) {
+	for (int i = 0; i < 3; i++) {
 		RD::Uniform u;
 		u.binding = 44 + i;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		StringName name = i == 0 ? "glass" : "glass_primary";
+		StringName name = i == 0 ? "glass" : (i == 1 ? "glass_primary" : "glass_transmittance");
 		RID texture = rb.is_valid() && rb->has_texture("surface_cache", name) ? rb->get_texture("surface_cache", name) : RID();
-		u.append_id(texture.is_valid() ? texture : texture_storage->texture_rd_get_default(i == 0 ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT));
+		u.append_id(texture.is_valid() ? texture : texture_storage->texture_rd_get_default(i != 1 ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT));
 		uniforms.push_back(u);
 	}
 	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.default_shader_rd, RENDER_PASS_UNIFORM_SET, uniforms);

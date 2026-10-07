@@ -231,3 +231,5 @@ surface/primitive с primary visibility; прозрачный слой не по
 с точным surface/primitive. Она компонуется вместо обычного alpha-слоя только
 при совпадении идентификаторов. Mobile/OpenGL сохраняют синтаксис материала,
 но не исполняют экспериментальный трассировщик.
+
+Surface Cache thin transmission сохраняет полный raster shading за стеклом: binding 46 содержит RGB transmittance, а стеклянный материал запрашивает копию opaque HDR. Отражения стекла считаются лучами отдельно. Пользовательский `RADIANCE` сохраняет приоритет над трассируемым indirect specular.

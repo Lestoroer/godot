@@ -2418,7 +2418,11 @@ void fragment_shader(in SceneData scene_data) {
 		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 		vec3 reflected_radiance;
 		if (cache_surface > 0u && surface_cache_reflection_for_fragment(cache_surface, uint(gl_PrimitiveID), ivec2(gl_FragCoord.xy), reflected_radiance)) {
+			#ifdef CUSTOM_RADIANCE_USED
+			indirect_specular_light = mix(reflected_radiance, indirect_specular_light, custom_radiance.a);
+#else
 			indirect_specular_light = reflected_radiance;
+#endif
 		}
 	}
 #endif // !AMBIENT_LIGHT_DISABLED
@@ -3273,7 +3277,15 @@ void fragment_shader(in SceneData scene_data) {
 		ivec2 pixel = ivec2(gl_FragCoord.xy);
 		if (all(lessThan(pixel, textureSize(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), 0))) && all(equal(texelFetch(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), pixel, 0).xy, uvec2(cache_surface, uint(gl_PrimitiveID) + 1u)))) {
 			vec4 transmitted = texelFetch(sampler2D(surface_cache_glass, SAMPLER_NEAREST_CLAMP), pixel, 0);
-			if (transmitted.a > 0.0) frag_color = vec4(transmitted.rgb, 1.0);
+			if (transmitted.a > 0.0) {
+#ifdef USE_MULTIVIEW
+				vec3 background = texelFetch(sampler2DArray(color_buffer, SAMPLER_NEAREST_CLAMP), ivec3(pixel, ViewIndex), 0).rgb;
+#else
+				vec3 background = texelFetch(sampler2D(color_buffer, SAMPLER_NEAREST_CLAMP), pixel, 0).rgb;
+#endif
+				vec3 transmittance = texelFetch(sampler2D(surface_cache_transmittance, SAMPLER_NEAREST_CLAMP), pixel, 0).rgb;
+				frag_color = vec4(transmitted.rgb + transmittance * background, 1.0);
+			}
 		}
 	}
 //frag_color = vec4(1.0);

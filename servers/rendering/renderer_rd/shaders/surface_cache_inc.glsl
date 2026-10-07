@@ -10,6 +10,7 @@ layout(set=1,binding=40,std430) readonly buffer SurfaceCacheIrradiance { vec4 da
 layout(set=1,binding=41) uniform texture2D surface_cache_gather;
 layout(set=1,binding=44) uniform texture2D surface_cache_glass;
 layout(set=1,binding=45) uniform utexture2D surface_cache_glass_primary;
+layout(set=1,binding=46) uniform texture2D surface_cache_transmittance;
 layout(set=1,binding=43) uniform texture2D surface_cache_reflection;
 layout(set=1,binding=42) uniform utexture2D surface_cache_primary;
 
