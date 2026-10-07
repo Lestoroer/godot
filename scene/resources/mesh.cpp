@@ -2088,15 +2088,17 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 	}
 	ERR_FAIL_COND_V(indices.size() % 3 != 0, Dictionary());
 	Vector<Vector2> coordinates;
-	Vector<int> charts, remapped_indices;
+	Vector<int> charts, remapped_indices, tiles;
+	int sample_count = 0;
 	Vector<Size2i> rectangles;
 	coordinates.resize(indices.size());
 	charts.resize(indices.size());
 	remapped_indices.resize(indices.size());
 	rectangles.resize(indices.size() / 3);
+	tiles.resize(indices.size() / 3 * 4);
 	// Fork(Lestoroer): separate primitive domains prevent sub-texel triangles
 	// from overwriting each other's material or emission. Density along the
-	// longest edge is preserved; two samples across narrow charts ensure robust
+	// longest edge is preserved; one sample across narrow charts ensures robust
 	// raster coverage without changing or eroding the physical geometry.
 	for (int tri = 0; tri < indices.size(); tri += 3) {
 		Vector3 v[3] = { positions[indices[tri]], positions[indices[tri + 1]], positions[indices[tri + 2]] };
@@ -2112,14 +2114,21 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 		Size2i rectangle(1, 1);
 		int chart = 0;
 		if (height > 0.0f) {
-			float width_pixels = MAX(2.0f, length / p_texel_size);
-			float height_pixels = MAX(2.0f, height / p_texel_size);
+			float width_pixels = MAX(1.0f, length / p_texel_size);
+			float height_pixels = MAX(1.0f, height / p_texel_size);
 			uv[first] = Vector2(2, 2);
 			uv[second] = Vector2(2 + width_pixels, 2);
 			uv[third] = Vector2(2 + (v[third] - v[first]).dot(edge) / (length * length) * width_pixels, 2 + height_pixels);
 			rectangle = Size2i(Math::ceil(width_pixels) + 4, Math::ceil(height_pixels) + 4);
 			chart = tri / 3 + 1;
 		}
+		int width = chart != 0 ? rectangle.x - 4 : 1;
+		int height_pixels = chart != 0 ? rectangle.y - 4 : 1;
+		tiles.write[(tri / 3) * 4] = 2;
+		tiles.write[(tri / 3) * 4 + 1] = 2;
+		tiles.write[(tri / 3) * 4 + 2] = width | (height_pixels << 16);
+		tiles.write[(tri / 3) * 4 + 3] = sample_count;
+		sample_count += width * height_pixels * 2;
 		rectangles.write[tri / 3] = rectangle;
 		for (int corner = 0; corner < 3; corner++) {
 			coordinates.write[tri + corner] = uv[corner];
@@ -2130,6 +2139,10 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 	Vector<Point2i> offsets;
 	Size2i size;
 	Geometry2D::make_atlas(rectangles, offsets, size);
+	for (int tri = 0; tri < rectangles.size(); tri++) {
+		tiles.write[tri * 4] += offsets[tri].x;
+		tiles.write[tri * 4 + 1] += offsets[tri].y;
+	}
 	for (int corner = 0; corner < coordinates.size(); corner++) {
 		coordinates.write[corner] = (coordinates[corner] + Vector2(offsets[corner / 3])) / Vector2(size);
 	}
@@ -2139,6 +2152,8 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 	result["charts"] = charts;
 	result["indices"] = remapped_indices;
 	result["size"] = size;
+	result["tiles"] = tiles;
+	result["sample_count"] = sample_count;
 	return result;
 }
 

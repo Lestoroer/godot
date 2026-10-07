@@ -1,5 +1,5 @@
 // Fork(Lestoroer): instance/surface/primitive address, independent of the camera.
-struct SurfaceCacheTriangle { vec4 a; vec4 b; vec4 c; vec4 uv_ab; vec4 uv_c; vec4 light_uv_ab; vec4 light_uv_c; };
+struct SurfaceCacheTriangle { vec4 a; vec4 b; vec4 c; vec4 uv_ab; vec4 uv_c; vec4 light_uv_ab; vec4 light_uv_c; uvec4 material_tile; uvec4 lighting_tile; };
 struct SurfaceCacheMaterial { vec4 position; vec4 normal; vec4 reflectance; vec4 emission; uvec4 identity; };
 struct SurfaceCacheMapping { uvec4 material; uvec4 lighting; };
 layout(set=1,binding=37,std430) readonly buffer SurfaceCacheSurfaces { SurfaceCacheMapping data[]; } surface_cache_surfaces;
@@ -27,11 +27,14 @@ vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 
     vec2 fraction=fract(pixel);
     vec3 irradiance=vec3(0.0);
     float weight_sum=0.0;
-    uint offset=mapping.y+side*mapping.z*mapping.w;
+    uvec4 tile=triangle.lighting_tile;
+    ivec2 tile_size=ivec2(tile.z&65535u,tile.z>>16u);
+    uint offset=mapping.y+tile.w+side*uint(tile_size.x*tile_size.y);
     for (int y=0;y<2;y++) for (int x=0;x<2;x++) {
         ivec2 point=base+ivec2(x,y);
-        if (any(lessThan(point,ivec2(0))) || any(greaterThanEqual(point,size))) continue;
-        uint address=offset+uint(point.y)*mapping.z+uint(point.x);
+        ivec2 local=point-ivec2(tile.xy);
+        if (any(lessThan(local,ivec2(0))) || any(greaterThanEqual(local,tile_size))) continue;
+        uint address=offset+uint(local.y*tile_size.x+local.x);
         if (surface_cache_materials.data[address].identity.x!=chart || surface_cache_materials.data[address].identity.y!=surface || surface_cache_materials.data[address].identity.w==0u) continue;
         float weight=(x==0?1.0-fraction.x:fraction.x)*(y==0?1.0-fraction.y:fraction.y);
         irradiance+=surface_cache_light.data[address].rgb*weight;
@@ -43,8 +46,9 @@ vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 
     bool found=false;
     for (int y=-2;y<=2;y++) for (int x=-2;x<=2;x++) {
         ivec2 point=base+ivec2(x,y);
-        if (any(lessThan(point,ivec2(0))) || any(greaterThanEqual(point,size))) continue;
-        uint address=offset+uint(point.y)*mapping.z+uint(point.x);
+        ivec2 local=point-ivec2(tile.xy);
+        if (any(lessThan(local,ivec2(0))) || any(greaterThanEqual(local,tile_size))) continue;
+        uint address=offset+uint(local.y*tile_size.x+local.x);
         if (surface_cache_materials.data[address].identity.x!=chart || surface_cache_materials.data[address].identity.y!=surface || surface_cache_materials.data[address].identity.w==0u) continue;
         float distance=dot(vec2(point)-pixel,vec2(point)-pixel);
         if (distance<nearest) { nearest=distance; irradiance=surface_cache_light.data[address].rgb; found=true; }
