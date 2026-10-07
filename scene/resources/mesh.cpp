@@ -2143,10 +2143,14 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 		tiles.write[tri * 4] += offsets[tri].x;
 		tiles.write[tri * 4 + 1] += offsets[tri].y;
 	}
+	Vector<Vector2> capture_pixels;
+	capture_pixels.resize(coordinates.size());
 	for (int corner = 0; corner < coordinates.size(); corner++) {
-		coordinates.write[corner] = (coordinates[corner] + Vector2(offsets[corner / 3])) / Vector2(size);
+		capture_pixels.write[corner] = coordinates[corner] + Vector2(offsets[corner / 3]);
+		coordinates.write[corner] = capture_pixels[corner] / Vector2(size);
 	}
 	Dictionary result;
+	result["capture_pixels"] = capture_pixels;
 	result["uv"] = coordinates;
 	result["source_vertices"] = indices;
 	result["charts"] = charts;

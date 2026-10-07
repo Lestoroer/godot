@@ -711,9 +711,9 @@ void vertex_shader(vec3 vertex_input,
 			surface_cache_ab_interp = surface_cache_ab_attrib;
 			surface_cache_c_interp = surface_cache_c_attrib;
 			surface_cache_uv_interp = corners[corner];
-			vec2 p = corners[corner] * scene_data.viewport_size;
-			vec2 previous = corners[(corner + 2) % 3] * scene_data.viewport_size;
-			vec2 next = corners[(corner + 1) % 3] * scene_data.viewport_size;
+			vec2 p = corners[corner];
+			vec2 previous = corners[(corner + 2) % 3];
+			vec2 next = corners[(corner + 1) % 3];
 			vec2 e0 = p - previous, e1 = next - p;
 			float winding = sign(e0.x * e1.y - e0.y * e1.x);
 			vec2 n0 = vec2(-e0.y, e0.x) * winding / max(length(e0), 1e-20);
@@ -1260,10 +1260,20 @@ void fragment_shader(in SceneData scene_data) {
 		vec2 cell = floor(gl_FragCoord.xy) + 0.5;
 		vec2 sample_point;
 		surface_cache_covered = surface_cache_sample_point(
-				surface_cache_ab_interp.xy * scene_data.viewport_size - cell,
-				surface_cache_ab_interp.zw * scene_data.viewport_size - cell,
-				surface_cache_c_interp * scene_data.viewport_size - cell, sample_point);
-		vec2 delta = (cell + sample_point) / scene_data.viewport_size - surface_cache_uv_interp;
+				surface_cache_ab_interp.xy - cell,
+				surface_cache_ab_interp.zw - cell,
+				surface_cache_c_interp - cell, sample_point);
+		vec2 canonical = cell + sample_point;
+		vec2 ab = surface_cache_ab_interp.zw - surface_cache_ab_interp.xy;
+		vec2 ac = surface_cache_c_interp - surface_cache_ab_interp.xy;
+		vec2 ap = canonical - surface_cache_ab_interp.xy;
+		float area = ab.x * ac.y - ab.y * ac.x;
+		if (surface_cache_covered && abs(area) > 1e-20) {
+			vec2 bc = vec2(ap.x * ac.y - ap.y * ac.x, ab.x * ap.y - ab.y * ap.x) / area;
+			surface_cache_bary = max(vec3(1.0 - bc.x - bc.y, bc), vec3(0));
+			surface_cache_bary /= surface_cache_bary.x + surface_cache_bary.y + surface_cache_bary.z;
+		}
+		vec2 delta = canonical - surface_cache_uv_interp;
 		vec2 du = dFdx(surface_cache_uv_interp), dv = dFdy(surface_cache_uv_interp);
 		float determinant = du.x * dv.y - du.y * dv.x;
 		if (surface_cache_covered && abs(determinant) > 1e-30) {
@@ -3113,7 +3123,7 @@ void fragment_shader(in SceneData scene_data) {
 
 	normal_output_buffer.rgb = (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? normalize(normal) : encode24(normal)) * 0.5 + 0.5;
 	normal_output_buffer.a = 0.0;
-	depth_output_buffer = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? vec4(vertex, float(gl_PrimitiveID + 1)) : vec4(-vertex.z, 0.0, 0.0, 0.0);
+	depth_output_buffer = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? vec4(surface_cache_bary, float(gl_PrimitiveID + 1)) : vec4(-vertex.z, 0.0, 0.0, 0.0);
 
 	orm_output_buffer.r = ao;
 	orm_output_buffer.g = roughness;

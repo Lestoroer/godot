@@ -1,6 +1,7 @@
 // Fork(Lestoroer): physical atlas samples. Padding never becomes a surface.
 vec2 surface_cache_offset = vec2(0.0);
 bool surface_cache_covered = true;
+vec3 surface_cache_bary = vec3(0.0);
 float surface_cache_sample(float v) { return v + dFdx(v) * surface_cache_offset.x + dFdy(v) * surface_cache_offset.y; }
 vec2 surface_cache_sample(vec2 v) { return v + dFdx(v) * surface_cache_offset.x + dFdy(v) * surface_cache_offset.y; }
 vec3 surface_cache_sample(vec3 v) { return v + dFdx(v) * surface_cache_offset.x + dFdy(v) * surface_cache_offset.y; }
