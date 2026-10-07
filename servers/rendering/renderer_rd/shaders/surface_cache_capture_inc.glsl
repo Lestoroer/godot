@@ -34,17 +34,17 @@ bool surface_cache_sample_point(vec2 a, vec2 b, vec2 c, out vec2 point) {
         if (count < 3) { point = vec2(0); return false; }
     }
     float area = 0.0;
-    vec2 center = vec2(0.0);
-    for (int i = 0; i < count; i++) {
-        vec2 p = polygon[i], q = polygon[(i + 1) % count];
+    vec2 center = vec2(0.0), anchor = polygon[0];
+    // Triangle fan avoids subtracting nearly equal shoelace terms for a
+    // tiny intersection at a texel corner. All fan areas share the same sign.
+    for (int i = 1; i + 1 < count; i++) {
+        vec2 p = polygon[i] - anchor, q = polygon[i + 1] - anchor;
         float weight = p.x * q.y - p.y * q.x;
         area += weight;
         center += (p + q) * weight;
     }
-    if (abs(area) <= 1e-12) { point = vec2(0); return false; }
-    // The area centroid is strictly inside every positive-area clipped polygon.
-    // Interior full texels keep their regular center without triangulation bias.
-    point = center / (3.0 * area);
+    if (abs(area) <= 1e-20) { point = vec2(0); return false; }
+    point = anchor + center / (3.0 * area);
     return true;
 }
 #endif
