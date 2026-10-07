@@ -585,7 +585,8 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 		// update makes them invertible again. Small nonzero scales remain valid.
 		bool active = instance && instance->scenario == scenario && instance->visible &&
 				instance->transform.basis.determinant() != 0 &&
-				((instance->base_type == RSE::INSTANCE_MESH && (instance->baked_light || instance->dynamic_gi)) || instance->base_type == RSE::INSTANCE_LIGHT);
+				((instance->base_type == RSE::INSTANCE_MESH && (instance->baked_light || instance->dynamic_gi) &&
+						RSG::mesh_storage->mesh_get_surface_count(instance->base) > 0) || instance->base_type == RSE::INSTANCE_LIGHT);
 		data["active"] = active;
 		if (active) {
 			data["base"] = instance->base;
