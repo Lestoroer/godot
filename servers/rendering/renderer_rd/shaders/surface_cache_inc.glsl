@@ -1,6 +1,6 @@
 // Fork(Lestoroer): instance/surface/primitive address, independent of the camera.
 struct SurfaceCacheTriangle { vec4 a; vec4 b; vec4 c; vec4 uv_ab; vec4 uv_c; vec4 light_uv_ab; vec4 light_uv_c; uvec4 material_tile; uvec4 lighting_tile; };
-struct SurfaceCacheMaterial { vec4 position; vec4 normal; vec4 reflectance; vec4 emission; uvec4 identity; };
+struct SurfaceCacheMaterial { vec4 position; vec4 normal; vec4 reflectance; vec4 emission; uvec4 identity; vec4 specular; vec4 transmission; };
 struct SurfaceCacheMapping { uvec4 material; uvec4 lighting; };
 layout(set=1,binding=37,std430) readonly buffer SurfaceCacheSurfaces { SurfaceCacheMapping data[]; } surface_cache_surfaces;
 layout(set=1,binding=38,std430) readonly buffer SurfaceCacheTriangles { SurfaceCacheTriangle data[]; } surface_cache_triangles;
@@ -8,6 +8,7 @@ layout(set=1,binding=39,std430) readonly buffer SurfaceCacheMaterials { SurfaceC
 layout(set=1,binding=40,std430) readonly buffer SurfaceCacheIrradiance { vec4 data[]; } surface_cache_light;
 
 layout(set=1,binding=41) uniform texture2D surface_cache_gather;
+layout(set=1,binding=43) uniform texture2D surface_cache_reflection;
 layout(set=1,binding=42) uniform utexture2D surface_cache_primary;
 
 vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 normal) {
@@ -70,4 +71,14 @@ vec3 surface_cache_for_fragment(uint surface, uint primitive, vec3 position, vec
         }
     }
     return surface_cache_irradiance(surface, primitive, position, normal);
+}
+
+// Fully BRDF-weighted radiance; never apply the environment DFG a second time.
+bool surface_cache_reflection_for_fragment(uint surface, uint primitive, ivec2 pixel, out vec3 radiance) {
+    ivec2 size=textureSize(sampler2D(surface_cache_reflection,SAMPLER_NEAREST_CLAMP),0);
+    if(any(lessThan(pixel,ivec2(0))) || any(greaterThanEqual(pixel,size)))return false;
+    if(any(notEqual(texelFetch(usampler2D(surface_cache_primary,SAMPLER_NEAREST_CLAMP),pixel,0).xy,uvec2(surface,primitive+1u))))return false;
+    vec4 value=texelFetch(sampler2D(surface_cache_reflection,SAMPLER_NEAREST_CLAMP),pixel,0);
+    radiance=value.rgb;
+    return value.a>0.0;
 }

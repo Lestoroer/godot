@@ -3902,6 +3902,14 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		u.append_id(primary.is_valid() ? primary : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT));
 		uniforms.push_back(u);
 	}
+	{
+		RD::Uniform u;
+		u.binding = 43;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		RID reflection = rb.is_valid() && rb->has_texture("surface_cache", "reflection") ? rb->get_texture("surface_cache", "reflection") : RID();
+		u.append_id(reflection.is_valid() ? reflection : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
+		uniforms.push_back(u);
+	}
 	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.default_shader_rd, RENDER_PASS_UNIFORM_SET, uniforms);
 }
 

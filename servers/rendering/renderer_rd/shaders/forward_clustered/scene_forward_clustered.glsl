@@ -2412,6 +2412,14 @@ void fragment_shader(in SceneData scene_data) {
 #endif // DIFFUSE_TOON
 	}
 
+	// Fork(Lestoroer): traced specular already includes visibility and the BRDF.
+	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
+		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
+		vec3 reflected_radiance;
+		if (cache_surface > 0u && surface_cache_reflection_for_fragment(cache_surface, uint(gl_PrimitiveID), ivec2(gl_FragCoord.xy), reflected_radiance)) {
+			indirect_specular_light = reflected_radiance;
+		}
+	}
 #endif // !AMBIENT_LIGHT_DISABLED
 #endif //GI !defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
 
