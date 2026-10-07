@@ -417,7 +417,7 @@ float sample_receiver_plane_shadow(texture2D shadow, vec2 uv, vec3 receiver, vec
 	vec4 depths = textureGather(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), uv, 0);
 	float center = receiver.z + dot(gradient, base - receiver.xy);
 	vec2 step_depth = gradient / size;
-	vec4 reference = center + vec4(step_depth.y, step_depth.x + step_depth.y, step_depth.x, 0.0);
+	vec4 reference = max(vec4(receiver.z), center + vec4(step_depth.y, step_depth.x + step_depth.y, step_depth.x, 0.0));
 	return dot(step(depths, reference), vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y)));
 }
 
@@ -455,7 +455,7 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 		vec2 depth_step = depth_gradient / size;
 		vec4 offsets = dot(depth_gradient, base - pssm_coord.xy) + vec4(depth_step.y, depth_step.x + depth_step.y, depth_step.x, 0.0);
 		vec4 weights = vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
-		vec4 blockers = weights * vec4(greaterThan(depths, vec4(pssm_coord.z) + offsets));
+		vec4 blockers = weights * vec4(greaterThan(depths, max(vec4(pssm_coord.z), vec4(pssm_coord.z) + offsets)));
 		// Plane bias classifies visibility; blocker distance stays physical.
 		blocker_average += dot(depths, blockers);
 		blocker_count += dot(blockers, vec4(1.0));
