@@ -581,7 +581,10 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 		Dictionary data;
 		data["instance"] = entry.key;
 		data["changes"] = entry.value;
+		// Match raster participation: collapsed instances disappear until a transform
+		// update makes them invertible again. Small nonzero scales remain valid.
 		bool active = instance && instance->scenario == scenario && instance->visible &&
+				instance->transform.basis.determinant() != 0 &&
 				((instance->base_type == RSE::INSTANCE_MESH && (instance->baked_light || instance->dynamic_gi)) || instance->base_type == RSE::INSTANCE_LIGHT);
 		data["active"] = active;
 		if (active) {

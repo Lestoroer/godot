@@ -580,3 +580,11 @@ Position attachment захвата хранит канонические barycen
 Surface Cache: clipping pins intersection coordinates to the exact cell boundary; barycentrics are computed relative to that cell. Edge-only contacts with no strictly interior representative do not create a transport row.
 
 Surface Cache capture classifies triangle/cell overlap with strict SAT before float clipping. Ambiguous orientation signs use an error-free float expansion; zero-measure edge/corner contacts are rejected, and sub-ULP positive overlaps alias to an interior point of the same primitive.
+
+### Surface Cache: устойчивый запуск редактора
+
+Реестр Scenario передаёт вырожденный transform как неактивный экземпляр,
+как и штатный raster: GI снимает его до следующего обратимого transform,
+не останавливая освещение мира. Ненулевой determinant не сравнивается с epsilon.
+Запуск `--editor --script` не создаёт лишний SceneTree перед деревом проверочного
+скрипта; это позволяет проверять настоящий редактор без утечки первого дерева.
