@@ -407,7 +407,11 @@ half sample_omni_pcf_shadow(texture2D shadow, float blur_scale, vec2 coord, vec4
 	return half(avg * (1.0 / float(sc_soft_shadow_samples())));
 }
 
-half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_scale, float taa_frame_count) {
+half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_scale, float taa_frame_count, vec3 shadow_ddx, vec3 shadow_ddy) {
+	// Fork(Lestoroer): a wide PCSS kernel must compare against the receiver
+	// plane at each tap. A constant depth treats a sloping floor as its own blocker.
+	vec3 receiver_plane = cross(shadow_ddx, shadow_ddy);
+	vec2 depth_gradient = abs(receiver_plane.z) > max(1e-20, length(receiver_plane) * 1e-5) ? -receiver_plane.xy / receiver_plane.z : vec2(0.0);
 	//find blocker
 	float blocker_count = 0.0;
 	float blocker_average = 0.0;
@@ -424,8 +428,9 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 	for (uint i = 0; i < sc_directional_penumbra_shadow_samples(); i++) {
 		vec2 suv = pssm_coord.xy + (disk_rotation * scene_data_block.data.directional_penumbra_shadow_kernel[i].xy) * tex_scale;
 		float d = textureLod(sampler2D(shadow, SAMPLER_LINEAR_CLAMP), suv, 0.0).r;
-		if (d > pssm_coord.z) {
-			blocker_average += d;
+		float receiver_offset = dot(depth_gradient, suv - pssm_coord.xy);
+		if (d > pssm_coord.z + receiver_offset) {
+			blocker_average += d - receiver_offset;
 			blocker_count += 1.0;
 		}
 	}
@@ -441,7 +446,7 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 		SPEC_CONSTANT_LOOP_ANNOTATION
 		for (uint i = 0; i < sc_directional_penumbra_shadow_samples(); i++) {
 			vec2 suv = pssm_coord.xy + (disk_rotation * scene_data_block.data.directional_penumbra_shadow_kernel[i].xy) * tex_scale;
-			s += textureProj(sampler2DShadow(shadow, shadow_sampler), vec4(suv, pssm_coord.z, 1.0));
+			s += textureProj(sampler2DShadow(shadow, shadow_sampler), vec4(suv, pssm_coord.z + dot(depth_gradient, suv - pssm_coord.xy), 1.0));
 		}
 
 		return half(s / float(sc_directional_penumbra_shadow_samples()));

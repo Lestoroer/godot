@@ -2405,7 +2405,7 @@ void fragment_shader(in SceneData scene_data) {
 							float range_begin = directional_lights.data[i].shadow_range_begin.x;
 							float test_radius = (range_pos - range_begin) * directional_lights.data[i].softshadow_angle;
 							vec2 tex_scale = directional_lights.data[i].uv_scale1 * test_radius;
-							shadow = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, scene_data.taa_frame_count);
+							shadow = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, scene_data.taa_frame_count, mat3(directional_lights.data[i].shadow_matrix1) * vertex_ddx, mat3(directional_lights.data[i].shadow_matrix1) * vertex_ddy);
 							blend_count++;
 						}
 
@@ -2421,7 +2421,7 @@ void fragment_shader(in SceneData scene_data) {
 							float range_begin = directional_lights.data[i].shadow_range_begin.y;
 							float test_radius = (range_pos - range_begin) * directional_lights.data[i].softshadow_angle;
 							vec2 tex_scale = directional_lights.data[i].uv_scale2 * test_radius;
-							float s = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, scene_data.taa_frame_count);
+							float s = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, scene_data.taa_frame_count, mat3(directional_lights.data[i].shadow_matrix2) * vertex_ddx, mat3(directional_lights.data[i].shadow_matrix2) * vertex_ddy);
 
 							if (blend_count == 0) {
 								shadow = s;
@@ -2446,7 +2446,7 @@ void fragment_shader(in SceneData scene_data) {
 							float range_begin = directional_lights.data[i].shadow_range_begin.z;
 							float test_radius = (range_pos - range_begin) * directional_lights.data[i].softshadow_angle;
 							vec2 tex_scale = directional_lights.data[i].uv_scale3 * test_radius;
-							float s = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, scene_data.taa_frame_count);
+							float s = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, scene_data.taa_frame_count, mat3(directional_lights.data[i].shadow_matrix3) * vertex_ddx, mat3(directional_lights.data[i].shadow_matrix3) * vertex_ddy);
 
 							if (blend_count == 0) {
 								shadow = s;
@@ -2471,7 +2471,7 @@ void fragment_shader(in SceneData scene_data) {
 							float range_begin = directional_lights.data[i].shadow_range_begin.w;
 							float test_radius = (range_pos - range_begin) * directional_lights.data[i].softshadow_angle;
 							vec2 tex_scale = directional_lights.data[i].uv_scale4 * test_radius;
-							float s = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, scene_data.taa_frame_count);
+							float s = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, scene_data.taa_frame_count, mat3(directional_lights.data[i].shadow_matrix4) * vertex_ddx, mat3(directional_lights.data[i].shadow_matrix4) * vertex_ddy);
 
 							if (blend_count == 0) {
 								shadow = s;
