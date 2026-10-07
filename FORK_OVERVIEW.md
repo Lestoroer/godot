@@ -121,3 +121,8 @@ Forward+ может выбирать diffuse irradiance из world-owned Surface
 
 Surface layout сохраняет идентификаторы charts, выданные xatlas, для изоляции
 фильтрации света на несвязанных поверхностях.
+
+Surface Cache: отдельный callback Scenario после depth/normal prepass выполняется
+для каждого viewport (включая зеркало), независимо от его Compositor. Binding 41
+читает viewport-текстуру `surface_cache/gather`; глубина проверяется до применения
+непрямого света к фрагменту. Общий world cache обновляется один раз за кадр.

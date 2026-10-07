@@ -7,6 +7,8 @@ layout(set=1,binding=38,std430) readonly buffer SurfaceCacheTriangles { SurfaceC
 layout(set=1,binding=39,std430) readonly buffer SurfaceCacheMaterials { SurfaceCacheMaterial data[]; } surface_cache_materials;
 layout(set=1,binding=40,std430) readonly buffer SurfaceCacheIrradiance { vec4 data[]; } surface_cache_light;
 
+layout(set=1,binding=41) uniform texture2D surface_cache_gather;
+
 vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 normal) {
     uvec4 mapping=surface_cache_surfaces.data[surface].lighting;
     SurfaceCacheTriangle triangle=surface_cache_triangles.data[mapping.x+primitive];

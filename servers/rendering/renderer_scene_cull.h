@@ -347,6 +347,7 @@ public:
 
 		// Fork(Lestoroer): one opt-in Surface Cache controller per world.
 		Callable surface_cache_callback;
+		Callable surface_cache_view_callback;
 		Vector<RID> surface_cache_buffers;
 		HashMap<RID, uint32_t> surface_cache_dirty;
 		uint64_t surface_cache_frame = UINT64_MAX;
@@ -379,6 +380,7 @@ public:
 
 	void _surface_cache_queue(Instance *p_instance, uint32_t p_flags) const;
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) override;
+	virtual void scenario_set_surface_cache_view_callback(RID p_scenario, const Callable &p_callback) override;
 	virtual Array scenario_surface_cache_poll(RID p_scenario) override;
 	virtual void scenario_set_surface_cache_buffers(RID p_scenario, const TypedArray<RID> &p_buffers) override;
 	virtual void instance_set_surface_cache_ids(RID p_instance, const Vector<int32_t> &p_ids) override;

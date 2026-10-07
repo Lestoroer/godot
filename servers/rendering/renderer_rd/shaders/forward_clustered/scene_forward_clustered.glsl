@@ -1778,6 +1778,13 @@ void fragment_shader(in SceneData scene_data) {
 		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 		if (cache_surface > 0u) {
 			ambient_light = surface_cache_irradiance(cache_surface - 1u, uint(gl_PrimitiveID), (inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal));
+			ivec2 gather_pixel = ivec2(gl_FragCoord.xy);
+			ivec2 gather_size = textureSize(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), 0);
+			if (all(lessThan(gather_pixel, gather_size))) {
+				vec4 gather = texelFetch(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), gather_pixel, 0);
+				// A transparent fragment must not borrow the opaque surface behind it.
+				if (gather.a > 0.0 && abs(gather.a + vertex.z) < max(0.001, abs(vertex.z) * 0.0002)) ambient_light = gather.rgb;
+			}
 		}
 	}
 

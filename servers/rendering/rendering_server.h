@@ -776,6 +776,7 @@ public:
 
 	// Fork(Lestoroer): GPU-only capture, source material state and remapped chart geometry.
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) = 0;
+	virtual void scenario_set_surface_cache_view_callback(RID p_scenario, const Callable &p_callback) = 0;
 	virtual void scenario_set_surface_cache_buffers(RID p_scenario, const TypedArray<RID> &p_buffers) = 0;
 	virtual void instance_set_surface_cache_ids(RID p_instance, const Vector<int32_t> &p_ids) = 0;
 	virtual Array scenario_surface_cache_poll(RID p_scenario) = 0;
