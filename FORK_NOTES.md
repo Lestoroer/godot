@@ -578,3 +578,5 @@ Position attachment захвата хранит канонические barycen
 в texel, чтобы нормализация UV не создавала ложные граничные пересечения.
 
 Surface Cache: clipping pins intersection coordinates to the exact cell boundary; barycentrics are computed relative to that cell. Edge-only contacts with no strictly interior representative do not create a transport row.
+
+Surface Cache capture classifies triangle/cell overlap with strict SAT before float clipping. Ambiguous orientation signs use an error-free float expansion; zero-measure edge/corner contacts are rejected, and sub-ULP positive overlaps alias to an interior point of the same primitive.
