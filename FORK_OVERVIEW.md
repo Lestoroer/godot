@@ -155,7 +155,7 @@ Spatial render mode `surface_cache_global_invariant` позволяет явно
 texel. Private stream сохраняет UV/UV2/CUSTOM и порядок исходных примитивов.
 Расширенная растеризация перечисляет пересечения с texel; material fragment
 вычисляется в центре площади пересечения. Пустые границы не создают строк GI.
-Capture uses analytic interpolation of built-in and custom smooth varyings.
+Capture использует аналитическую интерполяцию встроенных и пользовательских smooth varyings.
 
 Primary visibility теперь RGBA32UI: surface/primitive и barycentrics покрытой
 centroid-позиции. MSAA resolve переносит их вместе с выбранными depth/normal.

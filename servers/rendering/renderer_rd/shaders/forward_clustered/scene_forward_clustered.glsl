@@ -925,15 +925,18 @@ layout(location = 1) in vec3 normal_interp;
 #endif
 
 #if defined(COLOR_USED)
-layout(location = 2) in vec4 color_interp;
+layout(location = 2) in vec4 color_interp_raw;
+vec4 color_interp;
 #endif
 
 #ifdef UV_USED
-layout(location = 3) in vec2 uv_interp;
+layout(location = 3) in vec2 uv_interp_raw;
+vec2 uv_interp;
 #endif
 
 #if defined(UV2_USED) || defined(USE_LIGHTMAP)
-layout(location = 4) in vec2 uv2_interp;
+layout(location = 4) in vec2 uv2_interp_raw;
+vec2 uv2_interp;
 #endif
 
 #ifdef TANGENT_USED
@@ -1268,6 +1271,15 @@ void fragment_shader(in SceneData scene_data) {
 		}
 	}
 #endif
+#ifdef UV_USED
+	uv_interp = surface_cache_sample(uv_interp_raw);
+#endif
+#if defined(UV2_USED) || defined(USE_LIGHTMAP)
+	uv2_interp = surface_cache_sample(uv2_interp_raw);
+#endif
+#ifdef COLOR_USED
+	color_interp = surface_cache_sample(color_interp_raw);
+#endif
 #CODE : SURFACE_CACHE_VARYINGS
 
 	uint instance_index = instance_index_interp;
@@ -1335,15 +1347,15 @@ void fragment_shader(in SceneData scene_data) {
 #endif // NORMAL_USED
 
 #ifdef UV_USED
-	vec2 uv = surface_cache_sample(uv_interp);
+	vec2 uv = uv_interp;
 #endif
 
 #if defined(UV2_USED) || defined(USE_LIGHTMAP)
-	vec2 uv2 = surface_cache_sample(uv2_interp);
+	vec2 uv2 = uv2_interp;
 #endif
 
 #if defined(COLOR_USED)
-	vec4 color = surface_cache_sample(color_interp);
+	vec4 color = color_interp;
 #endif
 
 #if defined(NORMAL_MAP_USED)
