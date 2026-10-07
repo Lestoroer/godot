@@ -1055,6 +1055,9 @@ layout(location = 4) out vec4 depth_output_buffer; // Fork(Lestoroer): capture w
 
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
 layout(location = 0) out vec4 normal_roughness_output_buffer;
+#ifdef MODE_RENDER_SURFACE_CACHE
+layout(location = 1) out uvec2 surface_cache_primary;
+#endif
 
 #ifdef MODE_RENDER_VOXEL_GI
 layout(location = 1) out uvec2 voxel_gi_buffer;
@@ -3054,6 +3057,9 @@ void fragment_shader(in SceneData scene_data) {
 
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
 	normal_roughness_output_buffer = vec4(encode24(normal) * 0.5 + 0.5, roughness);
+#ifdef MODE_RENDER_SURFACE_CACHE
+	surface_cache_primary = uvec2(uint(instances.data[instance_index].compressed_aabb_position_pad.w), uint(gl_PrimitiveID) + 1u);
+#endif
 
 	// We encode the dynamic static into roughness.
 	// Values over 0.5 are dynamic, under 0.5 are static.

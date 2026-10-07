@@ -20,7 +20,11 @@ layout(rgba8, set = 1, binding = 1) uniform restrict writeonly image2D dest_norm
 
 #ifdef VOXEL_GI_RESOLVE
 layout(set = 2, binding = 0) uniform usampler2DMS source_voxel_gi;
+#ifdef SURFACE_CACHE_RESOLVE
+layout(rg32ui, set = 3, binding = 0) uniform restrict writeonly uimage2D dest_voxel_gi;
+#else
 layout(rg8ui, set = 3, binding = 0) uniform restrict writeonly uimage2D dest_voxel_gi;
+#endif
 #endif
 
 #endif

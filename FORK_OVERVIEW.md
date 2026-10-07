@@ -132,3 +132,8 @@ Surface Cache: read-only `SURFACE_CACHE_IRRADIANCE` передаёт material fr
 Материал, использующий вход, сам пишет IRRADIANCE; renderer не подменяет его
 повторно. Mobile/GLES возвращают нулевую alpha. Очистка адресов удалённого
 instance идемпотентна.
+
+Surface Cache: depth/normal prepass сохраняет surface и primitive ID только
+при активном GI. MSAA выбирает ID того же sample, что depth/normal. Final gather
+и материал проверяют эту идентичность; поиска треугольника по допуску глубины
+и зависимости от схемы MSAA samples видеокарты нет.

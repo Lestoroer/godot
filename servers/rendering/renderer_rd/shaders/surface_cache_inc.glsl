@@ -8,6 +8,7 @@ layout(set=1,binding=39,std430) readonly buffer SurfaceCacheMaterials { SurfaceC
 layout(set=1,binding=40,std430) readonly buffer SurfaceCacheIrradiance { vec4 data[]; } surface_cache_light;
 
 layout(set=1,binding=41) uniform texture2D surface_cache_gather;
+layout(set=1,binding=42) uniform utexture2D surface_cache_primary;
 
 vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 normal) {
     uvec4 mapping=surface_cache_surfaces.data[surface].lighting;
@@ -59,7 +60,7 @@ vec3 surface_cache_for_fragment(uint surface, uint primitive, vec3 position, vec
     if (all(greaterThanEqual(pixel, ivec2(0))) && all(lessThan(pixel, size))) {
         vec4 gather = texelFetch(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), pixel, 0);
         // Transparent fragments cannot borrow irradiance of opaque geometry behind them.
-        if (gather.a > 0.0 && abs(gather.a - view_depth) < max(0.001, abs(view_depth) * 0.0002)) {
+        if (gather.a > 0.0 && all(equal(texelFetch(usampler2D(surface_cache_primary, SAMPLER_NEAREST_CLAMP), pixel, 0).xy, uvec2(surface + 1u, primitive + 1u)))) {
             gather_used = true;
             return gather.rgb;
         }
