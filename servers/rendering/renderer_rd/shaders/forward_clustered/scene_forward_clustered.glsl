@@ -3127,35 +3127,35 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
 	normal_roughness_output_buffer = vec4(encode24(normal) * 0.5 + 0.5, roughness);
 #ifdef MODE_RENDER_SURFACE_CACHE
-uint surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
-uint primitive = uint(gl_PrimitiveID);
-surface_cache_primary_output = uvec4(0u);
-if (surface > 0u && surface <= uint(surface_cache_surfaces.data.length())) {
-	SurfaceCacheMapping mapping = surface_cache_surfaces.data[surface - 1u];
-	uint triangle_index = mapping.material.x + primitive;
-	if (triangle_index < uint(surface_cache_triangles.data.length())) {
-		SurfaceCacheTriangle triangle = surface_cache_triangles.data[triangle_index];
-		vec3 ab = triangle.b.xyz - triangle.a.xyz;
-		vec3 ac = triangle.c.xyz - triangle.a.xyz;
-		vec3 normal = cross(ab, ac);
-		if (dot(normal, normal) > 1e-30) {
-			vec3 position = (inv_view_matrix * vec4(surface_cache_vertex_centroid, 1.0)).xyz;
-			vec3 offset = position - triangle.a.xyz;
-			vec3 major = abs(normal);
-			vec2 u = major.z >= max(major.x, major.y) ? ab.xy : (major.y >= major.x ? ab.xz : ab.yz);
-			vec2 v = major.z >= max(major.x, major.y) ? ac.xy : (major.y >= major.x ? ac.xz : ac.yz);
-			vec2 q = major.z >= max(major.x, major.y) ? offset.xy : (major.y >= major.x ? offset.xz : offset.yz);
-			float determinant = u.x * v.y - u.y * v.x;
-			if (abs(determinant) > 1e-15) {
-				float b = (q.x * v.y - q.y * v.x) / determinant;
-				float c = (u.x * q.y - u.y * q.x) / determinant;
-				vec3 bary = max(vec3(1.0 - b - c, b, c), vec3(1e-6));
-				bary /= bary.x + bary.y + bary.z;
-				surface_cache_primary_output = uvec4(surface, primitive + 1u, floatBitsToUint(bary.y), floatBitsToUint(bary.z));
+	uint surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
+	uint primitive = uint(gl_PrimitiveID);
+	surface_cache_primary_output = uvec4(0u);
+	if (surface > 0u && surface <= uint(surface_cache_surfaces.data.length())) {
+		SurfaceCacheMapping mapping = surface_cache_surfaces.data[surface - 1u];
+		uint triangle_index = mapping.material.x + primitive;
+		if (triangle_index < uint(surface_cache_triangles.data.length())) {
+			SurfaceCacheTriangle triangle = surface_cache_triangles.data[triangle_index];
+			vec3 ab = triangle.b.xyz - triangle.a.xyz;
+			vec3 ac = triangle.c.xyz - triangle.a.xyz;
+			vec3 normal = cross(ab, ac);
+			if (dot(normal, normal) > 1e-30) {
+				vec3 position = (inv_view_matrix * vec4(surface_cache_vertex_centroid, 1.0)).xyz;
+				vec3 offset = position - triangle.a.xyz;
+				vec3 major = abs(normal);
+				vec2 u = major.z >= max(major.x, major.y) ? ab.xy : (major.y >= major.x ? ab.xz : ab.yz);
+				vec2 v = major.z >= max(major.x, major.y) ? ac.xy : (major.y >= major.x ? ac.xz : ac.yz);
+				vec2 q = major.z >= max(major.x, major.y) ? offset.xy : (major.y >= major.x ? offset.xz : offset.yz);
+				float determinant = u.x * v.y - u.y * v.x;
+				if (abs(determinant) > 1e-15) {
+					float b = (q.x * v.y - q.y * v.x) / determinant;
+					float c = (u.x * q.y - u.y * q.x) / determinant;
+					vec3 bary = max(vec3(1.0 - b - c, b, c), vec3(1e-6));
+					bary /= bary.x + bary.y + bary.z;
+					surface_cache_primary_output = uvec4(surface, primitive + 1u, floatBitsToUint(bary.y), floatBitsToUint(bary.z));
+				}
 			}
 		}
 	}
-}
 #endif
 
 	// We encode the dynamic static into roughness.
