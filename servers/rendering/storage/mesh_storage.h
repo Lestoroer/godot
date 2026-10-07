@@ -69,6 +69,7 @@ public:
 	virtual RenderingServerTypes::SurfaceData mesh_get_surface(RID p_mesh, int p_surface) const = 0;
 
 	virtual int mesh_get_surface_count(RID p_mesh) const = 0;
+	virtual uint64_t mesh_get_geometry_revision(RID p_mesh) const { return 0; } // Fork(Lestoroer)
 
 	virtual void mesh_set_custom_aabb(RID p_mesh, const AABB &p_aabb) = 0;
 	virtual AABB mesh_get_custom_aabb(RID p_mesh) const = 0;

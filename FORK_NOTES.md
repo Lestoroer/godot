@@ -538,3 +538,10 @@ Surface Cache: depth/normal prepass сохраняет surface и primitive ID �
 
 PCSS: bilinear PCF проверяет receiver plane у каждого из четырёх depth texel,
 а не только в центре tap. Это сохраняет контакт без завышенного slope bias.
+
+Surface Cache: native mesh revisions invalidate shared geometry on same-RID
+mesh edits. Texture contents and global shader inputs notify subscribed material
+instances through dependencies. Shader vertex/clip-space displacement is exposed
+as unsupported instead of letting raster and ray geometry silently diverge.
+Material capture first records geometric coverage, then shades it: fragment
+`discard` changes opacity without changing the allocation of transport rows.

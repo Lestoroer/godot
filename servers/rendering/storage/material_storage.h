@@ -89,6 +89,7 @@ public:
 	virtual void material_set_next_pass(RID p_material, RID p_next_material) = 0;
 
 	virtual bool material_is_animated(RID p_material) = 0;
+	virtual bool material_has_shader_displacement(RID p_material) { return false; } // Fork(Lestoroer)
 	virtual bool material_casts_shadows(RID p_material) = 0;
 	virtual RSE::CullMode material_get_cull_mode(RID p_material) const = 0;
 

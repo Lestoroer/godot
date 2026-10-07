@@ -74,6 +74,7 @@ public:
 	float opaque_prepass_threshold = 0.0;
 	bool material_uv2_mode = false;
 	bool surface_cache_enabled = false;
+	bool surface_cache_coverage = false;
 	bool surface_cache_capture = false; // Fork(Lestoroer)
 	bool surface_cache_back_side = false;
 	float emissive_exposure_normalization = 0.0;
@@ -117,6 +118,7 @@ private:
 		SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE = 1 << 8, // Fork(Lestoroer)
 		SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE = 1 << 9,
 		SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED = 1 << 10,
+		SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE = 1 << 11,
 		SCENE_DATA_FLAGS_MAX
 	};
 

@@ -3102,7 +3102,9 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	render_data.instances = &cull_argument;
 	scene_shader.enable_advanced_shader_group();
 	_update_render_base_uniform_set();
-	uint32_t uniform_buffer_index = _setup_environment(&render_data, true, RD::get_singleton()->framebuffer_get_size(p_framebuffer), p_region.size, Color());
+	for (int capture_pass = 0; capture_pass < 2; capture_pass++) {
+		scene_data.surface_cache_coverage = capture_pass == 0;
+		uint32_t uniform_buffer_index = _setup_environment(&render_data, true, RD::get_singleton()->framebuffer_get_size(p_framebuffer), p_region.size, Color());
 	_fill_render_list(RENDER_LIST_SECONDARY, &render_data, PASS_MODE_DEPTH_MATERIAL);
 	render_list[RENDER_LIST_SECONDARY].sort_by_key();
 	_fill_instance_data(RENDER_LIST_SECONDARY, nullptr, 0, -1, true, chart);
@@ -3110,7 +3112,7 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	RenderListParameters params(render_list[RENDER_LIST_SECONDARY].elements.ptr(), render_list[RENDER_LIST_SECONDARY].element_info.ptr(), render_list[RENDER_LIST_SECONDARY].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
 	params.capture_geometry = chart;
 	Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
-	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, RD::DRAW_CLEAR_ALL, clear, 0.0f, 0, p_region);
+	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, capture_pass == 0 ? RD::DRAW_CLEAR_ALL : RD::DRAW_DEFAULT_ALL, clear, 0.0f, 0, p_region);
 	// Preserve sub-texel chart edges using the same conservative border strategy
 	// as native UV2 baking. The final interior pass owns covered texel centers.
 	params.force_wireframe = true;
@@ -3124,6 +3126,7 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	params.uv_offset = Vector2();
 	_render_list(draw_list, RD::get_singleton()->framebuffer_get_format(p_framebuffer), &params, 0, params.element_count);
 	RD::get_singleton()->draw_list_end();
+	}
 	cull_argument[0] = nullptr;
 }
 

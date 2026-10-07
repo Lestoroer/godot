@@ -80,6 +80,7 @@ public:
 
 		virtual void set_code(const String &p_Code) = 0;
 		virtual bool is_animated() const = 0;
+		virtual bool has_shader_displacement() const { return false; }
 		virtual bool casts_shadows() const = 0;
 		virtual RenderingServerTypes::ShaderNativeSourceCode get_native_source_code() const = 0;
 		virtual Pair<ShaderRD *, RID> get_native_shader_and_version() const = 0;
@@ -110,6 +111,9 @@ public:
 		friend class MaterialStorage;
 
 		RID self;
+		DependencyTracker surface_texture_tracker;
+		static void surface_texture_changed(Dependency::DependencyChangedNotification p_notification, DependencyTracker *p_tracker);
+		static void surface_texture_deleted(const RID &p_texture, DependencyTracker *p_tracker);
 		List<RID>::Element *global_buffer_E = nullptr;
 		List<RID>::Element *global_texture_E = nullptr;
 		uint64_t global_textures_pass = 0;
@@ -203,6 +207,7 @@ private:
 			BUFFER_DIRTY_REGION_SIZE = 1024
 		};
 		struct Variable {
+			Dependency surface_dependency;
 			HashSet<RID> texture_materials; // materials using this
 
 			RSE::GlobalShaderParameterType type;
@@ -493,6 +498,7 @@ public:
 
 	virtual void material_set_shader(RID p_material, RID p_shader) override;
 	ShaderData *material_get_shader_data(RID p_material);
+	bool material_has_shader_displacement(RID p_material) override;
 
 	virtual void material_set_param(RID p_material, const StringName &p_param, const Variant &p_value) override;
 	virtual Variant material_get_param(RID p_material, const StringName &p_param) const override;

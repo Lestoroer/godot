@@ -137,3 +137,7 @@ Surface Cache: depth/normal prepass сохраняет surface и primitive ID �
 при активном GI. MSAA выбирает ID того же sample, что depth/normal. Final gather
 и материал проверяют эту идентичность; поиска треугольника по допуску глубины
 и зависимости от схемы MSAA samples видеокарты нет.
+
+Surface Cache propagates changes in mesh content, texture pixels and global
+shader inputs. Its material coverage is independent of fragment discard.
+Shader vertex displacement is an explicit unsupported transport contract.

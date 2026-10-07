@@ -987,6 +987,7 @@ void TextureStorage::texture_free(RID p_texture) {
 		p->rd_texture_srgb = RID();
 	}
 
+	_texture_surface_deleted(p_texture);
 	texture_owner.free(p_texture);
 }
 
@@ -1633,6 +1634,7 @@ void TextureStorage::_texture_2d_update(RID p_texture, const Ref<Image> &p_image
 	Ref<Image> validated = _validate_texture_format(p_image, f);
 
 	RD::get_singleton()->texture_update(tex->rd_texture, p_layer, validated->get_data());
+	_texture_surface_changed(p_texture);
 }
 
 void TextureStorage::texture_2d_update(RID p_texture, const Ref<Image> &p_image, int p_layer) {
@@ -1675,6 +1677,7 @@ void TextureStorage::texture_3d_update(RID p_texture, const Vector<Ref<Image>> &
 	}
 
 	RD::get_singleton()->texture_update(tex->rd_texture, 0, all_data);
+	_texture_surface_changed(p_texture);
 }
 
 void TextureStorage::texture_external_update(RID p_texture, int p_width, int p_height, uint64_t p_external_buffer) {
@@ -1721,6 +1724,7 @@ void TextureStorage::texture_proxy_update(RID p_texture, RID p_proxy_to) {
 		tex->rd_view.format_override = tex->rd_format_srgb;
 		tex->rd_texture_srgb = RD::get_singleton()->texture_create_shared(tex->rd_view, proxy_to->rd_texture);
 	}
+	_texture_surface_changed(p_texture);
 }
 
 // Output textures in p_textures must ALL BE THE SAME SIZE
@@ -2059,6 +2063,8 @@ void TextureStorage::texture_replace(RID p_texture, RID p_by_texture) {
 		texture_proxy_update(proxies_to_redirect[i], p_texture);
 	}
 	//delete last, so proxies can be updated
+	_texture_surface_changed(p_texture);
+	_texture_surface_deleted(p_by_texture);
 	texture_owner.free(p_by_texture);
 
 	decal_atlas_mark_dirty_on_texture(p_texture);
@@ -5297,4 +5303,28 @@ uint32_t TextureStorage::render_target_get_color_usage_bits(bool p_msaa) {
 		// FIXME: Storage bit should only be requested when FSR is required.
 		return RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
 	}
+}
+
+void TextureStorage::texture_update_surface_dependency(RID p_texture, DependencyTracker *p_tracker) {
+    Texture *texture = texture_owner.get_or_null(p_texture);
+    if (!texture) return;
+    if (!surface_dependencies.has(p_texture)) surface_dependencies[p_texture] = memnew(Dependency);
+    p_tracker->update_dependency(surface_dependencies[p_texture]);
+}
+
+void TextureStorage::_texture_surface_changed(RID p_texture) {
+    Dependency **dependency = surface_dependencies.getptr(p_texture);
+    if (dependency) (*dependency)->changed_notify(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT);
+    Texture *texture = texture_owner.get_or_null(p_texture);
+    if (texture) {
+        for (const RID &proxy : texture->proxies) _texture_surface_changed(proxy);
+    }
+}
+
+void TextureStorage::_texture_surface_deleted(RID p_texture) {
+    Dependency **dependency = surface_dependencies.getptr(p_texture);
+    if (!dependency) return;
+    (*dependency)->deleted_notify(p_texture);
+    memdelete(*dependency);
+    surface_dependencies.erase(p_texture);
 }

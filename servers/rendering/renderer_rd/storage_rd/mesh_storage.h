@@ -75,6 +75,7 @@ private:
 	struct MeshInstance;
 
 	struct Mesh {
+		uint64_t geometry_revision = 1; // Fork(Lestoroer)
 		struct Surface {
 			RSE::PrimitiveType primitive = RSE::PRIMITIVE_POINTS;
 			uint64_t format = 0;
@@ -641,6 +642,7 @@ public:
 	}
 
 	Dependency *mesh_get_dependency(RID p_mesh) const;
+	uint64_t mesh_get_geometry_revision(RID p_mesh) const override;
 
 	/* MESH INSTANCE API */
 

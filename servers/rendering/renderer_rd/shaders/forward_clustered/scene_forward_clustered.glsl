@@ -1371,7 +1371,7 @@ void fragment_shader(in SceneData scene_data) {
 	}
 #endif
 #endif
-	{
+	if (!bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE)) {
 #CODE : FRAGMENT
 	}
 
@@ -3040,7 +3040,7 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef MODE_RENDER_MATERIAL
 
 	albedo_output_buffer.rgb = albedo;
-	albedo_output_buffer.a = alpha;
+	albedo_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE) ? 0.0 : alpha;
 
 	normal_output_buffer.rgb = (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? normalize(normal) : encode24(normal)) * 0.5 + 0.5;
 	normal_output_buffer.a = 0.0;

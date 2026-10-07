@@ -866,6 +866,10 @@ MaterialStorage::MaterialData::~MaterialData() {
 
 void MaterialStorage::MaterialData::update_textures(const HashMap<StringName, Variant> &p_parameters, const HashMap<StringName, HashMap<int, RID>> &p_default_textures, const Vector<ShaderCompiler::GeneratedCode::Texture> &p_texture_uniforms, RID *p_textures, bool p_use_linear_color, bool p_3d_material) {
 	MaterialStorage *material_storage = MaterialStorage::get_singleton();
+    surface_texture_tracker.userdata = this;
+    surface_texture_tracker.changed_callback = surface_texture_changed;
+    surface_texture_tracker.deleted_callback = surface_texture_deleted;
+    surface_texture_tracker.update_begin();
 
 #ifdef TOOLS_ENABLED
 	TextureStorage::Texture *roughness_detect_texture = nullptr;
@@ -982,6 +986,7 @@ void MaterialStorage::MaterialData::update_textures(const HashMap<StringName, Va
 				RID rd_texture;
 
 				if (tex) {
+					TextureStorage::get_singleton()->texture_update_surface_dependency(textures[j], &surface_texture_tracker);
 					rd_texture = (srgb && tex->rd_texture_srgb.is_valid()) ? tex->rd_texture_srgb : tex->rd_texture;
 #ifdef TOOLS_ENABLED
 					if (tex->detect_3d_callback && p_3d_material) {
@@ -1047,6 +1052,7 @@ void MaterialStorage::MaterialData::update_textures(const HashMap<StringName, Va
 			}
 		}
 	}
+	surface_texture_tracker.update_end();
 }
 
 RID MaterialStorage::MaterialData::get_default_texture_id(ShaderLanguage::DataType p_type, ShaderLanguage::ShaderNode::Uniform::Hint p_hint) {
@@ -1859,6 +1865,7 @@ Vector<StringName> MaterialStorage::global_shader_parameter_get_list() const {
 void MaterialStorage::global_shader_parameter_set(const StringName &p_name, const Variant &p_value) {
 	ERR_FAIL_COND(!global_shader_uniforms.variables.has(p_name));
 	GlobalShaderUniforms::Variable &gv = global_shader_uniforms.variables[p_name];
+	if (gv.value == p_value) return;
 	gv.value = p_value;
 	if (gv.override.get_type() == Variant::NIL) {
 		if (gv.buffer_index >= 0) {
@@ -1875,6 +1882,7 @@ void MaterialStorage::global_shader_parameter_set(const StringName &p_name, cons
 			}
 		}
 	}
+	if (gv.override.get_type() == Variant::NIL) gv.surface_dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT);
 }
 
 void MaterialStorage::global_shader_parameter_set_override(const StringName &p_name, const Variant &p_value) {
@@ -1886,6 +1894,7 @@ void MaterialStorage::global_shader_parameter_set_override(const StringName &p_n
 
 	GlobalShaderUniforms::Variable &gv = global_shader_uniforms.variables[p_name];
 
+	if (gv.override == p_value) return;
 	gv.override = p_value;
 
 	if (gv.buffer_index >= 0) {
@@ -1906,6 +1915,7 @@ void MaterialStorage::global_shader_parameter_set_override(const StringName &p_n
 			material_storage->_material_queue_update(material, false, true);
 		}
 	}
+	if (true) gv.surface_dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT);
 }
 
 Variant MaterialStorage::global_shader_parameter_get(const StringName &p_name) const {
@@ -2658,6 +2668,13 @@ void MaterialStorage::material_update_dependency(RID p_material, DependencyTrack
 	Material *material = material_owner.get_or_null(p_material);
 	ERR_FAIL_NULL(material);
 	p_instance->update_dependency(&material->dependency);
+    if (material->shader && material->shader->data) {
+        for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &uniform : material->shader->data->uniforms) {
+            if (uniform.value.scope != ShaderLanguage::ShaderNode::Uniform::SCOPE_GLOBAL) continue;
+            GlobalShaderUniforms::Variable *variable = global_shader_uniforms.variables.getptr(uniform.key);
+            if (variable) p_instance->update_dependency(&variable->surface_dependency);
+        }
+    }
 	if (material->next_pass.is_valid()) {
 		material_update_dependency(material->next_pass, p_instance);
 	}
@@ -2766,4 +2783,21 @@ void MaterialStorage::material_set_data_request_function(ShaderType p_shader_typ
 MaterialStorage::MaterialDataRequestFunction MaterialStorage::material_get_data_request_function(ShaderType p_shader_type) {
 	ERR_FAIL_INDEX_V(p_shader_type, SHADER_TYPE_MAX, nullptr);
 	return material_data_request_func[p_shader_type];
+}
+
+bool MaterialStorage::material_has_shader_displacement(RID p_material) {
+    Material *material = material_owner.get_or_null(p_material);
+    if (!material) return false;
+    return (material->shader && material->shader->data && material->shader->data->has_shader_displacement()) ||
+            (material->next_pass.is_valid() && material_has_shader_displacement(material->next_pass));
+}
+
+void MaterialStorage::MaterialData::surface_texture_changed(Dependency::DependencyChangedNotification p_notification, DependencyTracker *p_tracker) {
+    MaterialData *data = static_cast<MaterialData *>(p_tracker->userdata);
+    Material *material = MaterialStorage::get_singleton()->get_material(data->self);
+    if (material) material->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT);
+}
+
+void MaterialStorage::MaterialData::surface_texture_deleted(const RID &p_texture, DependencyTracker *p_tracker) {
+    surface_texture_changed(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT, p_tracker);
 }

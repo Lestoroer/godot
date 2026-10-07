@@ -599,6 +599,17 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 				data["light_params"] = params;
 			} else {
 				data["deformed"] = instance->mesh_instance.is_valid();
+                data["mesh_revision"] = RSG::mesh_storage->mesh_get_geometry_revision(instance->base);
+                bool displacement = RSG::material_storage->material_has_shader_displacement(instance->material_overlay);
+                if (instance->material_override.is_valid()) {
+                    displacement |= RSG::material_storage->material_has_shader_displacement(instance->material_override);
+                } else {
+                    for (int i = 0; i < instance->materials.size(); i++) {
+                        RID material = instance->materials[i].is_valid() ? instance->materials[i] : RSG::mesh_storage->mesh_surface_get_material(instance->base, i);
+                        displacement |= RSG::material_storage->material_has_shader_displacement(material);
+                    }
+                }
+                data["shader_displacement"] = displacement;
 			}
 		}
 		result.push_back(data);
