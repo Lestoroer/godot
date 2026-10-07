@@ -1218,6 +1218,13 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 					rl->add_element(surf);
 				}
 			} else if (p_pass_mode == PASS_MODE_DEPTH_MATERIAL) {
+				// Presentation passes (outlines, highlights) do not describe the
+				// physical surface. Keep shader/material dependencies so editing
+				// this declaration still triggers a fresh capture.
+				if (p_render_data->scene_data->surface_cache_capture && surf->shader->surface_cache_presentation) {
+					surf = surf->next;
+					continue;
+				}
 				if (surf->flags & (GeometryInstanceSurfaceDataCache::FLAG_PASS_DEPTH | GeometryInstanceSurfaceDataCache::FLAG_PASS_OPAQUE | GeometryInstanceSurfaceDataCache::FLAG_PASS_ALPHA)) {
 					rl->add_element(surf);
 				}
@@ -2592,6 +2599,9 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	}
 
 	if (rb_data.is_valid()) {
+		// HDR consumers such as planar reflections need the resolved temporal
+		// image, before the display tonemapper. Runs also with TAA disabled.
+		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TEMPORAL, p_render_data);
 		_debug_draw_cluster(rb);
 
 		RENDER_TIMESTAMP("Tonemap");
