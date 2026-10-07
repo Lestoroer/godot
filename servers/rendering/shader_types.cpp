@@ -195,6 +195,7 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RADIANCE"] = ShaderLanguage::TYPE_VEC4;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["IRRADIANCE"] = ShaderLanguage::TYPE_VEC4;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SURFACE_CACHE_IRRADIANCE"] = constt(ShaderLanguage::TYPE_VEC4);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SURFACE_CACHE_TRANSMISSION"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SURFACE_CACHE_GATHER_USED"] = constt(ShaderLanguage::TYPE_BOOL); // Fork(Lestoroer)
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].can_discard = true;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].main_function = true;

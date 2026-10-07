@@ -8,6 +8,8 @@ layout(set=1,binding=39,std430) readonly buffer SurfaceCacheMaterials { SurfaceC
 layout(set=1,binding=40,std430) readonly buffer SurfaceCacheIrradiance { vec4 data[]; } surface_cache_light;
 
 layout(set=1,binding=41) uniform texture2D surface_cache_gather;
+layout(set=1,binding=44) uniform texture2D surface_cache_glass;
+layout(set=1,binding=45) uniform utexture2D surface_cache_glass_primary;
 layout(set=1,binding=43) uniform texture2D surface_cache_reflection;
 layout(set=1,binding=42) uniform utexture2D surface_cache_primary;
 

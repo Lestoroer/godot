@@ -1324,6 +1324,7 @@ void fragment_shader(in SceneData scene_data) {
 	float transmittance_boost = 0.0;
 	float metallic_highp = 0.0;
 	float specular = 0.5;
+	float surface_cache_transmission = 0.0;
 	vec3 emission = vec3(0.0);
 	float roughness_highp = 1.0;
 	float rim = 0.0;
@@ -3152,7 +3153,7 @@ void fragment_shader(in SceneData scene_data) {
 	albedo_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE) ? 0.0 : alpha;
 
 	normal_output_buffer.rgb = (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? normalize(normal) : encode24(normal)) * 0.5 + 0.5;
-	normal_output_buffer.a = 0.0;
+	normal_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? surface_cache_transmission : 0.0;
 	depth_output_buffer = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? vec4(surface_cache_bary, float(gl_PrimitiveID + 1)) : vec4(-vertex.z, 0.0, 0.0, 0.0);
 
 	orm_output_buffer.r = ao;
@@ -3267,6 +3268,14 @@ void fragment_shader(in SceneData scene_data) {
 	frag_color = vec4(albedo, alpha);
 #else
 	frag_color = vec4(emission + ambient_light + diffuse_light + direct_specular_light + indirect_specular_light, alpha);
+	if (surface_cache_transmission > 0.0 && bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
+		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
+		ivec2 pixel = ivec2(gl_FragCoord.xy);
+		if (all(lessThan(pixel, textureSize(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), 0))) && all(equal(texelFetch(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), pixel, 0).xy, uvec2(cache_surface, uint(gl_PrimitiveID) + 1u)))) {
+			vec4 transmitted = texelFetch(sampler2D(surface_cache_glass, SAMPLER_NEAREST_CLAMP), pixel, 0);
+			if (transmitted.a > 0.0) frag_color = vec4(transmitted.rgb, 1.0);
+		}
+	}
 //frag_color = vec4(1.0);
 #endif //USE_NO_SHADING
 

@@ -2206,6 +2206,7 @@ void main() {
 	float transmittance_boost = 0.0;
 	float metallic = 0.0;
 	float specular = 0.5;
+	float surface_cache_transmission = 0.0;
 	vec3 emission = vec3(0.0);
 	float roughness = 1.0;
 	float rim = 0.0;
