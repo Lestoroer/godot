@@ -315,7 +315,11 @@ half sample_directional_pcf_shadow(texture2D shadow, vec2 shadow_pixel_size, vec
 
 	//if only one sample is taken, take it from the center
 	if (sc_directional_soft_shadow_samples() == 0) {
-		return half(textureProj(sampler2DShadow(shadow, shadow_sampler), vec4(pos, depth, 1.0)));
+		// Hard mode must not inherit the comparison sampler's bilinear PCF footprint.
+		ivec2 size = textureSize(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), 0);
+		ivec2 texel = clamp(ivec2(floor(pos * vec2(size))), ivec2(0), size - ivec2(1));
+		float stored_depth = texelFetch(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), texel, 0).r;
+		return half(depth > stored_depth ? 1.0 : 0.0);
 	}
 
 	mat2 disk_rotation;
