@@ -1329,6 +1329,7 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["DEPTH"] = "gl_FragDepth";
 		actions.renames["FOG"] = "fog";
 		actions.renames["RADIANCE"] = "custom_radiance";
+		actions.renames["SURFACE_CACHE_GATHER_USED"] = "false";
 		actions.renames["SURFACE_CACHE_IRRADIANCE"] = "vec4(0.0)"; // Fork(Lestoroer): GI absent on this renderer.
 		actions.renames["IRRADIANCE"] = "custom_irradiance";
 		actions.renames["BONE_INDICES"] = "bone_attrib";

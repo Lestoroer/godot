@@ -522,3 +522,7 @@ Surface Cache: read-only `SURFACE_CACHE_IRRADIANCE` передаёт material fr
 Материал, использующий вход, сам пишет IRRADIANCE; renderer не подменяет его
 повторно. Mobile/GLES возвращают нулевую alpha. Очистка адресов удалённого
 instance идемпотентна.
+
+Surface Cache требует normal prepass и без WorldEnvironment. Вход материала
+`SURFACE_CACHE_GATHER_USED` позволяет проверять реальное использование viewport
+результата. Чтение coarse fallback выполняется только при несовпадении глубины.

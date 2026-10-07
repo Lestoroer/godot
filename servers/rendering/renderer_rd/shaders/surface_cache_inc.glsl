@@ -51,3 +51,18 @@ vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 
     // Visible coverage failure, never disguised as computed darkness.
     return found?max(irradiance,vec3(0.0)):vec3(1.0,0.0,1.0);
 }
+
+
+vec3 surface_cache_for_fragment(uint surface, uint primitive, vec3 position, vec3 normal, ivec2 pixel, float view_depth, out bool gather_used) {
+    ivec2 size = textureSize(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), 0);
+    gather_used = false;
+    if (all(greaterThanEqual(pixel, ivec2(0))) && all(lessThan(pixel, size))) {
+        vec4 gather = texelFetch(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), pixel, 0);
+        // Transparent fragments cannot borrow irradiance of opaque geometry behind them.
+        if (gather.a > 0.0 && abs(gather.a - view_depth) < max(0.001, abs(view_depth) * 0.0002)) {
+            gather_used = true;
+            return gather.rgb;
+        }
+    }
+    return surface_cache_irradiance(surface, primitive, position, normal);
+}

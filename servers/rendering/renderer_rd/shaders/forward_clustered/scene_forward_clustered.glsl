@@ -1355,21 +1355,15 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 #endif
 
-#ifdef SURFACE_CACHE_INPUT_USED
+#if defined(SURFACE_CACHE_INPUT_USED) || defined(SURFACE_CACHE_GATHER_INFO_USED)
 	vec4 surface_cache_input = vec4(0.0);
+	bool surface_cache_gather_used = false;
 #ifndef MODE_RENDER_DEPTH
 	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
 		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 		if (cache_surface > 0u) {
 			surface_cache_input.a = 1.0;
-			surface_cache_input.rgb = surface_cache_irradiance(cache_surface - 1u, uint(gl_PrimitiveID), (inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal_highp));
-			ivec2 gather_pixel = ivec2(gl_FragCoord.xy);
-			ivec2 gather_size = textureSize(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), 0);
-			if (all(lessThan(gather_pixel, gather_size))) {
-				vec4 gather = texelFetch(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), gather_pixel, 0);
-				// A transparent fragment must not borrow the opaque surface behind it.
-				if (gather.a > 0.0 && abs(gather.a + vertex.z) < max(0.001, abs(vertex.z) * 0.0002)) surface_cache_input.rgb = gather.rgb;
-			}
+			surface_cache_input.rgb = surface_cache_for_fragment(cache_surface - 1u, uint(gl_PrimitiveID), (inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal_highp), ivec2(gl_FragCoord.xy), -vertex.z, surface_cache_gather_used);
 		}
 	}
 #endif
@@ -1797,14 +1791,8 @@ void fragment_shader(in SceneData scene_data) {
 	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
 		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 		if (cache_surface > 0u) {
-			ambient_light = surface_cache_irradiance(cache_surface - 1u, uint(gl_PrimitiveID), (inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal));
-			ivec2 gather_pixel = ivec2(gl_FragCoord.xy);
-			ivec2 gather_size = textureSize(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), 0);
-			if (all(lessThan(gather_pixel, gather_size))) {
-				vec4 gather = texelFetch(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), gather_pixel, 0);
-				// A transparent fragment must not borrow the opaque surface behind it.
-				if (gather.a > 0.0 && abs(gather.a + vertex.z) < max(0.001, abs(vertex.z) * 0.0002)) ambient_light = gather.rgb;
-			}
+			bool gather_used;
+			ambient_light = surface_cache_for_fragment(cache_surface - 1u, uint(gl_PrimitiveID), (inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal), ivec2(gl_FragCoord.xy), -vertex.z, gather_used);
 		}
 	}
 #endif
