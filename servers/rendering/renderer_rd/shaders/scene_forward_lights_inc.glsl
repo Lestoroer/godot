@@ -441,12 +441,19 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 	SPEC_CONSTANT_LOOP_ANNOTATION
 	for (uint i = 0; i < sc_directional_penumbra_shadow_samples(); i++) {
 		vec2 suv = pssm_coord.xy + (disk_rotation * scene_data_block.data.directional_penumbra_shadow_kernel[i].xy) * tex_scale;
-		float d = textureLod(sampler2D(shadow, SAMPLER_LINEAR_CLAMP), suv, 0.0).r;
-		float receiver_offset = dot(depth_gradient, suv - pssm_coord.xy);
-		if (d > pssm_coord.z + receiver_offset) {
-			blocker_average += d - receiver_offset;
-			blocker_count += 1.0;
-		}
+		// Compare actual texels before filtering: interpolating depth across a
+		// silhouette invents blockers whose distance changes with the kernel.
+		vec2 size = vec2(textureSize(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), 0));
+		vec2 pixel = suv * size - 0.5;
+		vec2 base = (floor(pixel) + 0.5) / size;
+		vec2 f = fract(pixel);
+		vec4 depths = textureGather(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), suv, 0);
+		vec2 depth_step = depth_gradient / size;
+		vec4 offsets = dot(depth_gradient, base - pssm_coord.xy) + vec4(depth_step.y, depth_step.x + depth_step.y, depth_step.x, 0.0);
+		vec4 weights = vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
+		vec4 blockers = weights * vec4(greaterThan(depths, vec4(pssm_coord.z) + offsets));
+		blocker_average += dot(depths - offsets, blockers);
+		blocker_count += dot(blockers, vec4(1.0));
 	}
 
 	if (blocker_count > 0.0) {
