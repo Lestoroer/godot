@@ -2488,7 +2488,7 @@ void fragment_shader(in SceneData scene_data) {
 
 					//version with soft shadows, more expensive
 					// Fork(Lestoroer): temporary PCF-only comparison; preserve light size, bias and GI.
-					if (false && sc_use_directional_soft_shadows() && directional_lights.data[i].softshadow_angle > 0) {
+					if (sc_use_directional_soft_shadows() && directional_lights.data[i].softshadow_angle > 0) {
 						uint blend_count = 0;
 						const uint blend_max = directional_lights.data[i].blend_splits ? 2 : 1;
 
