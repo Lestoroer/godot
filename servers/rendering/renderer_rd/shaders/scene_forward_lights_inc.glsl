@@ -407,6 +407,20 @@ half sample_omni_pcf_shadow(texture2D shadow, float blur_scale, vec2 coord, vec4
 	return half(avg * (1.0 / float(sc_soft_shadow_samples())));
 }
 
+// Bilinear PCF compares four depths. Each texel needs its own receiver depth;
+// correcting only the tap center still leaves slope-dependent stippling.
+float sample_receiver_plane_shadow(texture2D shadow, vec2 uv, vec3 receiver, vec2 gradient) {
+	vec2 size = vec2(textureSize(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), 0));
+	vec2 p = uv * size - 0.5;
+	vec2 base = (floor(p) + 0.5) / size;
+	vec2 f = fract(p);
+	vec4 depths = textureGather(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), uv, 0);
+	float center = receiver.z + dot(gradient, base - receiver.xy);
+	vec2 step_depth = gradient / size;
+	vec4 reference = center + vec4(step_depth.y, step_depth.x + step_depth.y, step_depth.x, 0.0);
+	return dot(step(depths, reference), vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y)));
+}
+
 half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_scale, float taa_frame_count, vec3 shadow_ddx, vec3 shadow_ddy) {
 	// Fork(Lestoroer): a wide PCSS kernel must compare against the receiver
 	// plane at each tap. A constant depth treats a sloping floor as its own blocker.
@@ -446,7 +460,7 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 		SPEC_CONSTANT_LOOP_ANNOTATION
 		for (uint i = 0; i < sc_directional_penumbra_shadow_samples(); i++) {
 			vec2 suv = pssm_coord.xy + (disk_rotation * scene_data_block.data.directional_penumbra_shadow_kernel[i].xy) * tex_scale;
-			s += textureProj(sampler2DShadow(shadow, shadow_sampler), vec4(suv, pssm_coord.z + dot(depth_gradient, suv - pssm_coord.xy), 1.0));
+			s += sample_receiver_plane_shadow(shadow, suv, pssm_coord, depth_gradient);
 		}
 
 		return half(s / float(sc_directional_penumbra_shadow_samples()));
