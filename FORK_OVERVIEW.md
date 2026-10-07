@@ -196,3 +196,9 @@ final gather на металлах. Bent normal сохраняет отдель�
 Cache поведение прежнее. Это скалярная оценка, не трассировка отражений:
 SSAO не видит препятствия вне кадра. Формула и ограничения:
 https://google.github.io/filament/main/filament.html#lighting/occlusion/specularocclusion
+
+В Forward+ исправлен directional PCSS: классификация отдельных texels,
+receiver-plane reference и физическая глубина блокера разделены; радиус
+penumbra соответствует параллельным лучам. Пустой широкий поиск проверяет
+центральный footprint до признания точки освещённой. Это всё ещё PCSS:
+редкая выборка не гарантирует нахождение блокера вне центрального луча.

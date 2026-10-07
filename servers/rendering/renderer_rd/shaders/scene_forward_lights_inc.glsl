@@ -421,6 +421,21 @@ float sample_receiver_plane_shadow(texture2D shadow, vec2 uv, vec3 receiver, vec
 	return dot(step(depths, reference), vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y)));
 }
 
+// Keep blocker classification and its physical depth separate. Interpolating
+// depth before comparing would invent blockers across a silhouette.
+vec2 directional_blocker_depth(texture2D shadow, vec2 uv, vec3 receiver, vec2 gradient) {
+	vec2 size = vec2(textureSize(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), 0));
+	vec2 pixel = uv * size - 0.5;
+	vec2 base = (floor(pixel) + 0.5) / size;
+	vec2 f = fract(pixel);
+	vec4 depths = textureGather(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), uv, 0);
+	vec2 depth_step = gradient / size;
+	vec4 offsets = dot(gradient, base - receiver.xy) + vec4(depth_step.y, depth_step.x + depth_step.y, depth_step.x, 0.0);
+	vec4 weights = vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
+	vec4 blockers = weights * vec4(greaterThan(depths, max(vec4(receiver.z), vec4(receiver.z) + offsets)));
+	return vec2(dot(depths, blockers), dot(blockers, vec4(1.0)));
+}
+
 half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_scale, vec2 filter_scale, float taa_frame_count, vec3 shadow_ddx, vec3 shadow_ddy) {
 	// Fork(Lestoroer): a wide PCSS kernel must compare against the receiver
 	// plane at each tap. A constant depth treats a sloping floor as its own blocker.
@@ -445,37 +460,18 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 		float radial_phase = fract(quick_hash(gl_FragCoord.xy + vec2(float(i) * 1.618034, 7.0)) + taa_frame_count * 0.618034);
 		vec2 kernel = scene_data_block.data.directional_penumbra_shadow_kernel[i].xy * sqrt((float(i) + radial_phase) / (float(i) + 0.5));
 		vec2 suv = pssm_coord.xy + (disk_rotation * kernel) * tex_scale;
-		// Compare actual texels before filtering: interpolating depth across a
-		// silhouette invents blockers whose distance changes with the kernel.
-		vec2 size = vec2(textureSize(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), 0));
-		vec2 pixel = suv * size - 0.5;
-		vec2 base = (floor(pixel) + 0.5) / size;
-		vec2 f = fract(pixel);
-		vec4 depths = textureGather(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), suv, 0);
-		vec2 depth_step = depth_gradient / size;
-		vec4 offsets = dot(depth_gradient, base - pssm_coord.xy) + vec4(depth_step.y, depth_step.x + depth_step.y, depth_step.x, 0.0);
-		vec4 weights = vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
-		vec4 blockers = weights * vec4(greaterThan(depths, max(vec4(pssm_coord.z), vec4(pssm_coord.z) + offsets)));
-		// Plane bias classifies visibility; blocker distance stays physical.
-		blocker_average += dot(depths, blockers);
-		blocker_count += dot(blockers, vec4(1.0));
+		vec2 blockers = directional_blocker_depth(shadow, suv, pssm_coord, depth_gradient);
+		blocker_average += blockers.x;
+		blocker_count += blockers.y;
 	}
 
 	// The wide search can miss a small close caster entirely. Before declaring
 	// the receiver lit, test its central footprint. This is a fallback depth
 	// estimate, not an extra equal-weight sample in the wide-disk average.
 	if (blocker_count == 0.0) {
-		vec2 size = vec2(textureSize(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), 0));
-		vec2 pixel = pssm_coord.xy * size - 0.5;
-		vec2 base = (floor(pixel) + 0.5) / size;
-		vec2 f = fract(pixel);
-		vec4 depths = textureGather(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), pssm_coord.xy, 0);
-		vec2 depth_step = depth_gradient / size;
-		vec4 offsets = dot(depth_gradient, base - pssm_coord.xy) + vec4(depth_step.y, depth_step.x + depth_step.y, depth_step.x, 0.0);
-		vec4 weights = vec4((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
-		vec4 blockers = weights * vec4(greaterThan(depths, max(vec4(pssm_coord.z), vec4(pssm_coord.z) + offsets)));
-		blocker_average = dot(depths, blockers);
-		blocker_count = dot(blockers, vec4(1.0));
+		vec2 blockers = directional_blocker_depth(shadow, pssm_coord.xy, pssm_coord, depth_gradient);
+		blocker_average = blockers.x;
+		blocker_count = blockers.y;
 	}
 
 	if (blocker_count > 0.0) {
