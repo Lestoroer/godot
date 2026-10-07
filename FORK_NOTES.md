@@ -576,3 +576,5 @@ Position attachment захвата хранит канонические barycen
 Потребитель восстанавливает положение из актуальных вершин BLAS, а не из
 экстраполированной world position. Private chart stream передаёт координаты
 в texel, чтобы нормализация UV не создавала ложные граничные пересечения.
+
+Surface Cache: clipping pins intersection coordinates to the exact cell boundary; barycentrics are computed relative to that cell. Edge-only contacts with no strictly interior representative do not create a transport row.

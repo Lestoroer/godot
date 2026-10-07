@@ -1266,12 +1266,13 @@ void fragment_shader(in SceneData scene_data) {
 		vec2 canonical = cell + sample_point;
 		vec2 ab = surface_cache_ab_interp.zw - surface_cache_ab_interp.xy;
 		vec2 ac = surface_cache_c_interp - surface_cache_ab_interp.xy;
-		vec2 ap = canonical - surface_cache_ab_interp.xy;
+		vec2 ap = sample_point - (surface_cache_ab_interp.xy - cell);
 		float area = ab.x * ac.y - ab.y * ac.x;
 		if (surface_cache_covered && abs(area) > 1e-20) {
 			vec2 bc = vec2(ap.x * ac.y - ap.y * ac.x, ab.x * ap.y - ab.y * ap.x) / area;
-			surface_cache_bary = max(vec3(1.0 - bc.x - bc.y, bc), vec3(0));
-			surface_cache_bary /= surface_cache_bary.x + surface_cache_bary.y + surface_cache_bary.z;
+			surface_cache_bary = vec3(1.0 - bc.x - bc.y, bc);
+			// Zero-measure edge/corner contacts do not own a transport sample.
+			surface_cache_covered = all(greaterThan(surface_cache_bary, vec3(0)));
 		}
 		vec2 delta = canonical - surface_cache_uv_interp;
 		vec2 du = dFdx(surface_cache_uv_interp), dv = dFdy(surface_cache_uv_interp);

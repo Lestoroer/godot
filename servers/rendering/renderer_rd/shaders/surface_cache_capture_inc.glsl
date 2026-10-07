@@ -26,7 +26,9 @@ bool surface_cache_sample_point(vec2 a, vec2 b, vec2 c, out vec2 point) {
             float dc = 0.5 - current[axis] * sign_axis;
             float dp = 0.5 - previous[axis] * sign_axis;
             if ((dc >= 0.0) != (dp >= 0.0)) {
-                output_points[output_count++] = previous + (current - previous) * (dp / (dp - dc));
+                vec2 intersection = previous + (current - previous) * (dp / (dp - dc));
+                intersection[axis] = 0.5 * sign_axis;
+                output_points[output_count++] = intersection;
             }
             if (dc >= 0.0) output_points[output_count++] = current;
         }
