@@ -1,22 +1,23 @@
 // Fork(Lestoroer): instance/surface/primitive address, independent of the camera.
-struct SurfaceCacheTriangle { vec4 a; vec4 b; vec4 c; vec4 uv_ab; vec4 uv_c; };
+struct SurfaceCacheTriangle { vec4 a; vec4 b; vec4 c; vec4 uv_ab; vec4 uv_c; vec4 light_uv_ab; vec4 light_uv_c; };
 struct SurfaceCacheMaterial { vec4 position; vec4 normal; vec4 reflectance; vec4 emission; uvec4 identity; };
-layout(set=1,binding=37,std430) readonly buffer SurfaceCacheSurfaces { uvec4 data[]; } surface_cache_surfaces;
+struct SurfaceCacheMapping { uvec4 material; uvec4 lighting; };
+layout(set=1,binding=37,std430) readonly buffer SurfaceCacheSurfaces { SurfaceCacheMapping data[]; } surface_cache_surfaces;
 layout(set=1,binding=38,std430) readonly buffer SurfaceCacheTriangles { SurfaceCacheTriangle data[]; } surface_cache_triangles;
 layout(set=1,binding=39,std430) readonly buffer SurfaceCacheMaterials { SurfaceCacheMaterial data[]; } surface_cache_materials;
 layout(set=1,binding=40,std430) readonly buffer SurfaceCacheIrradiance { vec4 data[]; } surface_cache_light;
 
 vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 normal) {
-    uvec4 mapping=surface_cache_surfaces.data[surface];
+    uvec4 mapping=surface_cache_surfaces.data[surface].lighting;
     SurfaceCacheTriangle triangle=surface_cache_triangles.data[mapping.x+primitive];
     vec3 ab=triangle.b.xyz-triangle.a.xyz, ac=triangle.c.xyz-triangle.a.xyz, ap=position-triangle.a.xyz;
     vec3 geometric=cross(ab,ac), absolute_normal=abs(geometric);
     uint axis=absolute_normal.x>absolute_normal.y?0u:1u;
     if(absolute_normal.z>absolute_normal[axis]) axis=2u;
     vec2 barycentric=vec2(cross(ap,ac)[axis],cross(ab,ap)[axis])/geometric[axis];
-    vec2 uv=triangle.uv_ab.xy*(1.0-barycentric.x-barycentric.y)+triangle.uv_ab.zw*barycentric.x+triangle.uv_c.xy*barycentric.y;
+    vec2 uv=triangle.light_uv_ab.xy*(1.0-barycentric.x-barycentric.y)+triangle.light_uv_ab.zw*barycentric.x+triangle.light_uv_c.xy*barycentric.y;
     uint side=dot(normal,cross(ab,ac)*triangle.a.w)<0.0?1u:0u;
-    uint chart=floatBitsToUint(triangle.uv_c.z);
+    uint chart=floatBitsToUint(triangle.light_uv_c.z);
     ivec2 size=ivec2(mapping.zw);
     vec2 pixel=uv*vec2(size)-0.5;
     ivec2 base=ivec2(floor(pixel));
