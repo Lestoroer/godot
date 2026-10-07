@@ -562,6 +562,8 @@ void RendererSceneCull::scenario_set_surface_cache_buffers(RID p_scenario, const
 
 void RendererSceneCull::instance_set_surface_cache_ids(RID p_instance, const Vector<int32_t> &p_ids) {
 	Instance *instance = instance_owner.get_or_null(p_instance);
+	// Fork(Lestoroer): removal events may arrive after the RID was destroyed.
+	if (!instance && p_ids.is_empty()) return;
 	ERR_FAIL_NULL(instance);
 	instance->surface_cache_ids = p_ids;
 	if (instance->base_type == RSE::INSTANCE_MESH && instance->base_data) {

@@ -516,3 +516,9 @@ Surface Cache: отдельный callback Scenario после depth/normal prep
 для каждого viewport (включая зеркало), независимо от его Compositor. Binding 41
 читает viewport-текстуру `surface_cache/gather`; глубина проверяется до применения
 непрямого света к фрагменту. Общий world cache обновляется один раз за кадр.
+
+Surface Cache: read-only `SURFACE_CACHE_IRRADIANCE` передаёт material fragment
+линейное непрямое освещение до художественной ramp (alpha=0, если GI отсутствует).
+Материал, использующий вход, сам пишет IRRADIANCE; renderer не подменяет его
+повторно. Mobile/GLES возвращают нулевую alpha. Очистка адресов удалённого
+instance идемпотентна.

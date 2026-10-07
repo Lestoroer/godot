@@ -731,6 +731,7 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.renames["DEPTH"] = "gl_FragDepth";
 		actions.renames["FOG"] = "fog_highp";
 		actions.renames["RADIANCE"] = "custom_radiance_highp";
+		actions.renames["SURFACE_CACHE_IRRADIANCE"] = "vec4(0.0)"; // Fork(Lestoroer): GI absent on this renderer.
 		actions.renames["IRRADIANCE"] = "custom_irradiance_highp";
 		actions.renames["BONE_INDICES"] = "bone_attrib";
 		actions.renames["BONE_WEIGHTS"] = "weight_attrib";

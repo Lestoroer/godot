@@ -776,6 +776,8 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["FOG"] = "fog";
 		actions.renames["RADIANCE"] = "custom_radiance";
 		actions.renames["IRRADIANCE"] = "custom_irradiance";
+		actions.renames["SURFACE_CACHE_IRRADIANCE"] = "surface_cache_input"; // Fork(Lestoroer)
+		actions.usage_defines["SURFACE_CACHE_IRRADIANCE"] = "#define SURFACE_CACHE_INPUT_USED\n#define NORMAL_USED\n";
 		actions.renames["BONE_INDICES"] = "bone_attrib";
 		actions.renames["BONE_WEIGHTS"] = "weight_attrib";
 		actions.renames["CUSTOM0"] = "custom0_attrib";
