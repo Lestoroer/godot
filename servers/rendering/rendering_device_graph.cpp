@@ -29,9 +29,6 @@
 /**************************************************************************/
 
 #include "rendering_device_graph.h"
-#include "core/os/os.h"
-
-static bool surface_cache_graph_trace() { static const bool enabled = OS::get_singleton()->has_environment("SURFACE_CACHE_GRAPH_TRACE"); return enabled; }
 
 #define PRINT_RENDER_GRAPH 0
 #define FORCE_FULL_ACCESS_BITS 0
@@ -1087,7 +1084,6 @@ void RenderingDeviceGraph::_run_render_commands(int32_t p_level, const RecordedC
 		const uint32_t command_index = p_sorted_commands[i].index;
 		const uint32_t command_data_offset = command_data_offsets[command_index];
 		const RecordedCommand *command = reinterpret_cast<const RecordedCommand *>(&command_data[command_data_offset]);
-		if (surface_cache_graph_trace()) print_line(vformat("GRAPH RUN cmd=%d type=%d level=%d src_stage=%d dst_stage=%d src_access=%d dst_access=%d", command_index, command->type, p_level, uint64_t(command->previous_stages), uint64_t(command->next_stages), uint64_t(command->memory_barrier.src_access), uint64_t(command->memory_barrier.dst_access)));
 		_run_label_command_change(r_command_buffer, command->label_index, p_level, false, true, &p_sorted_commands[i], p_sorted_commands_count - i, r_current_label_index, r_current_label_level);
 
 		switch (command->type) {
@@ -1420,26 +1416,11 @@ void RenderingDeviceGraph::_group_barriers_for_render_commands(RDD::CommandBuffe
 		}
 	}
 
-	static const String trace_barriers = OS::get_singleton()->get_environment("SURFACE_CACHE_FULL_BARRIERS");
-	const bool force_level = trace_barriers == ("level" + itos(p_sorted_commands[0].level));
-	if (p_full_memory_barrier || force_level || trace_barriers == "1" || trace_barriers == "stages") {
+	if (p_full_memory_barrier) {
 		barrier_group.src_stages = RDD::PIPELINE_STAGE_ALL_COMMANDS_BIT;
 		barrier_group.dst_stages = RDD::PIPELINE_STAGE_ALL_COMMANDS_BIT;
-	}
-	if (p_full_memory_barrier || force_level || trace_barriers == "1" || trace_barriers == "access") {
 		barrier_group.memory_barrier.src_access = RDD::BARRIER_ACCESS_MEMORY_READ_BIT | RDD::BARRIER_ACCESS_MEMORY_WRITE_BIT;
 		barrier_group.memory_barrier.dst_access = RDD::BARRIER_ACCESS_MEMORY_READ_BIT | RDD::BARRIER_ACCESS_MEMORY_WRITE_BIT;
-	}
-
-	static const String diagnostic_masks = OS::get_singleton()->get_environment("SURFACE_CACHE_BARRIER_MASKS");
-	if (!diagnostic_masks.is_empty()) {
-		const PackedStringArray fields = diagnostic_masks.split(",");
-		if (fields.size() == 4) {
-			barrier_group.src_stages = barrier_group.src_stages | fields[0].to_int();
-			barrier_group.dst_stages = barrier_group.dst_stages | fields[1].to_int();
-			barrier_group.memory_barrier.src_access = barrier_group.memory_barrier.src_access | fields[2].to_int();
-			barrier_group.memory_barrier.dst_access = barrier_group.memory_barrier.dst_access | fields[3].to_int();
-		}
 	}
 
 	const bool is_memory_barrier_empty = barrier_group.memory_barrier.src_access.is_empty() && barrier_group.memory_barrier.dst_access.is_empty();
@@ -1815,7 +1796,6 @@ void RenderingDeviceGraph::add_blas_build(RDD::AccelerationStructureID p_acceler
 	command->self_stages = RDD::PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT;
 	command->acceleration_structure = p_acceleration_structure;
 	command->scratch_buffer = p_scratch_buffer;
-	if (surface_cache_graph_trace()) print_line(vformat("AS BUILD cmd=%d id=%d src=%d previous=%d", command_index, p_acceleration_structure.id, p_src_trackers.size(), p_dst_tracker->write_command_or_list_index));
 
 	thread_local LocalVector<ResourceTracker *> trackers;
 	thread_local LocalVector<ResourceUsage> usages;
@@ -1828,7 +1808,6 @@ void RenderingDeviceGraph::add_blas_build(RDD::AccelerationStructureID p_acceler
 	for (uint32_t i = 0; i < p_src_trackers.size(); ++i) {
 		trackers[i] = p_src_trackers[i];
 		usages[i] = RESOURCE_USAGE_STORAGE_BUFFER_READ;
-		if (surface_cache_graph_trace()) print_line(vformat("AS SRC cmd=%d buffer=%d writer=%d usage=%d", command_index, p_src_trackers[i]->buffer_driver_id.id, p_src_trackers[i]->write_command_or_list_index, p_src_trackers[i]->usage));
 	}
 
 	trackers[resource_count - 1] = p_dst_tracker;

@@ -246,6 +246,7 @@ ShaderTypes::ShaderTypes() {
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("sss_mode_skin") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("cull"), "back", "front", "disabled" });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("unshaded") });
+		// Fork(Lestoroer): Surface Cache render modes.
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("surface_cache_global_invariant") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("surface_cache_presentation") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("wireframe") });

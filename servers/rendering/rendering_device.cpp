@@ -6101,8 +6101,8 @@ void RenderingDevice::draw_list_draw(DrawListID p_list, bool p_use_indices, uint
 				_uniform_set_update_shared(uniform_set);
 				_uniform_set_update_clears(uniform_set);
 
-				_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RASTERIZATION);
-			draw_graph.add_draw_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
+				_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RASTERIZATION); // Fork(Lestoroer)
+				draw_graph.add_draw_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 				draw_list.state.sets[i].bound = true;
 
 				last_set_index = i;
@@ -6242,7 +6242,7 @@ void RenderingDevice::draw_list_draw_indirect(DrawListID p_list, bool p_use_indi
 			_uniform_set_update_shared(uniform_set);
 			_uniform_set_update_clears(uniform_set);
 
-			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RASTERIZATION);
+			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RASTERIZATION); // Fork(Lestoroer)
 			draw_graph.add_draw_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 
 			draw_list.state.sets[i].bound = true;
@@ -6605,7 +6605,7 @@ void RenderingDevice::raytracing_list_trace_rays(RaytracingListID p_list, uint32
 			UniformSet *uniform_set = uniform_set_owner.get_or_null(raytracing_list.state.sets[i].uniform_set);
 			_uniform_set_update_shared(uniform_set);
 
-			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RAYTRACING);
+			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RAYTRACING); // Fork(Lestoroer)
 			draw_graph.add_raytracing_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 
 			raytracing_list.state.sets[i].bound = true;
@@ -6920,7 +6920,7 @@ void RenderingDevice::compute_list_dispatch(ComputeListID p_list, uint32_t p_x_g
 			_uniform_set_update_shared(uniform_set);
 			_uniform_set_update_clears(uniform_set);
 
-			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_COMPUTE);
+			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_COMPUTE); // Fork(Lestoroer)
 			draw_graph.add_compute_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 			compute_list.state.sets[i].bound = true;
 		}
@@ -7058,7 +7058,7 @@ void RenderingDevice::compute_list_dispatch_indirect(ComputeListID p_list, RID p
 			_uniform_set_update_shared(uniform_set);
 			_uniform_set_update_clears(uniform_set);
 
-			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_COMPUTE);
+			_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_COMPUTE); // Fork(Lestoroer)
 			draw_graph.add_compute_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 			compute_list.state.sets[i].bound = true;
 		}
@@ -8456,14 +8456,6 @@ Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServ
 		transfer_queue_family = main_queue_family;
 	}
 
-	// Fork(Lestoroer): temporary opt-in diagnostics for first-use ray queries.
-	if (OS::get_singleton()->has_environment("SURFACE_CACHE_GRAPH_TRACE")) {
-		print_line(vformat("QUEUE FAMILIES main=%d transfer=%d", main_queue_family.id, transfer_queue_family.id));
-	}
-	if (OS::get_singleton()->has_environment("SURFACE_CACHE_MAIN_TRANSFER")) {
-		transfer_queue_family = main_queue_family;
-	}
-
 	// Create the transfer queue.
 	transfer_queue = driver->command_queue_create(transfer_queue_family);
 	ERR_FAIL_COND_V(!transfer_queue, FAILED);
@@ -9855,6 +9847,7 @@ void RenderingDevice::_bind_methods() {
 	BIND_ENUM_CONSTANT(LIMIT_MAX_COMPUTE_WORKGROUP_SIZE_Z);
 	BIND_ENUM_CONSTANT(LIMIT_MAX_VIEWPORT_DIMENSIONS_X);
 	BIND_ENUM_CONSTANT(LIMIT_MAX_VIEWPORT_DIMENSIONS_Y);
+	// Fork(Lestoroer): existing subgroup limits exposed to scripts.
 	BIND_ENUM_CONSTANT(LIMIT_SUBGROUP_SIZE);
 	BIND_ENUM_CONSTANT(LIMIT_SUBGROUP_MIN_SIZE);
 	BIND_ENUM_CONSTANT(LIMIT_SUBGROUP_MAX_SIZE);

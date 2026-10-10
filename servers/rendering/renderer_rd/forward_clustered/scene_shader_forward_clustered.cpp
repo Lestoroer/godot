@@ -51,7 +51,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	}
 
 	ShaderCompiler::GeneratedCode gen_code;
-	bool uses_surface_cache_transmission = false;
+	bool uses_surface_cache_transmission = false; // Fork(Lestoroer)
 
 	blend_mode = BLEND_MODE_MIX;
 	depth_test_disabledi = 0;
@@ -75,6 +75,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	wireframe = false;
 
 	unshaded = false;
+	// Fork(Lestoroer): Surface Cache render modes.
 	surface_cache_global_invariant = false;
 	surface_cache_presentation = false;
 	uses_vertex = false;
@@ -121,13 +122,14 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.render_mode_values["cull_back"] = Pair<int *, int>(&cull_modei, RSE::CULL_MODE_BACK);
 
 	actions.render_mode_flags["unshaded"] = &unshaded;
+	// Fork(Lestoroer): Surface Cache render modes.
 	actions.render_mode_flags["surface_cache_global_invariant"] = &surface_cache_global_invariant;
 	actions.render_mode_flags["surface_cache_presentation"] = &surface_cache_presentation;
 	actions.render_mode_flags["wireframe"] = &wireframe;
 	actions.render_mode_flags["particle_trails"] = &uses_particle_trails;
 	actions.render_mode_flags["world_vertex_coords"] = &uses_world_coordinates;
 
-	actions.usage_flag_pointers["SURFACE_CACHE_TRANSMISSION"] = &uses_surface_cache_transmission;
+	actions.usage_flag_pointers["SURFACE_CACHE_TRANSMISSION"] = &uses_surface_cache_transmission; // Fork(Lestoroer)
 	actions.usage_flag_pointers["ALPHA"] = &uses_alpha;
 	actions.usage_flag_pointers["ALPHA_SCISSOR_THRESHOLD"] = &uses_alpha_clip;
 	actions.usage_flag_pointers["ALPHA_HASH_SCALE"] = &uses_alpha_clip;
@@ -205,7 +207,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	}
 	cull_mode = RSE::CullMode(cull_modei);
 	uses_screen_texture_mipmaps = gen_code.uses_screen_texture_mipmaps;
-	uses_screen_texture = gen_code.uses_screen_texture || uses_surface_cache_transmission;
+	uses_screen_texture = gen_code.uses_screen_texture || uses_surface_cache_transmission; // Fork(Lestoroer): thin transmission composites over the screen copy.
 	uses_depth_texture = gen_code.uses_depth_texture;
 	uses_normal_texture = gen_code.uses_normal_roughness_texture;
 	uses_vertex_time = gen_code.uses_vertex_time;
@@ -298,7 +300,7 @@ uint16_t SceneShaderForwardClustered::ShaderData::_get_shader_version(PipelineVe
 			return ShaderVersion::SHADER_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_MULTIVIEW + ubershader_base;
 		case PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW:
 			return ShaderVersion::SHADER_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW + ubershader_base;
-		case PIPELINE_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE:
+		case PIPELINE_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE: // Fork(Lestoroer)
 			return ShaderVersion::SHADER_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE + ubershader_base;
 		case PIPELINE_VERSION_DEPTH_PASS_WITH_MATERIAL:
 			return ShaderVersion::SHADER_VERSION_DEPTH_PASS_WITH_MATERIAL + ubershader_base;
@@ -471,7 +473,7 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 			case PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_MULTIVIEW:
 				blend_state = blend_state_depth_normal_roughness;
 				break;
-			case PIPELINE_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE:
+			case PIPELINE_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE: // Fork(Lestoroer): two color attachments, like normal/roughness + VoxelGI.
 			case PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI:
 			case PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW:
 				blend_state = blend_state_depth_normal_roughness_giprobe;
@@ -663,6 +665,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_ADVANCED_MULTIVIEW, base_define + "\n#define USE_MULTIVIEW\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_NORMAL_ROUGHNESS\n#define MODE_RENDER_VOXEL_GI\n", false)); // SHADER_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW
 			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_ADVANCED, base_define + "\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_MATERIAL\n", false)); // SHADER_VERSION_DEPTH_PASS_WITH_MATERIAL
 			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_ADVANCED, base_define + "\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_SDF\n", false)); // SHADER_VERSION_DEPTH_PASS_WITH_SDF
+			// Fork(Lestoroer): Surface Cache primary visibility depth variant.
 			shader_versions.push_back(ShaderRD::VariantDefine(SHADER_GROUP_BASE, base_define + "\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_NORMAL_ROUGHNESS\n#define MODE_RENDER_SURFACE_CACHE\n", true)); // SHADER_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE
 		}
 
@@ -786,6 +789,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["FOG"] = "fog";
 		actions.renames["RADIANCE"] = "custom_radiance";
 		actions.renames["IRRADIANCE"] = "custom_irradiance";
+		// Fork(Lestoroer): Surface Cache shader built-ins.
 		actions.renames["SURFACE_CACHE_GATHER_USED"] = "surface_cache_gather_used";
 		actions.usage_defines["SURFACE_CACHE_GATHER_USED"] = "#define SURFACE_CACHE_GATHER_INFO_USED\n#define NORMAL_USED\n";
 		actions.renames["SURFACE_CACHE_IRRADIANCE"] = "surface_cache_input"; // Fork(Lestoroer)
@@ -918,7 +922,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.texture_layout_set = RenderForwardClustered::MATERIAL_UNIFORM_SET;
 		actions.base_uniform_string = "material.";
 		actions.base_varying_index = 19; // Fork(Lestoroer): private capture varyings.
-		actions.surface_cache_sampling = true;
+		actions.surface_cache_sampling = true; // Fork(Lestoroer)
 
 		actions.default_filter = ShaderLanguage::FILTER_LINEAR_MIPMAP;
 		actions.default_repeat = ShaderLanguage::REPEAT_ENABLE;

@@ -172,18 +172,35 @@ About, заголовок окна, `--version` и т.д.). **Баг SCons:** о
 
 ## Модель веток
 ```
-upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/main  ──►  lestoroer/feat-*, fix-*
- (Godot, не трогаем)    (зеркало, ff-only)        (интеграция, только мержи)   (вся работа тут)
+upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/main  ──►  origin/interior-star/main
+ (Godot, не трогаем)    (зеркало, ff-only)        (общие патчи, только мержи)  (Interior Star, только мержи)
+                                                        ▲                          ▲
+                                               lestoroer/feat-*, fix-*    interior-star/feat-*, fix-*
 ```
+Каждая игра собирает движок из своей ветки:
+
+| Игра | Ветка движка | Содержимое |
+|---|---|---|
+| Voxel Underworld | `lestoroer/main` | общие патчи из инвентаря ниже |
+| Interior Star | `interior-star/main` | всё из `lestoroer/main` и патчи Interior Star, прежде всего Surface Cache GI; их инвентарь — в `FORK_NOTES.md` этой ветки |
+
+Interior Star на `lestoroer/main` не работает: её шейдеры требуют патчей своей ветки.
+
 - `<minor>-base` (напр. `4.7-base`) — чистое зеркало исходника релиза. Напрямую не коммитить.
 - `lestoroer/main` — интеграционная. Напрямую не коммитить — только `git merge --no-ff` из
   `lestoroer/feat-*`/`fix-*`. Не rebase, не force-push.
 - Фича: ветка `lestoroer/feat-<имя>` от main → коммиты с префиксом `[Lestoroer]` → push →
   `git merge --no-ff` обратно в main.
+- `interior-star/main` принимает `git merge --no-ff` из `lestoroer/main` и из
+  `interior-star/feat-*`/`fix-*` (коммиты тоже с префиксом `[Lestoroer]`). Обратно в
+  `lestoroer/main` она не вливается. Патч, нужный обеим играм, делают отдельной
+  `lestoroer/feat-*` от `lestoroer/main` и проверяют на Voxel Underworld, включая Quest.
+- Обновление upstream: шаги выше для `lestoroer/main`, затем `git merge --no-ff lestoroer/main`
+  в `interior-star/main`, пересборка и проверки Surface Cache из игры (`lighting/surface_cache/`).
 
 ## Чего НЕ делать
-- Не коммитить напрямую в `<minor>-base` и `lestoroer/main`.
-- Не rebase / не force-push `lestoroer/main` и `*-base` (ломает feat-ветки и ff на origin).
+- Не коммитить напрямую в `<minor>-base`, `lestoroer/main` и `interior-star/main`.
+- Не rebase / не force-push `lestoroer/main`, `interior-star/main` и `*-base` (ломает feat-ветки и ff на origin).
 - Не коммитить `bin/` (артефакты сборки).
 - Не пропускать шаг 5 (чистый ребилд) при смене версии — иначе призрак старой версии в GUI.
 
@@ -350,326 +367,191 @@ upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/ma
    `can_any_window_draw`, mouse-mode state и запрет subwindows в offscreen-наследнике.
 8. PR #94530 остаётся историческим источником требований, а не кодом для повторного merge.
 
-### Эксперимент Surface Cache GI: Vulkan RT foundation
-
-Только ветка `codex/gi-surface-cache`, отдельный worktree. Основной движок
-не получает этот патч. `drivers/vulkan/rendering_device_driver_vulkan.cpp`
-и `servers/rendering/rendering_shader_container.cpp`:
-
-- Маска видимости RT-uniform использует `SHADER_STAGE_*_BIT`, а не номера
-  enum stages. Номера давали маску graphics stages и закрывали descriptors
-  для RT: compute hit работал, но RT pipeline возвращал miss.
-- Запрос и включение `VK_KHR_ray_query` по фактическим capabilities устройства.
-- RT shader stages и shaders с acceleration-structure descriptor обходят
-  re-spirv: он не поддерживает соответствующие инструкции. Vulkan получает
-  исходный SPIR-V и сам применяет specialization constants. Без этого smoke
-  probe мог успешно создать pipeline, но возвращать miss для известного hit.
-
-Это исправления технической основы, не реализация GI. Проверка принадлежит
-игровому эксперименту: `lighting/surface_cache/probes/hardware_rt.gd`. При
-обновлении re-spirv проверить поддержку RT/query до удаления обхода.
-
-### Surface Cache: GPU-захват материалов
-
-Только экспериментальная ветка. `Mesh.surface_cache_get_layout` возвращает
-недеструктивную xatlas-развёртку и remap исходных вершин/треугольников.
-`mesh_surface_set_capture_uv` назначает отдельный неизменяемый поток координат
-частному capture-мешу до создания экземпляров. Авторские UV/UV2/CUSTOM сохранены.
-`instance_surface_cache_capture` рисует на GPU материал исходного instance,
-используя remapped vertex/index streams второго instance. Трансформ, overrides
-и instance uniforms принадлежат исходному экземпляру; skin/morph-поза переносится
-на подготовленную геометрию. Результаты остаются в framebuffer вызывающего.
-
-Spatial built-in `IN_SURFACE_CACHE_PASS` позволяет отделить raw material от
-художественных преобразований. Сторона `FRONT_FACING` в этом проходе семантическая,
-а не вычисленная по winding UV. Захват Forward+ выдаёт пять targets:
-albedo/alpha, encoded normal, AO/roughness/metallic/specular, emission и мировую
-позицию/coverage. Материальная программа одна с raster. Остальные renderer-ы
-возвращают false для built-in и явно отвергают GPU capture API.
-
-Проверки актуальных материалов и remap находятся в игровом эксперименте.
-Наличие API не означает готовность GI или прохождение материальной приёмки.
-
-Capture читает параметры распаковки с фактически рисуемого chart-потока,
-а не со сжатого исходного mesh. Поля view uniform задаются детерминированно;
-материальные ветки не наследуют состояние камеры предыдущего прохода.
-
-### Surface Cache: события мира и GPU-деформация
-
-Scenario хранит одного opt-in владельца обновлений. Callback вызывается перед
-рендером мира один раз за renderer frame; дополнительные камеры используют
-тот же результат. `scenario_surface_cache_poll` отдаёт coalesced изменения
-экземпляров по RID (регистрация/удаление, трансформ, материал, pose, свет).
-Подписка начинает с одного снимка; покадрового обхода SceneTree нет.
-Content notification не запускает лишнюю пересборку raster-материалов.
-
-`instance_get_deformed_surface` предоставляет заимствованный GPU buffer
-skin/morph, layout и version; читать только на render thread и не хранить RID
-после callback. Чтения вершин с GPU на CPU в этом API нет. Произвольная
-vertex-shader деформация этим accessor не поддерживается.
-
-### Surface Cache: выборка в Forward+
-
-`scenario_set_surface_cache_buffers` задаёт четыре RD storage buffer: таблицу
-поверхностей, мировые треугольники с chart UV, материальные texel и irradiance/PI.
-`instance_set_surface_cache_ids` связывает поверхности экземпляра с таблицей.
-Forward+ заменяет ambient после пользовательского IRRADIANCE, до AO/albedo/tonemap.
-Источником выбора является реальный raster primitive и мировая позиция; фильтр
-не смешивает charts и стороны. Отсутствие покрытия показывается пурпурным.
-
-Для зарегистрированных экземпляров используется исходная геометрия без mesh LOD:
-LOD пока не имеет соответствия primitive-to-chart. Это сохраняет детализацию,
-но его дополнительную стоимость требуется учитывать. Capture position.w теперь
-содержит primitive+1 (0 — отсутствие покрытия), без изменения авторских UV.
-
-Выборка проверяет также surface ID: одинаковые локальные номера chart разных
-поверхностей не смешиваются. Повторная установка того же material parameter
-не создаёт ложное событие обновления Surface Cache.
-
-Дескрипторы Surface Cache объявлены во всех вариантах Forward+ (включая depth,
-shadow, unshaded), чтобы общий render-pass uniform set имел совместимый layout.
-
-### Surface Cache: TLAS для ray queries
-
-`hit_sbt_range = 0` допустим для query-only TLAS: Vulkan ray queries не читают
-SBT. RD больше не требует создавать фиктивный RT pipeline только ради query.
-Трассировка RT pipeline по-прежнему задаёт свои диапазоны SBT.
-
-Capture хранит нормаль напрямую в RGBA16F: нормализация лучей не зависит от
-8-bit best-fit lookup. Тонкие границы chart покрываются штатной стратегией
-UV2 bake (смещённый wireframe и затем внутренний проход), без слияния chart ID.
-
-### Surface Cache: глобальная видимость AS для ray query
-
-В экспериментальной ветке Vulkan при включённом `rayQuery` сохраняет
-`ACCELERATION_STRUCTURE_READ` в глобальных memory barriers. Барьер только
-на буфере TLAS не покрывает читаемые через него BLAS и scratch повторной сборки.
-Регрессия: main RD, build → compute-запись вершин → rebuild → query в одном кадре;
-проверка `lighting/surface_cache/probes/main_rd_query.gd` в изолированной игре.
-
-
-Временная диагностика этого дефекта: `SURFACE_CACHE_GRAPH_TRACE` включает
-порядок команд и зависимости сборки AS; по умолчанию выключена.
-
-`SURFACE_CACHE_FULL_BARRIERS` — диагностический полный barrier между уровнями,
-только для поиска нарушенной синхронизации; обычный renderer его не включает.
-
-### Surface Cache: адреса BLAS и повторная сборка TLAS
-
-TLAS ссылается на адрес, возвращённый `vkGetAccelerationStructureDeviceAddressKHR`,
-а не на device address буфера, в котором выделена BLAS. Первая запись нового
-instance buffer сразу резервирует свой диапазон; следующая сборка в том же
-кадре не перезаписывает вход ещё не исполненной команды.
-
-Диагностика `SURFACE_CACHE_FULL_BARRIERS` принимает `stages` и `access` для
-раздельной проверки масок; `1` проверяет обе.
-
-Диагностическое значение `levelN` включает полный barrier только перед указанным
-уровнем графа; не используется в обычном GI.
-
-`SURFACE_CACHE_MAIN_TRANSFER` проверяет загрузку на семействе main queue;
-`SURFACE_CACHE_GRAPH_TRACE` также печатает выбранные семейства. Это временная
-диагностика first-use ray queries, выключенная по умолчанию.
-
-`SURFACE_CACHE_BARRIER_MASKS` диагностически добавляет четыре числовые маски
-(src stage, dst stage, src access, dst access) для локализации зависимости.
-
-### Surface Cache: нормали и тонкие треугольники
-
-Нулевая normal-map XY или depth=0 использует нормаль без вычисления TBN: у
-геометрии с постоянной UV tangent может быть параллелен normal, и умножение
-неопределённой binormal на ноль заражало весь результат NaN. Адрес cache
-восстанавливается через проекцию на главную ось, без разности квадратов Gram.
-
-### Surface Cache: видимость и время жизни BLAS
-
-Uniform sets учитывают текущие BLAS, доступные через TLAS, при каждом новом
-bind/dispatch. Их нельзя перезаписать, пока предыдущие ray queries ещё читают
-старую структуру. Для проверяемого NVIDIA 610.88 AS-read в compute/fragment
-расширяется MEMORY_READ и AS_BUILD destination stage только на переходе к
-потребителю. Это требуется и для hit→miss→hit с записью вершин в compute,
-и для первого запуска транспорта ванной; одной MEMORY_READ недостаточно. Отрицательный контроль
-`SURFACE_CACHE_DISABLE_AS_VISIBILITY` выключает эту защиту. Это экспериментальная
-совместимость с драйвером, а не изменение профиля качества.
-
-Вырожденная binormal остаётся нулевой вместо NaN; нейтральная normal map
-использует исходную нормаль.
-
-### Surface Cache: идентичность charts
-
-Surface layout возвращает chart ID из xatlas. Связность индексов исходного меша
-не определяет chart: дублированные вершины UV/normal seams могут принадлежать
-одному chart. GI-захват получает два texel padding между charts; штатная
-lightmap-развёртка сохраняет прежнюю упаковку.
-
-Треугольник с ненулевой площадью, исключённый xatlas как почти вырожденный,
-получает отдельный минимальный chart. Геометрия луча не удаляется и не
-сдвигается; материал остаётся материалом того же исходного треугольника.
-
-### Surface Cache: раздельные адреса материала и света
-
-Таблица поверхности содержит независимые material/lighting mapping. World
-triangle хранит обе UV-параметризации. Подробность исходного материала больше
-не задаёт размер уравнения многократного отражения.
-
-Surface Cache: отдельный callback Scenario после depth/normal prepass выполняется
-для каждого viewport (включая зеркало), независимо от его Compositor. Binding 41
-читает viewport-текстуру `surface_cache/gather`; глубина проверяется до применения
-непрямого света к фрагменту. Общий world cache обновляется один раз за кадр.
-
-Surface Cache: read-only `SURFACE_CACHE_IRRADIANCE` передаёт material fragment
-линейное непрямое освещение до художественной ramp (alpha=0, если GI отсутствует).
-Материал, использующий вход, сам пишет IRRADIANCE; renderer не подменяет его
-повторно. Mobile/GLES возвращают нулевую alpha. Очистка адресов удалённого
-instance идемпотентна.
-
-Surface Cache требует normal prepass и без WorldEnvironment. Вход материала
-`SURFACE_CACHE_GATHER_USED` позволяет проверять реальное использование viewport
-результата. Чтение coarse fallback выполняется только при несовпадении глубины.
-
-Направленные PCSS-тени: поиск блокеров и фильтр сравнивают глубину с плоскостью
-принимающей поверхности в каждой точке ядра. Это устраняет самозатенение
-наклонных поверхностей при широком источнике без увеличения смещения всей тени.
-
-Surface Cache: depth/normal prepass сохраняет surface и primitive ID только
-при активном GI. MSAA выбирает ID того же sample, что depth/normal. Final gather
-и материал проверяют эту идентичность; поиска треугольника по допуску глубины
-и зависимости от схемы MSAA samples видеокарты нет.
-
-PCSS: bilinear PCF проверяет receiver plane у каждого из четырёх depth texel,
-а не только в центре tap. Это сохраняет контакт без завышенного slope bias.
-
-Surface Cache: native mesh revisions invalidate shared geometry on same-RID
-mesh edits. Texture contents and global shader inputs notify subscribed material
-instances through dependencies. Shader vertex/clip-space displacement is exposed
-as unsupported instead of letting raster and ray geometry silently diverge.
-Material capture first records geometric coverage, then shades it: fragment
-`discard` changes opacity without changing the allocation of transport rows.
-
-Surface Cache: `surface_cache_global_invariant` — явный контракт spatial shader:
-глобальные параметры не меняют ни один выход захвата материала или геометрии.
-Только такой shader освобождается от global-зависимостей GI; остальные изменения
-материала/текстур/instance и обычный raster сохраняют прежнее поведение.
-RenderingDevice публикует существующие subgroup limits в GDScript, чтобы
-выбирать dispatch без предположения о размере аппаратной subgroup.
-
-### Surface Cache: покрытие физической поверхности
-
-В изолированной ветке `codex/gi-surface-cache` capture получает отдельный домен
-каждого исходного примитива: тонкие участки материала не перетираются соседями.
-Плотность вдоль длинного ребра задаёт профиль; короткая ось имеет минимум один
-texel. Private stream сохраняет UV/UV2/CUSTOM и порядок исходных примитивов.
-Расширенная растеризация перечисляет пересечения с texel; material fragment
-вычисляется в центре площади пересечения. Пустые границы не создают строк GI.
-Capture использует аналитическую интерполяцию встроенных и пользовательских smooth varyings.
-
-Primary visibility теперь RGBA32UI: surface/primitive и barycentrics покрытой
-centroid-позиции. MSAA resolve переносит их вместе с выбранными depth/normal.
-Это устраняет восстановление primary на ребре из непокрытого центра пикселя;
-дополнительная стоимость — 8 байт на resolved pixel и MSAA sample.
-
-Surface Cache выдаёт компактные прямоугольники примитивов и их адреса;
-GPU-поля материалов и освещения не выделяют строки для промежутков между ними.
-Атлас остаётся временной целью захвата, плотность физических samples сохраняется.
-
-Position attachment захвата хранит канонические barycentrics и primitive ID.
-Потребитель восстанавливает положение из актуальных вершин BLAS, а не из
-экстраполированной world position. Private chart stream передаёт координаты
-в texel, чтобы нормализация UV не создавала ложные граничные пересечения.
-
-Surface Cache: clipping pins intersection coordinates to the exact cell boundary; barycentrics are computed relative to that cell. Edge-only contacts with no strictly interior representative do not create a transport row.
-
-Surface Cache capture classifies triangle/cell overlap with strict SAT before float clipping. Ambiguous orientation signs use an error-free float expansion; zero-measure edge/corner contacts are rejected, and sub-ULP positive overlaps alias to an interior point of the same primitive.
-
-### Surface Cache: устойчивый запуск редактора
-
-Реестр Scenario передаёт вырожденный transform как неактивный экземпляр,
-как и штатный raster. Пустой Mesh также не участвует до появления поверхностей.
-GI снимает такой экземпляр до следующего обратимого transform,
-не останавливая освещение мира. Ненулевой determinant не сравнивается с epsilon.
-Запуск `--editor --script` не создаёт лишний SceneTree перед деревом проверочного
-скрипта; это позволяет проверять настоящий редактор без утечки первого дерева.
-
-### Устойчивость мягких направленных теней
-
-PCSS классифицирует четыре реальные глубины отдельно и только затем усредняет
-расстояния до блокеров. Линейная интерполяция глубины между разными поверхностями
-создавала вымышленные блокеры и меняла ширину полутени при вращении выборки.
-Поправка плоскости приёмника применяется отдельно к каждому texel.
-
-### Визуальные проходы и сглаженные HDR-отражения
-
-`surface_cache_presentation` объявляет дополнительный проход, например контур,
-не относящимся к физическому материалу. Его не захватывает Surface Cache,
-его vertex displacement не меняет геометрию GI. Декларация действует на один
-проход; каждый `next_pass` проверяется отдельно. Основной физический материал
-сохраняется. Этот режим предназначен для дополнительных проходов.
-Зависимости shader/material сохраняются: изменение декларации повторяет захват.
-Глобальные uniforms этого визуального прохода не инвалидируют материал GI.
-
-Forward+ предоставляет `POST_TEMPORAL` после TAA/temporal upscaler и до
-тонмаппинга. При обычном TAA `get_color_layer()` содержит сглаженный HDR.
-При temporal upscaling потребитель должен читать соответствующую upscaled
-текстуру; Surface Cache стенд использует обычный TAA без upscaling.
-
-Мягкие направленные тени меняют радиус выборки внутри равновеликих страт,
-а не только угол Vogel-диска. Это устраняет постоянно пустое центральное
-кольцо поиска, из-за которого мелкие близкие блокеры терялись на всех кадрах.
-Плотность выборки по площади диска сохраняется.
-
-Поправка плоскости приёмника используется только при проверке перекрытия.
-Радиус полутени вычисляется по исходной глубине блокера: вычитание наклона
-приёмника из физического расстояния меняло радиус на границах треугольников.
-
-Surface Cache: затенение IBL использует AO, шероховатость и угол взгляда
-(аппроксимация Lagarde), а не яркость diffuse GI. Это исключает усиление шума
-final gather на металлах. Bent normal сохраняет отдельный путь. Без Surface
-Cache поведение прежнее. Это скалярная оценка, не трассировка отражений:
-SSAO не видит препятствия вне кадра. Формула и ограничения:
-https://google.github.io/filament/main/filament.html#lighting/occlusion/specularocclusion
-
-Направленный PCSS вычисляет радиус фильтра по разнице глубин блокера и приёмника,
-умноженной на диапазон ортографической карты и угловой размер солнца. Перспективный
-множитель dReceiver/dBlocker удалён: мягкость не должна зависеть от положения
-камеры теней и pancake range. Радиус поиска и радиус фильтра имеют разные масштабы.
-
-Receiver-plane bias смещает сравнение только к свету. Отрицательное смещение
-не должно превращать поверхность позади приёмника в блокер и обнулять радиус PCSS.
-
-Directional PCSS: перед признанием точки освещённой пустой широкий поиск
-проверяет центральный footprint. Глубина центрального блокера используется
-только как fallback, не смещая среднее непустой дисковой выборки. Это сохраняет
-узкие контактные тени, пропущенные редкими taps большого диска поиска.
-
-Оба пути поиска directional-блокеров используют общую классификацию глубин.
-
-### Выбор направленных теней
-
-Удалён диагностический принудительный переход из PCSS в PCF только в шейдере.
-PCSS выключается штатным нулевым угловым размером DirectionalLight3D в сцене:
-CPU и GPU согласованно выбирают проекцию, радиус PCF и масштаб bias.
-Положительный угловой размер по-прежнему включает PCSS.
-
-В экспериментальной ветке режим качества направленных теней Hard выполняет
-один texelFetch и одно сравнение reverse-Z, без аппаратного bilinear PCF.
-Штатный comparison sampler Forward+ линейный даже при нуле дисковых taps;
-поэтому прежний Hard не был режимом без фильтрации. Остальные уровни качества
-и PCSS сохраняют свои фильтры. Это позволяет сравнивать исходную дискретную
-границу с нефильтрованной картой Three.js при одинаковой плотности.
-
-### Surface Cache: отражения сцены
-
-Forward+ принимает от callback вьюпорта `surface_cache/reflection`: HDR-радиацию
-с уже учтённой BRDF и видимостью. Подмена IBL допустима только при совпадении
-surface/primitive с primary visibility; прозрачный слой не получает отражение
-лежащей за ним поверхности. Нет повторного DFG или SSAO поверх трассировки.
-Материал Surface Cache расширен F0, roughness и параметрами transmission (112 байт).
-
-`SURFACE_CACHE_TRANSMISSION` объявляет долю тонкого оптического пропускания
-отдельно от alpha coverage. Захват сохраняет её в normal.a. Вьюпорт может
-передать `glass` и `glass_primary`: радиацию через ближайший прозрачный слой
-с точным surface/primitive. Она компонуется вместо обычного alpha-слоя только
-при совпадении идентификаторов. Mobile/OpenGL сохраняют синтаксис материала,
-но не исполняют экспериментальный трассировщик.
-
-Surface Cache thin transmission сохраняет полный raster shading за стеклом: binding 46 содержит RGB transmittance, а стеклянный материал запрашивает копию opaque HDR. Отражения стекла считаются лучами отдельно. Пользовательский `RADIANCE` сохраняет приоритет над трассируемым indirect specular.
+## Патчи Interior Star
+
+Патчи 7–13 есть только в `interior-star/main` (модель веток — выше). Они обслуживают
+Surface Cache GI игры Interior Star: динамический непрямой свет и трассируемые отражения.
+Игровая часть, проверки и закреплённый коммит движка лежат в репозитории игры —
+`is-game/lighting/surface_cache/` (`README.md`, `engine.json`, `build_engine.py`,
+`run_checks.py`); имена проверок ниже — файлы его `probes/`. Мастер-материалы игры
+используют `surface_cache_global_invariant`, поэтому без этих патчей её шейдеры не
+компилируются.
+
+GI работает только на Vulkan с аппаратным ray query в Forward+. Forward Mobile и OpenGL
+принимают синтаксис материалов (built-ins возвращают нули), но GI не исполняют.
+
+Формат прежний: что | файлы | контракт. Пути без префикса — от `servers/rendering/`.
+
+7. **Vulkan ray query и синхронизация acceleration structures** |
+   `drivers/vulkan/rendering_device_driver_vulkan.{h,cpp}`, `rendering_device.{h,cpp}`,
+   `rendering_device_graph.cpp`, `rendering_device_commons.h`,
+   `rendering_shader_container.cpp`, `doc/classes/RDAccelerationStructureInstance.xml`,
+   `doc/classes/RenderingDevice.xml` |
+   - `VK_KHR_ray_query` запрашивается и включается по возможностям устройства.
+   - Маска видимости RT-uniform строится из `SHADER_STAGE_*_BIT`, а не из номеров stages:
+     upstream закрывал descriptors для RT pipeline, и известный hit возвращал miss.
+   - Шейдеры RT stages и шейдеры с AS-descriptor обходят re-spirv, который не поддерживает
+     эти инструкции. Vulkan получает исходный SPIR-V и сам применяет specialization constants.
+   - TLAS ссылается на адрес из `vkGetAccelerationStructureDeviceAddressKHR`, а не на адрес
+     буфера BLAS. Первая запись нового instance buffer сразу резервирует свой диапазон:
+     несколько сборок TLAS в одном кадре не перетирают вход неисполненной команды.
+   - `hit_sbt_range = 0` допустим для TLAS, который читают только ray queries.
+   - При включённом `rayQuery` глобальные барьеры сохраняют `ACCELERATION_STRUCTURE_READ`.
+     Uniform set при каждом bind/dispatch заново учитывает все BLAS, достижимые через его
+     TLAS: он может пережить пересборку TLAS.
+   - Обход драйвера NVIDIA 610.88 (`ray_query_needs_memory_read_barrier`): на переходе к
+     compute/fragment-потребителю AS добавляются `MEMORY_READ` и stage
+     `ACCELERATION_STRUCTURE_BUILD`. Условие привязано к этой версии драйвера.
+   - В GDScript доступны существующие лимиты subgroup (`LIMIT_SUBGROUP_*`).
+
+   Проверки: `hardware_rt.gd`, `main_rd_query.gd`, `krylov_gpu.gd`.
+
+8. **Charts и GPU-захват материала** | `scene/resources/mesh.{h,cpp}`,
+   `renderer_rd/storage_rd/mesh_storage.{h,cpp}`, `storage/mesh_storage.h`,
+   `renderer_rd/shaders/surface_cache_capture_inc.glsl`,
+   `renderer_rd/storage_rd/material_storage.{h,cpp}`,
+   `renderer_rd/storage_rd/texture_storage.{h,cpp}`, `renderer_rd/storage_rd/light_storage.cpp`,
+   `storage/material_storage.h`, `storage/utilities.h` |
+   - `Mesh.surface_cache_get_layout(surface, texel_size)` строит собственную развёртку, не
+     xatlas: каждый треугольник — отдельный прямоугольник в texel с отступом 2 texel,
+     плотность по длинному ребру, по короткой оси минимум один texel. Вырожденный
+     треугольник получает chart 0 и один texel. Прямоугольники пакуются
+     `Geometry2D::make_atlas`. Результат: `capture_pixels`, `uv`, `source_vertices`,
+     `charts`, `indices`, `size`, `tiles`, `sample_count`. Авторские UV/UV2/CUSTOM,
+     порядок треугольников, skin и morph не меняются.
+   - `RenderingServer.mesh_surface_set_capture_uv` задаёт частному capture-мешу отдельный
+     неизменяемый поток координат (в texel) до создания экземпляров.
+   - `RenderingServer.instance_surface_cache_capture(instance, chart_instance, framebuffer,
+     region, back_side)` исполняет на GPU настоящий spatial material исходного экземпляра
+     на геометрии chart-экземпляра. Transform, overrides, instance uniforms и поза
+     skin/morph берутся у исходного. Результат остаётся в framebuffer вызывающего: пять
+     targets — albedo/alpha, нормаль RGBA16F (alpha — доля пропускания), AO/roughness/
+     metallic/specular, emission, канонические barycentrics и primitive ID.
+   - Каждый исходный примитив получает свой домен. Перекрытие с texel определяется строгим
+     SAT до float-клиппинга; контакты нулевой площади отбрасываются. Фрагмент вычисляется
+     в центре площади пересечения, smooth varyings интерполируются аналитически. Сначала
+     пишется геометрическое покрытие, затем материал: `discard` меняет только opacity.
+   - Изменения пикселей текстур, global shader uniforms, цвета и энергии света рассылают
+     подписанным материалам `DEPENDENCY_CHANGED_SURFACE_CONTENT`. Меш при изменении
+     содержимого увеличивает `geometry_revision`.
+   - Отличия от штатного поведения, действующие и без Surface Cache:
+     `mesh_surface_update_{vertex,attribute,skin,index}_region` рассылают
+     `DEPENDENCY_CHANGED_MESH` (upstream молчал; для мешей, обновляемых каждый кадр, это
+     лишний пересчёт экземпляров). Повторная установка того же значения в
+     `material_set_param`, `global_shader_parameter_set`,
+     `global_shader_parameter_set_override` и `light_set_color` ничего не делает (upstream
+     заново ставил материал в очередь и перезагружал буферы).
+     `material_has_shader_displacement` сообщает о vertex displacement — такой материал GI
+     явно отклоняет, чтобы raster и геометрия лучей не разошлись.
+   - Остальные renderer-ы GPU capture API явно отвергают.
+
+   Проверки: `material_capture.gd`, `capture_coverage.gd`, `sample_coverage.gd`,
+   `row_ownership.gd`, `material_updates.gd`.
+
+9. **Реестр изменений мира и доступ к деформации** | `renderer_scene_cull.{h,cpp}`,
+   `rendering_server.{h,cpp}`, `rendering_server_default.h`, `rendering_method.h`,
+   `renderer_scene_render.h`, `renderer_geometry_instance.h` |
+   - `scenario_set_surface_cache_callback` назначает scenario одного владельца обновлений.
+     Callback вызывается один раз за кадр мира до рендера; остальные камеры используют
+     его результат.
+   - `scenario_surface_cache_poll` отдаёт объединённые изменения экземпляров по RID:
+     регистрацию и удаление, transform, материал, позу, свет. Подписка начинается с одного
+     снимка мира. Вырожденный transform и Mesh без поверхностей считаются неактивными,
+     как в штатном raster.
+   - `instance_get_deformed_surface` отдаёт заимствованный GPU-буфер skin/morph с layout и
+     версией. Читать только на render thread; RID не хранить после callback.
+   - `instance_set_surface_cache_ids` связывает поверхности экземпляра с таблицей кеша.
+
+   Проверки: `world_changes.gd`, `runtime_lifecycle.gd`, `profile_updates.gd`.
+
+10. **Surface Cache в кадре Forward+** |
+    `renderer_rd/forward_clustered/render_forward_clustered.{h,cpp}`,
+    `renderer_rd/forward_clustered/scene_shader_forward_clustered.{h,cpp}`,
+    `renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl`,
+    `renderer_rd/shaders/surface_cache_inc.glsl`, `renderer_rd/shaders/scene_data_inc.glsl`,
+    `renderer_rd/storage_rd/render_scene_data_rd.{h,cpp}`, `renderer_rd/effects/resolve.{h,cpp}`,
+    `renderer_rd/shaders/effects/resolve.glsl`, `scene/resources/compositor.{h,cpp}`,
+    `rendering_server_enums.h`; заглушки других renderer-ов —
+    `renderer_rd/forward_mobile/scene_shader_forward_mobile.cpp`,
+    `renderer_rd/shaders/forward_mobile/scene_forward_mobile.glsl`,
+    `drivers/gles3/shaders/scene.glsl`, `drivers/gles3/storage/material_storage.cpp` |
+    - `scenario_set_surface_cache_buffers` задаёт четыре storage buffer: таблицу поверхностей
+      с раздельными адресами материала и света, мировые треугольники с обеими
+      параметризациями, материальные texel, irradiance. Descriptors объявлены во всех
+      вариантах Forward+, включая depth, shadow и unshaded, ради общего layout uniform set.
+    - При активном GI depth/normal prepass пишет primary visibility RGBA32UI: surface,
+      primitive и barycentrics покрытой точки (+8 байт на пиксель и на MSAA sample).
+      MSAA resolve берёт её из того же sample, что depth/normal.
+    - `scenario_set_surface_cache_view_callback` вызывается после prepass для каждого
+      viewport, включая зеркала, независимо от его Compositor. Viewport-текстуры
+      `surface_cache/gather`, `surface_cache/reflection`, `glass`, `glass_primary`
+      применяются к фрагменту только при совпадении surface/primitive с primary visibility.
+    - Irradiance заменяет ambient после пользовательского `IRRADIANCE`, до AO, albedo и
+      тонемапа. Трассированное отражение заменяет IBL без повторного DFG и SSAO;
+      пользовательский `RADIANCE` сохраняет приоритет. Затенение IBL при Surface Cache
+      считается по AO, roughness и углу взгляда (аппроксимация Lagarde), без него —
+      по-прежнему. Тонкое стекло получает RGB transmittance (binding 46) и копию opaque HDR.
+      Отсутствие покрытия рисуется пурпурным.
+    - Зарегистрированные в GI экземпляры рисуются без mesh LOD: у LOD нет соответствия
+      primitive → chart.
+    - `CompositorEffect` получает callback `POST_TEMPORAL`: после TAA, до тонемапа. При
+      temporal upscaling потребитель читает соответствующую upscaled-текстуру.
+    - `CompositorEffect` с флагом `NEEDS_ROUGHNESS` получает normal/roughness и без
+      WorldEnvironment; upstream в этом случае флаг игнорировал.
+
+    Проверки: `gather_reference.gd`, `reflection_contract.gd`, `specular_visibility.gd`,
+    `temporal_reprojection.gd`, `temporal_motion.gd`, `surface_origin.gd`,
+    `enclosure_reference.gd`, `bathroom_capture.gd`.
+
+11. **Язык шейдеров** | `shader_types.cpp`, `shader_compiler.{h,cpp}`,
+    `renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp`,
+    `renderer_rd/forward_mobile/scene_shader_forward_mobile.cpp`,
+    `drivers/gles3/storage/material_storage.cpp` |
+    - Render mode `surface_cache_global_invariant`: автор шейдера объявляет, что global
+      uniforms не меняют ни один выход захвата. Тогда их изменения не инвалидируют
+      GI-материал; без режима инвалидация консервативная. Корректность объявления —
+      ответственность автора.
+    - Render mode `surface_cache_presentation` помечает проход (обычно `next_pass`, например
+      контур) как визуальный: его не захватывает Surface Cache, его vertex displacement не
+      меняет геометрию GI, его globals не инвалидируют материал. Действует на один проход.
+    - Built-ins: `IN_SURFACE_CACHE_PASS` (global, bool), `SURFACE_CACHE_IRRADIANCE`
+      (fragment, read-only vec4, alpha 0 без GI), `SURFACE_CACHE_TRANSMISSION` (fragment,
+      float, доля тонкого пропускания отдельно от alpha), `SURFACE_CACHE_GATHER_USED`
+      (fragment, read-only bool). В проходе захвата `FRONT_FACING` задаётся стороной
+      захвата, а не winding развёртки.
+
+12. **Направленные тени — меняет штатное поведение** |
+    `renderer_rd/shaders/scene_forward_lights_inc.glsl`, вызовы в
+    `scene_forward_clustered.glsl` и `scene_forward_mobile.glsl` |
+    Действует во всех сценах, независимо от Surface Cache; include общий для Forward+ и
+    Forward Mobile.
+    - PCSS классифицирует каждую из четырёх глубин texel отдельно, с поправкой на плоскость
+      приёмника в каждой точке ядра. Радиус полутени — по разнице глубин блокера и
+      приёмника, умноженной на диапазон карты и угловой размер солнца, без перспективного
+      множителя. Радиус выборки меняется внутри равновеликих страт. Пустой широкий поиск
+      перед признанием точки освещённой проверяет центральный footprint. Смещение
+      приёмника — только к свету.
+    - Bilinear PCF проверяет плоскость приёмника в каждом из четырёх depth texel.
+    - Качество Hard — один `texelFetch` и одно сравнение reverse-Z, без bilinear PCF
+      comparison sampler.
+
+    Проверки: `pcf_bias.gd`, `pcf_edge.gd`, `pcf_isolation.gd`, `shadow_plane.gd`,
+    `shadow_isolation.gd`.
+
+13. **Редактор со скриптом** | `main/main.cpp` | `--editor --script` не создаёт отдельный
+    SceneTree до дерева скрипта. Так проверка открывает настоящий редактор без утечки
+    первого дерева (`editor_lifecycle.gd`).
+
+### Чеклист обновления `interior-star/main`
+
+1. `git merge --no-ff lestoroer/main` в `interior-star/main`. Число строк
+   `Fork(Lestoroer)` (команда из шага 3 обновления) не должно уменьшиться против
+   `lestoroer/main` + MARKER_COUNT строк патчей 7–13.
+2. Больше всего конфликтов ждать в `scene_forward_clustered.glsl`,
+   `render_forward_clustered.cpp`, `scene_forward_lights_inc.glsl`, `rendering_device.cpp`,
+   `rendering_device_graph.cpp`, `rendering_device_driver_vulkan.cpp`, `material_storage.cpp`.
+3. Если re-spirv научился RT и ray query, убрать обход в `rendering_shader_container.cpp`.
+4. Обход NVIDIA привязан к драйверу 610.88. На другой версии драйвера прогнать
+   `main_rd_query.gd`; при регрессии расширить условие в `_check_driver_workarounds`.
+5. Собрать движок программой игры `build_engine.py`, записать новый коммит в
+   `engine.json`, прогнать `run_checks.py`.

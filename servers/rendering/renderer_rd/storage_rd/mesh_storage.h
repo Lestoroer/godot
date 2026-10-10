@@ -202,7 +202,7 @@ private:
 
 		RID blend_weights_buffer;
 		List<MeshInstance *>::Element *I = nullptr; //used to erase itself
-		uint64_t deformation_version = 0;
+		uint64_t deformation_version = 0; // Fork(Lestoroer)
 		uint64_t skeleton_version = 0;
 		bool dirty = false;
 		bool weights_dirty = false;
@@ -213,7 +213,7 @@ private:
 				weight_update_list(this), array_update_list(this) {}
 	};
 
-	RD::VertexFormatID _mesh_surface_generate_vertex_format(uint64_t p_surface_format, uint64_t p_input_mask, bool p_instanced_surface, bool p_input_motion_vectors, bool p_point_size_emulated, uint32_t &r_position_stride, bool p_capture_stream);
+	RD::VertexFormatID _mesh_surface_generate_vertex_format(uint64_t p_surface_format, uint64_t p_input_mask, bool p_instanced_surface, bool p_input_motion_vectors, bool p_point_size_emulated, uint32_t &r_position_stride, bool p_capture_stream); // Fork(Lestoroer): p_capture_stream added.
 	void _mesh_surface_generate_version_for_input_mask(Mesh::Surface::Version &v, Mesh::Surface *s, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, MeshInstance::Surface *mis = nullptr, uint32_t p_current_buffer = 0, uint32_t p_previous_buffer = 0);
 	void _mesh_surface_clear(Mesh *p_mesh, int p_surface);
 
@@ -638,17 +638,17 @@ public:
 	_FORCE_INLINE_ RD::VertexFormatID mesh_surface_get_vertex_format(void *p_surface, uint64_t p_input_mask, bool p_instanced_surface, bool p_input_motion_vectors, bool p_point_size_emulated) {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 		uint32_t position_stride = 0;
-		return _mesh_surface_generate_vertex_format(s->format, p_input_mask, p_instanced_surface, p_input_motion_vectors, p_point_size_emulated, position_stride, s->capture_uv_buffer.is_valid());
+		return _mesh_surface_generate_vertex_format(s->format, p_input_mask, p_instanced_surface, p_input_motion_vectors, p_point_size_emulated, position_stride, s->capture_uv_buffer.is_valid()); // Fork(Lestoroer): capture stream flag added.
 	}
 
 	Dependency *mesh_get_dependency(RID p_mesh) const;
-	uint64_t mesh_get_geometry_revision(RID p_mesh) const override;
+	uint64_t mesh_get_geometry_revision(RID p_mesh) const override; // Fork(Lestoroer)
 
 	/* MESH INSTANCE API */
 
 	bool owns_mesh_instance(RID p_rid) const { return mesh_instance_owner.owns(p_rid); }
 
-	virtual Dictionary mesh_instance_get_deformed_surface(RID p_instance, int p_surface) override;
+	virtual Dictionary mesh_instance_get_deformed_surface(RID p_instance, int p_surface) override; // Fork(Lestoroer)
 	virtual RID mesh_instance_create(RID p_base) override;
 	virtual void mesh_instance_free(RID p_rid) override;
 	virtual void mesh_instance_set_skeleton(RID p_mesh_instance, RID p_skeleton) override;

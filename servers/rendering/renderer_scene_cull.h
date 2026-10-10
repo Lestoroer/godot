@@ -378,6 +378,7 @@ public:
 	virtual RID scenario_allocate();
 	virtual void scenario_initialize(RID p_rid);
 
+	// Fork(Lestoroer): Surface Cache scenario API.
 	void _surface_cache_queue(Instance *p_instance, uint32_t p_flags) const;
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) override;
 	virtual void scenario_set_surface_cache_view_callback(RID p_scenario, const Callable &p_callback) override;
@@ -496,7 +497,7 @@ public:
 		uint64_t version; // changes to this, and changes to base increase version
 
 		InstanceBaseData *base_data = nullptr;
-		Vector<int32_t> surface_cache_ids;
+		Vector<int32_t> surface_cache_ids; // Fork(Lestoroer)
 
 		SelfList<InstancePair>::List pairs;
 		uint64_t pair_check;
@@ -505,11 +506,12 @@ public:
 
 		static void dependency_changed(Dependency::DependencyChangedNotification p_notification, DependencyTracker *tracker) {
 			Instance *instance = (Instance *)tracker->userdata;
+			// Fork(Lestoroer): skeleton changes deform Surface Cache geometry.
 			if (p_notification == Dependency::DEPENDENCY_CHANGED_SKELETON_DATA || p_notification == Dependency::DEPENDENCY_CHANGED_SKELETON_BONES) {
 				singleton->_surface_cache_queue(instance, 8);
 			}
 			switch (p_notification) {
-				case Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT: {
+				case Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT: { // Fork(Lestoroer)
 					singleton->_surface_cache_queue(instance, 4);
 				} break;
 				case Dependency::DEPENDENCY_CHANGED_SKELETON_DATA:

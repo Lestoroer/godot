@@ -315,6 +315,7 @@ half sample_directional_pcf_shadow(texture2D shadow, vec2 shadow_pixel_size, vec
 
 	//if only one sample is taken, take it from the center
 	if (sc_directional_soft_shadow_samples() == 0) {
+		// Fork(Lestoroer): replaces upstream textureProj(sampler2DShadow(...)).
 		// Hard mode must not inherit the comparison sampler's bilinear PCF footprint.
 		ivec2 size = textureSize(sampler2D(shadow, SAMPLER_NEAREST_CLAMP), 0);
 		ivec2 texel = clamp(ivec2(floor(pos * vec2(size))), ivec2(0), size - ivec2(1));
@@ -411,6 +412,7 @@ half sample_omni_pcf_shadow(texture2D shadow, float blur_scale, vec2 coord, vec4
 	return half(avg * (1.0 / float(sc_soft_shadow_samples())));
 }
 
+// Fork(Lestoroer): receiver-plane helpers for the directional PCSS below.
 // Bilinear PCF compares four depths. Each texel needs its own receiver depth;
 // correcting only the tap center still leaves slope-dependent stippling.
 float sample_receiver_plane_shadow(texture2D shadow, vec2 uv, vec3 receiver, vec2 gradient) {
@@ -459,6 +461,7 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 
 	SPEC_CONSTANT_LOOP_ANNOTATION
 	for (uint i = 0; i < sc_directional_penumbra_shadow_samples(); i++) {
+		// Fork(Lestoroer): stratified radius and per-texel receiver-plane classification replace the upstream textureLod() blocker search.
 		// Rotate AND vary radius within equal-area strata. Rotation alone never
 		// samples the central disk and repeatedly misses small nearby blockers.
 		float radial_phase = fract(quick_hash(gl_FragCoord.xy + vec2(float(i) * 1.618034, 7.0)) + taa_frame_count * 0.618034);
@@ -481,6 +484,7 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 	if (blocker_count > 0.0) {
 		//blockers found, do soft shadow
 		blocker_average /= blocker_count;
+		// Fork(Lestoroer): upstream penumbra was (blocker - z) / (1 - blocker).
 		// A directional emitter has parallel rays: width depends only on
 		// receiver/blocker separation, not distance from the shadow camera.
 		tex_scale = filter_scale * max(blocker_average - pssm_coord.z, 0.0);
@@ -489,11 +493,12 @@ half sample_directional_soft_shadow(texture2D shadow, vec3 pssm_coord, vec2 tex_
 
 		SPEC_CONSTANT_LOOP_ANNOTATION
 		for (uint i = 0; i < sc_directional_penumbra_shadow_samples(); i++) {
+			// Fork(Lestoroer): same stratified kernel; receiver-plane compare replaces textureProj().
 			// Rotate AND vary radius within equal-area strata. Rotation alone never
-		// samples the central disk and repeatedly misses small nearby blockers.
-		float radial_phase = fract(quick_hash(gl_FragCoord.xy + vec2(float(i) * 1.618034, 7.0)) + taa_frame_count * 0.618034);
-		vec2 kernel = scene_data_block.data.directional_penumbra_shadow_kernel[i].xy * sqrt((float(i) + radial_phase) / (float(i) + 0.5));
-		vec2 suv = pssm_coord.xy + (disk_rotation * kernel) * tex_scale;
+			// samples the central disk and repeatedly misses small nearby blockers.
+			float radial_phase = fract(quick_hash(gl_FragCoord.xy + vec2(float(i) * 1.618034, 7.0)) + taa_frame_count * 0.618034);
+			vec2 kernel = scene_data_block.data.directional_penumbra_shadow_kernel[i].xy * sqrt((float(i) + radial_phase) / (float(i) + 0.5));
+			vec2 suv = pssm_coord.xy + (disk_rotation * kernel) * tex_scale;
 			s += sample_receiver_plane_shadow(shadow, suv, pssm_coord, depth_gradient);
 		}
 

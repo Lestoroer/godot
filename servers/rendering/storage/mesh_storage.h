@@ -89,7 +89,7 @@ public:
 
 	/* MESH INSTANCE */
 
-	virtual Dictionary mesh_instance_get_deformed_surface(RID p_instance, int p_surface) { return Dictionary(); }
+	virtual Dictionary mesh_instance_get_deformed_surface(RID p_instance, int p_surface) { return Dictionary(); } // Fork(Lestoroer)
 	virtual RID mesh_instance_create(RID p_base) = 0;
 	virtual void mesh_instance_free(RID p_rid) = 0;
 	virtual void mesh_instance_set_skeleton(RID p_mesh_instance, RID p_skeleton) = 0;

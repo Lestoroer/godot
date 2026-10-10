@@ -4414,6 +4414,7 @@ int Main::start() {
 #endif
 
 	MainLoop *main_loop = nullptr;
+	// Fork(Lestoroer): upstream also created a SceneTree for `--editor --script`; it leaked once the script supplied its own MainLoop.
 	if (editor && script.is_empty()) {
 		main_loop = memnew(SceneTree);
 	}

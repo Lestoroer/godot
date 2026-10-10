@@ -62,8 +62,8 @@ public:
 		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW = 6;
 		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_MATERIAL = 7;
 		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_SDF = 8;
-		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE = 9;
-		constexpr static uint16_t SHADER_VERSION_COLOR_PASS = 10;
+		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE = 9; // Fork(Lestoroer)
+		constexpr static uint16_t SHADER_VERSION_COLOR_PASS = 10; // Fork(Lestoroer): was 9 upstream; shifted by the Surface Cache depth variant.
 	};
 
 	enum ShaderColorPassFlags {
@@ -85,7 +85,7 @@ public:
 		PIPELINE_VERSION_DEPTH_PASS_MULTIVIEW,
 		PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_MULTIVIEW,
 		PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW,
-		PIPELINE_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE,
+		PIPELINE_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE, // Fork(Lestoroer)
 		PIPELINE_VERSION_COLOR_PASS,
 		PIPELINE_VERSION_MAX
 	};
@@ -257,6 +257,7 @@ public:
 		bool wireframe = false;
 
 		bool unshaded = false;
+		// Fork(Lestoroer): Surface Cache render modes.
 		bool surface_cache_global_invariant = false;
 		bool surface_cache_presentation = false;
 		bool uses_vertex = false;
@@ -307,6 +308,7 @@ public:
 		virtual void set_code(const String &p_Code);
 
 		virtual bool is_animated() const;
+		// Fork(Lestoroer): Surface Cache material queries reported to the GI registry.
 		bool has_shader_displacement() const override { return uses_vertex || uses_position || writes_modelview_or_projection; }
 		bool is_surface_cache_global_invariant() const override { return surface_cache_global_invariant; }
 		bool is_surface_cache_presentation() const override { return surface_cache_presentation; }
