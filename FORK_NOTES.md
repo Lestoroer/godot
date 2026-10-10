@@ -544,9 +544,9 @@ GI работает только на Vulkan с аппаратным ray query �
 
 ### Чеклист обновления `interior-star/main`
 
-1. `git merge --no-ff lestoroer/main` в `interior-star/main`. Число строк
-   `Fork(Lestoroer)` (команда из шага 3 обновления) не должно уменьшиться против
-   `lestoroer/main` + MARKER_COUNT строк патчей 7–13.
+1. Перед merge записать число строк `Fork(Lestoroer)` в `interior-star/main` (команда из
+   шага 3 обновления). Затем `git merge --no-ff lestoroer/main`; после него число не
+   должно стать меньше записанного.
 2. Больше всего конфликтов ждать в `scene_forward_clustered.glsl`,
    `render_forward_clustered.cpp`, `scene_forward_lights_inc.glsl`, `rendering_device.cpp`,
    `rendering_device_graph.cpp`, `rendering_device_driver_vulkan.cpp`, `material_storage.cpp`.
