@@ -172,18 +172,35 @@ About, заголовок окна, `--version` и т.д.). **Баг SCons:** о
 
 ## Модель веток
 ```
-upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/main  ──►  lestoroer/feat-*, fix-*
- (Godot, не трогаем)    (зеркало, ff-only)        (интеграция, только мержи)   (вся работа тут)
+upstream/<minor>  ──►  origin/<minor>-base  ──►  origin/lestoroer/main  ──►  origin/interior-star/main
+ (Godot, не трогаем)    (зеркало, ff-only)        (общие патчи, только мержи)  (Interior Star, только мержи)
+                                                        ▲                          ▲
+                                               lestoroer/feat-*, fix-*    interior-star/feat-*, fix-*
 ```
+Каждая игра собирает движок из своей ветки:
+
+| Игра | Ветка движка | Содержимое |
+|---|---|---|
+| Voxel Underworld | `lestoroer/main` | общие патчи из инвентаря ниже |
+| Interior Star | `interior-star/main` | всё из `lestoroer/main` и патчи Interior Star, прежде всего Surface Cache GI; их инвентарь — в `FORK_NOTES.md` этой ветки |
+
+Interior Star на `lestoroer/main` не работает: её шейдеры требуют патчей своей ветки.
+
 - `<minor>-base` (напр. `4.7-base`) — чистое зеркало исходника релиза. Напрямую не коммитить.
 - `lestoroer/main` — интеграционная. Напрямую не коммитить — только `git merge --no-ff` из
   `lestoroer/feat-*`/`fix-*`. Не rebase, не force-push.
 - Фича: ветка `lestoroer/feat-<имя>` от main → коммиты с префиксом `[Lestoroer]` → push →
   `git merge --no-ff` обратно в main.
+- `interior-star/main` принимает `git merge --no-ff` из `lestoroer/main` и из
+  `interior-star/feat-*`/`fix-*` (коммиты тоже с префиксом `[Lestoroer]`). Обратно в
+  `lestoroer/main` она не вливается. Патч, нужный обеим играм, делают отдельной
+  `lestoroer/feat-*` от `lestoroer/main` и проверяют на Voxel Underworld, включая Quest.
+- Обновление upstream: шаги выше для `lestoroer/main`, затем `git merge --no-ff lestoroer/main`
+  в `interior-star/main`, пересборка и проверки Surface Cache из игры (`lighting/surface_cache/`).
 
 ## Чего НЕ делать
-- Не коммитить напрямую в `<minor>-base` и `lestoroer/main`.
-- Не rebase / не force-push `lestoroer/main` и `*-base` (ломает feat-ветки и ff на origin).
+- Не коммитить напрямую в `<minor>-base`, `lestoroer/main` и `interior-star/main`.
+- Не rebase / не force-push `lestoroer/main`, `interior-star/main` и `*-base` (ломает feat-ветки и ff на origin).
 - Не коммитить `bin/` (артефакты сборки).
 - Не пропускать шаг 5 (чистый ребилд) при смене версии — иначе призрак старой версии в GUI.
 
