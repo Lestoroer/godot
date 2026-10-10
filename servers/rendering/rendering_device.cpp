@@ -6101,8 +6101,8 @@ void RenderingDevice::draw_list_draw(DrawListID p_list, bool p_use_indices, uint
 				_uniform_set_update_shared(uniform_set);
 				_uniform_set_update_clears(uniform_set);
 
-				_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RASTERIZATION);
-			draw_graph.add_draw_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
+				_uniform_set_track_acceleration_structures(uniform_set, PIPELINE_TYPE_RASTERIZATION); // Fork(Lestoroer)
+				draw_graph.add_draw_list_usages(uniform_set->draw_trackers, uniform_set->draw_trackers_usage);
 				draw_list.state.sets[i].bound = true;
 
 				last_set_index = i;
@@ -8453,14 +8453,6 @@ Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServ
 	transfer_queue_family = driver->command_queue_family_get(RDD::COMMAND_QUEUE_FAMILY_TRANSFER_BIT);
 	if (!transfer_queue_family) {
 		// Use main queue family if transfer queue family is not supported.
-		transfer_queue_family = main_queue_family;
-	}
-
-	// Fork(Lestoroer): temporary opt-in diagnostics for first-use ray queries.
-	if (OS::get_singleton()->has_environment("SURFACE_CACHE_GRAPH_TRACE")) {
-		print_line(vformat("QUEUE FAMILIES main=%d transfer=%d", main_queue_family.id, transfer_queue_family.id));
-	}
-	if (OS::get_singleton()->has_environment("SURFACE_CACHE_MAIN_TRANSFER")) {
 		transfer_queue_family = main_queue_family;
 	}
 
