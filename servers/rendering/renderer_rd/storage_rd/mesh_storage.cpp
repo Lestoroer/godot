@@ -503,7 +503,7 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 		_mesh_instance_add_surface(mi, mesh, mesh->surface_count - 1);
 	}
 
-	mesh->geometry_revision++;
+	mesh->geometry_revision++; // Fork(Lestoroer)
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 
 	for (Mesh *E : mesh->shadow_owners) {
@@ -621,6 +621,7 @@ void MeshStorage::mesh_surface_update_vertex_region(RID p_mesh, int p_surface, i
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->vertex_buffer, p_offset, data_size, r);
+	// Fork(Lestoroer): region updates change geometry too; upstream sent no notification here.
 	mesh->geometry_revision++;
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 }
@@ -636,6 +637,7 @@ void MeshStorage::mesh_surface_update_attribute_region(RID p_mesh, int p_surface
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->attribute_buffer, p_offset, data_size, r);
+	// Fork(Lestoroer): see mesh_surface_update_vertex_region().
 	mesh->geometry_revision++;
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 }
@@ -651,6 +653,7 @@ void MeshStorage::mesh_surface_update_skin_region(RID p_mesh, int p_surface, int
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->skin_buffer, p_offset, data_size, r);
+	// Fork(Lestoroer): see mesh_surface_update_vertex_region().
 	mesh->geometry_revision++;
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 }
@@ -666,6 +669,7 @@ void RendererRD::MeshStorage::mesh_surface_update_index_region(RID p_mesh, int p
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->index_buffer, p_offset, data_size, r);
+	// Fork(Lestoroer): see mesh_surface_update_vertex_region().
 	mesh->geometry_revision++;
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 }
@@ -932,7 +936,7 @@ void MeshStorage::mesh_clear(RID p_mesh) {
 	mesh->material_cache.clear();
 	mesh->has_bone_weights = false;
 	mesh->aabb = AABB();
-	mesh->geometry_revision++;
+	mesh->geometry_revision++; // Fork(Lestoroer)
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 
 	for (Mesh *E : mesh->shadow_owners) {
@@ -983,7 +987,7 @@ void MeshStorage::mesh_surface_remove(RID p_mesh, int p_surface) {
 		}
 	}
 
-	mesh->geometry_revision++;
+	mesh->geometry_revision++; // Fork(Lestoroer)
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 
 	for (Mesh *E : mesh->shadow_owners) {
@@ -1198,6 +1202,7 @@ void MeshStorage::mesh_instance_set_canvas_item_transform(RID p_mesh_instance, c
 	mi->canvas_item_transform_2d = p_transform;
 }
 
+// Fork(Lestoroer): exposes the deformed GPU vertex stream to Surface Cache ray geometry.
 Dictionary MeshStorage::mesh_instance_get_deformed_surface(RID p_instance, int p_surface) {
 	MeshInstance *mi = mesh_instance_owner.get_or_null(p_instance);
 	ERR_FAIL_NULL_V(mi, Dictionary());
@@ -1332,7 +1337,7 @@ void MeshStorage::update_mesh_instances() {
 			RD::get_singleton()->compute_list_dispatch_threads(compute_list, push_constant.vertex_count, 1, 1);
 		}
 
-		mi->deformation_version++;
+		mi->deformation_version++; // Fork(Lestoroer)
 		mi->dirty = false;
 		if (sk) {
 			mi->skeleton_version = sk->version;
@@ -1343,6 +1348,7 @@ void MeshStorage::update_mesh_instances() {
 	RD::get_singleton()->compute_list_end();
 }
 
+// Fork(Lestoroer): p_capture_stream selects the interleaved chart stream layout.
 RD::VertexFormatID MeshStorage::_mesh_surface_generate_vertex_format(uint64_t p_surface_format, uint64_t p_input_mask, bool p_instanced_surface, bool p_input_motion_vectors, bool p_point_size_emulated, uint32_t &r_position_stride, bool p_capture_stream) {
 	Vector<RD::VertexAttribute> attributes;
 	uint32_t normal_tangent_stride = 0;
@@ -1548,7 +1554,7 @@ RD::VertexFormatID MeshStorage::_mesh_surface_generate_vertex_format(uint64_t p_
 
 void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::Version &v, Mesh::Surface *s, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, MeshInstance::Surface *mis, uint32_t p_current_buffer, uint32_t p_previous_buffer) {
 	uint32_t position_stride = 0;
-	v.vertex_format = _mesh_surface_generate_vertex_format(s->format, p_input_mask, mis != nullptr, p_input_motion_vectors, p_point_size_emulated, position_stride, s->capture_uv_buffer.is_valid());
+	v.vertex_format = _mesh_surface_generate_vertex_format(s->format, p_input_mask, mis != nullptr, p_input_motion_vectors, p_point_size_emulated, position_stride, s->capture_uv_buffer.is_valid()); // Fork(Lestoroer): capture stream flag added.
 
 	Vector<RID> buffers;
 	Vector<uint64_t> offsets;
@@ -2612,6 +2618,7 @@ void MeshStorage::skeleton_update_dependency(RID p_skeleton, DependencyTracker *
 	p_instance->update_dependency(&skeleton->dependency);
 }
 
+// Fork(Lestoroer)
 uint64_t MeshStorage::mesh_get_geometry_revision(RID p_mesh) const {
 	const Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL_V(mesh, 0);

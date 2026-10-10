@@ -118,8 +118,8 @@ public:
 		enum DepthFrameBufferType {
 			DEPTH_FB,
 			DEPTH_FB_ROUGHNESS,
-			DEPTH_FB_ROUGHNESS_VOXELGI,
-			DEPTH_FB_SURFACE_CACHE
+			DEPTH_FB_ROUGHNESS_VOXELGI, // Fork(Lestoroer): trailing comma added.
+			DEPTH_FB_SURFACE_CACHE // Fork(Lestoroer)
 		};
 
 		RID render_sdfgi_uniform_set;
@@ -130,7 +130,7 @@ public:
 		RID get_specular(uint32_t p_layer) { return render_buffers->get_texture_slice(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_SPECULAR, p_layer, 0); }
 		RID get_specular_msaa(uint32_t p_layer) { return render_buffers->get_texture_slice(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_SPECULAR_MSAA, p_layer, 0); }
 
-		void ensure_surface_cache_visibility();
+		void ensure_surface_cache_visibility(); // Fork(Lestoroer)
 		void ensure_normal_roughness_texture();
 		bool has_normal_roughness() const { return render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS); }
 		RID get_normal_roughness() const { return render_buffers->get_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS); }
@@ -178,7 +178,7 @@ private:
 
 	void _update_render_base_uniform_set();
 	RID _setup_sdfgi_render_pass_uniform_set(RID p_albedo_texture, RID p_emission_texture, RID p_emission_aniso_texture, RID p_geom_facing_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index);
-	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false, bool p_surface_cache_geometry = false);
+	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false, bool p_surface_cache_geometry = false); // Fork(Lestoroer): p_surface_cache_geometry added.
 
 	struct BestFitNormal {
 		BestFitNormalShaderRD shader;
@@ -204,7 +204,7 @@ private:
 		PASS_MODE_SHADOW,
 		PASS_MODE_SHADOW_DP,
 		PASS_MODE_DEPTH,
-		PASS_MODE_DEPTH_SURFACE_CACHE,
+		PASS_MODE_DEPTH_SURFACE_CACHE, // Fork(Lestoroer)
 		PASS_MODE_DEPTH_NORMAL_ROUGHNESS,
 		PASS_MODE_DEPTH_NORMAL_ROUGHNESS_VOXEL_GI,
 		PASS_MODE_DEPTH_MATERIAL,
@@ -478,7 +478,7 @@ private:
 	void _render_list(RenderingDevice::DrawListID p_draw_list, RenderingDevice::FramebufferFormatID p_framebuffer_Format, RenderListParameters *p_params, uint32_t p_from_element, uint32_t p_to_element);
 	void _render_list_with_draw_list(RenderListParameters *p_params, RID p_framebuffer, BitField<RD::DrawFlags> p_draw_flags = RD::DRAW_DEFAULT_ALL, const Vector<Color> &p_clear_color_values = Vector<Color>(), float p_clear_depth_value = 0.0, uint32_t p_clear_stencil_value = 0, const Rect2 &p_region = Rect2());
 
-	void _fill_instance_data(RenderListType p_render_list, int *p_render_info = nullptr, uint32_t p_offset = 0, int32_t p_max_elements = -1, bool p_update_buffer = true, RenderGeometryInstanceBase *p_capture_geometry = nullptr);
+	void _fill_instance_data(RenderListType p_render_list, int *p_render_info = nullptr, uint32_t p_offset = 0, int32_t p_max_elements = -1, bool p_update_buffer = true, RenderGeometryInstanceBase *p_capture_geometry = nullptr); // Fork(Lestoroer): p_capture_geometry added.
 	void _fill_render_list(RenderListType p_render_list, const RenderDataRD *p_render_data, PassMode p_pass_mode, bool p_using_sdfgi = false, bool p_using_opaque_gi = false, bool p_using_motion_pass = false, bool p_append = false);
 
 	HashMap<Size2i, RID> sdfgi_framebuffer_size_cache;
@@ -560,6 +560,7 @@ private:
 
 	class GeometryInstanceForwardClustered : public RenderGeometryInstanceBase {
 	public:
+		// Fork(Lestoroer): Surface Cache id per mesh surface.
 		Vector<int32_t> surface_cache_ids;
 		virtual void set_surface_cache_ids(const Vector<int32_t> &p_ids) override { surface_cache_ids = p_ids; }
 		// lightmap
@@ -646,7 +647,7 @@ private:
 				uint32_t use_reflection_probes : 1;
 				uint32_t use_separate_specular : 1;
 				uint32_t use_motion_vectors : 1;
-				uint32_t use_surface_cache : 1;
+				uint32_t use_surface_cache : 1; // Fork(Lestoroer)
 				uint32_t use_normal_and_roughness : 1;
 				uint32_t use_lightmaps : 1;
 				uint32_t use_voxelgi : 1;
@@ -810,6 +811,7 @@ protected:
 	virtual void _render_buffers_debug_draw(const RenderDataRD *p_render_data) override;
 
 	virtual void _render_material(const Transform3D &p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region, float p_exposure_normalization) override;
+	// Fork(Lestoroer): Surface Cache GI context, set by RendererSceneCull.
 	Vector<RID> surface_cache_buffers;
 	Callable surface_cache_view_callback;
 	void surface_cache_set_context(const Vector<RID> &p_buffers, const Callable &p_view_callback) override { surface_cache_buffers = p_buffers; surface_cache_view_callback = p_view_callback; }

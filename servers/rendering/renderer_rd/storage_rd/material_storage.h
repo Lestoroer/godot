@@ -80,6 +80,7 @@ public:
 
 		virtual void set_code(const String &p_Code) = 0;
 		virtual bool is_animated() const = 0;
+		// Fork(Lestoroer): Surface Cache material queries.
 		virtual bool has_shader_displacement() const { return false; }
 		virtual bool is_surface_cache_global_invariant() const { return false; }
 		virtual bool is_surface_cache_presentation() const { return false; }
@@ -113,6 +114,7 @@ public:
 		friend class MaterialStorage;
 
 		RID self;
+		// Fork(Lestoroer): texture content dependency for Surface Cache.
 		DependencyTracker surface_texture_tracker;
 		static void surface_texture_changed(Dependency::DependencyChangedNotification p_notification, DependencyTracker *p_tracker);
 		static void surface_texture_deleted(const RID &p_texture, DependencyTracker *p_tracker);
@@ -209,7 +211,7 @@ private:
 			BUFFER_DIRTY_REGION_SIZE = 1024
 		};
 		struct Variable {
-			Dependency surface_dependency;
+			Dependency surface_dependency; // Fork(Lestoroer): notifies Surface Cache materials that read this global.
 			HashSet<RID> texture_materials; // materials using this
 
 			RSE::GlobalShaderParameterType type;
@@ -500,7 +502,7 @@ public:
 
 	virtual void material_set_shader(RID p_material, RID p_shader) override;
 	ShaderData *material_get_shader_data(RID p_material);
-	bool material_has_shader_displacement(RID p_material) override;
+	bool material_has_shader_displacement(RID p_material) override; // Fork(Lestoroer)
 
 	virtual void material_set_param(RID p_material, const StringName &p_param, const Variant &p_value) override;
 	virtual Variant material_get_param(RID p_material, const StringName &p_param) const override;

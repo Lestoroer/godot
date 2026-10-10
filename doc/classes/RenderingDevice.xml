@@ -2967,6 +2967,7 @@
 		<constant name="LIMIT_MAX_VIEWPORT_DIMENSIONS_Y" value="36" enum="Limit">
 			Maximum viewport height (in pixels).
 		</constant>
+		<!-- Fork(Lestoroer): subgroup limits exposed to scripts. -->
 		<constant name="LIMIT_SUBGROUP_SIZE" value="37" enum="Limit">
 			The preferred hardware subgroup size.
 		</constant>

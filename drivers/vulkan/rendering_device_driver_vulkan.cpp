@@ -921,7 +921,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDeviceVulkanMemoryModelFeatures memory_model_features = {};
 		VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features = {};
 		VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracing_pipeline_features = {};
-		VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
+		VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {}; // Fork(Lestoroer)
 		VkPhysicalDeviceSynchronization2FeaturesKHR sync_2_features = {};
 		VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
 
@@ -1002,6 +1002,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			next_features = &raytracing_pipeline_features;
 		}
 
+		// Fork(Lestoroer): query ray-query feature support.
 		if (enabled_device_extension_names.has(VK_KHR_RAY_QUERY_EXTENSION_NAME)) {
 			ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
 			ray_query_features.pNext = next_features;
@@ -1024,7 +1025,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		device_features_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 		device_features_2.pNext = next_features;
 		functions.GetPhysicalDeviceFeatures2(physical_device, &device_features_2);
-		ray_query_support = ray_query_features.rayQuery;
+		ray_query_support = ray_query_features.rayQuery; // Fork(Lestoroer)
 
 		if (use_1_2_features) {
 #ifdef MACOS_ENABLED
@@ -1448,6 +1449,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		create_info_next = &raytracing_pipeline_features;
 	}
 
+	// Fork(Lestoroer): enable ray queries on the logical device when supported.
 	VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
 	if (ray_query_support) {
 		ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
@@ -1560,7 +1562,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 			device_functions.CreateAccelerationStructureKHR = PFN_vkCreateAccelerationStructureKHR(functions.GetDeviceProcAddr(vk_device, "vkCreateAccelerationStructureKHR"));
 			device_functions.DestroyAccelerationStructureKHR = PFN_vkDestroyAccelerationStructureKHR(functions.GetDeviceProcAddr(vk_device, "vkDestroyAccelerationStructureKHR"));
 			device_functions.GetAccelerationStructureBuildSizesKHR = PFN_vkGetAccelerationStructureBuildSizesKHR(functions.GetDeviceProcAddr(vk_device, "vkGetAccelerationStructureBuildSizesKHR"));
-			device_functions.GetAccelerationStructureDeviceAddressKHR = PFN_vkGetAccelerationStructureDeviceAddressKHR(functions.GetDeviceProcAddr(vk_device, "vkGetAccelerationStructureDeviceAddressKHR"));
+			device_functions.GetAccelerationStructureDeviceAddressKHR = PFN_vkGetAccelerationStructureDeviceAddressKHR(functions.GetDeviceProcAddr(vk_device, "vkGetAccelerationStructureDeviceAddressKHR")); // Fork(Lestoroer)
 			device_functions.CmdBuildAccelerationStructuresKHR = PFN_vkCmdBuildAccelerationStructuresKHR(functions.GetDeviceProcAddr(vk_device, "vkCmdBuildAccelerationStructuresKHR"));
 		}
 
@@ -2941,6 +2943,7 @@ void RenderingDeviceDriverVulkan::command_pipeline_barrier(
 	for (uint32_t i = 0; i < p_memory_barriers.size(); i++) {
 		vk_memory_barriers[i] = {};
 		vk_memory_barriers[i].sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+		// Fork(Lestoroer): upstream always masked out VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR here.
 		vk_memory_barriers[i].srcAccessMask = _rd_to_vk_access_flags(p_memory_barriers[i].src_access) & global_access_mask;
 		vk_memory_barriers[i].dstAccessMask = _rd_to_vk_access_flags(p_memory_barriers[i].dst_access) & global_access_mask;
 	}
@@ -6475,6 +6478,7 @@ void RenderingDeviceDriverVulkan::_acceleration_structure_create(VkAccelerationS
 	accel_create_info.buffer = ((const BufferInfo *)buffer.id)->vk_buffer;
 	VkResult err = device_functions.CreateAccelerationStructureKHR(vk_device, &accel_create_info, nullptr, &r_accel_info->vk_acceleration_structure);
 	ERR_FAIL_COND_MSG(err, vformat("Couldn't create Vulkan raytracing acceleration structure (VkResult error %d).", err));
+	// Fork(Lestoroer): TLAS instances reference this address; see acceleration_structure_instance_write().
 	VkAccelerationStructureDeviceAddressInfoKHR address_info = {};
 	address_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
 	address_info.accelerationStructure = r_accel_info->vk_acceleration_structure;

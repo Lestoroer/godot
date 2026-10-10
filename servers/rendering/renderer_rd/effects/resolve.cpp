@@ -50,7 +50,7 @@ Resolve::Resolve(bool p_prefer_raster_effects) {
 		resolve_modes.push_back("\n#define MODE_RESOLVE_GI\n");
 		resolve_modes.push_back("\n#define MODE_RESOLVE_GI\n#define VOXEL_GI_RESOLVE\n");
 		resolve_modes.push_back("\n#define MODE_RESOLVE_DEPTH\n");
-		resolve_modes.push_back("\n#define MODE_RESOLVE_GI\n#define VOXEL_GI_RESOLVE\n#define SURFACE_CACHE_RESOLVE\n");
+		resolve_modes.push_back("\n#define MODE_RESOLVE_GI\n#define VOXEL_GI_RESOLVE\n#define SURFACE_CACHE_RESOLVE\n"); // Fork(Lestoroer)
 
 		resolve.shader.initialize(resolve_modes);
 
@@ -70,6 +70,7 @@ Resolve::~Resolve() {
 	}
 }
 
+// Fork(Lestoroer): p_*_voxel_gi renamed to p_*_ids (they also carry Surface Cache visibility); p_surface_cache added.
 void Resolve::resolve_gi(RID p_source_depth, RID p_source_normal_roughness, RID p_source_ids, RID p_dest_depth, RID p_dest_normal_roughness, RID p_dest_ids, Vector2i p_screen_size, int p_samples, bool p_surface_cache) {
 	ERR_FAIL_COND_MSG(prefer_raster_effects, "Can't use the compute shader resolve with the mobile renderer.");
 
@@ -91,6 +92,7 @@ void Resolve::resolve_gi(RID p_source_depth, RID p_source_normal_roughness, RID 
 	RD::Uniform u_dest_depth(RD::UNIFORM_TYPE_IMAGE, 0, Vector<RID>({ p_dest_depth }));
 	RD::Uniform u_dest_normal_roughness(RD::UNIFORM_TYPE_IMAGE, 1, Vector<RID>({ p_dest_normal_roughness }));
 
+	// Fork(Lestoroer): Surface Cache visibility is RGBA32UI, resolved by its own variant.
 	ResolveMode mode = p_surface_cache ? RESOLVE_MODE_SURFACE_CACHE : (p_source_ids.is_valid() ? RESOLVE_MODE_GI_VOXEL_GI : RESOLVE_MODE_GI);
 	RID shader = resolve.shader.version_get_shader(resolve.shader_version, mode);
 	ERR_FAIL_COND(shader.is_null());
@@ -99,7 +101,7 @@ void Resolve::resolve_gi(RID p_source_depth, RID p_source_normal_roughness, RID 
 	RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, resolve.pipelines[mode]);
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_source_depth, u_source_normal_roughness), 0);
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_dest_depth, u_dest_normal_roughness), 1);
-	if (p_source_ids.is_valid()) {
+	if (p_source_ids.is_valid()) { // Fork(Lestoroer): parameter rename only.
 		RD::Uniform u_source_voxel_gi(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ default_sampler, p_source_ids }));
 		RD::Uniform u_dest_voxel_gi(RD::UNIFORM_TYPE_IMAGE, 0, p_dest_ids);
 

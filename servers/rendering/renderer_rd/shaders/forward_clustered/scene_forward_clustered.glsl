@@ -98,7 +98,7 @@ void axis_angle_to_tbn(vec3 axis, float angle, out vec3 tangent, out vec3 binorm
 /* Varyings */
 
 layout(location = 0) out vec3 vertex_interp;
-#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE)
+#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE) // Fork(Lestoroer): centroid position for primary visibility barycentrics.
 layout(location = 18) centroid out vec3 surface_cache_vertex_centroid;
 #endif
 
@@ -497,7 +497,7 @@ void vertex_shader(vec3 vertex_input,
 #endif
 
 	vertex_interp = vertex;
-#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE)
+#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE) // Fork(Lestoroer)
 	surface_cache_vertex_centroid = vertex;
 #endif
 
@@ -509,6 +509,7 @@ void vertex_shader(vec3 vertex_input,
 
 #ifdef TANGENT_USED
 	tangent_interp = normalize(tangent);
+	// Fork(Lestoroer): was normalize(binormal); a degenerate binormal stays zero instead of NaN.
 	binormal_interp = binormal * inversesqrt(max(dot(binormal, binormal), 1e-20));
 #endif
 
@@ -705,6 +706,7 @@ void vertex_shader(vec3 vertex_input,
 			uv_dest_attrib = uv2_attrib.xy;
 		}
 
+		// Fork(Lestoroer): conservative raster of the deindexed capture triangle.
 		if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)) {
 			vec2 corners[3] = vec2[](surface_cache_ab_attrib.xy, surface_cache_ab_attrib.zw, surface_cache_c_attrib);
 			int corner = gl_VertexIndex % 3;
@@ -785,6 +787,7 @@ void _unpack_vertex_attributes(vec4 p_vertex_in, vec3 p_compressed_aabb_position
 		vec2 signed_tangent_attrib = p_normal_in.zw * 2.0 - 1.0;
 		r_tangent = oct_to_vec3(vec2(signed_tangent_attrib.x, abs(signed_tangent_attrib.y) * 2.0 - 1.0));
 		binormal_sign = sign(signed_tangent_attrib.y);
+		// Fork(Lestoroer): was normalize(cross(...)); a degenerate binormal stays zero instead of NaN.
 		r_binormal = cross(r_normal, r_tangent) * binormal_sign;
 		r_binormal *= inversesqrt(max(dot(r_binormal, r_binormal), 1e-20));
 	} else {
@@ -916,7 +919,7 @@ void main() {
 /* Varyings */
 
 layout(location = 0) in vec3 vertex_interp;
-#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE)
+#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE) // Fork(Lestoroer)
 layout(location = 18) centroid in vec3 surface_cache_vertex_centroid;
 #endif
 
@@ -925,17 +928,18 @@ layout(location = 1) in vec3 normal_interp;
 #endif
 
 #if defined(COLOR_USED)
+// Fork(Lestoroer): *_raw inputs; the upstream names become globals resampled at the capture point in fragment_shader().
 layout(location = 2) in vec4 color_interp_raw;
 vec4 color_interp;
 #endif
 
 #ifdef UV_USED
-layout(location = 3) in vec2 uv_interp_raw;
+layout(location = 3) in vec2 uv_interp_raw; // Fork(Lestoroer)
 vec2 uv_interp;
 #endif
 
 #if defined(UV2_USED) || defined(USE_LIGHTMAP)
-layout(location = 4) in vec2 uv2_interp_raw;
+layout(location = 4) in vec2 uv2_interp_raw; // Fork(Lestoroer)
 vec2 uv2_interp;
 #endif
 
@@ -1071,7 +1075,7 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 /* clang-format on */
 #endif
 
-#ifdef MODE_RENDER_MATERIAL
+#ifdef MODE_RENDER_MATERIAL // Fork(Lestoroer): capture triangle from the vertex stage.
 layout(location = 15) in flat vec4 surface_cache_ab_interp;
 layout(location = 16) in flat vec2 surface_cache_c_interp;
 layout(location = 17) in vec2 surface_cache_uv_interp;
@@ -1094,7 +1098,7 @@ layout(location = 4) out vec4 depth_output_buffer; // Fork(Lestoroer): capture w
 
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
 layout(location = 0) out vec4 normal_roughness_output_buffer;
-#ifdef MODE_RENDER_SURFACE_CACHE
+#ifdef MODE_RENDER_SURFACE_CACHE // Fork(Lestoroer)
 layout(location = 1) out uvec4 surface_cache_primary_output;
 #endif
 
@@ -1121,6 +1125,7 @@ layout(location = 2) out vec2 motion_vector;
 #endif
 
 #include "../scene_forward_aa_inc.glsl"
+// Fork(Lestoroer)
 #include "../surface_cache_inc.glsl"
 
 #if !defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
@@ -1305,7 +1310,7 @@ void fragment_shader(in SceneData scene_data) {
 	float premul_alpha = 1.0;
 #endif // PREMUL_ALPHA_USED
 	//lay out everything, whatever is unused is optimized away anyway
-	vec3 vertex = surface_cache_sample(vertex_interp);
+	vec3 vertex = surface_cache_sample(vertex_interp); // Fork(Lestoroer): identity outside capture.
 #ifdef USE_MULTIVIEW
 	vec3 eye_offset = scene_data.eye_offset[ViewIndex].xyz;
 	vec3 view_highp = -normalize(vertex_interp - eye_offset);
@@ -1324,7 +1329,7 @@ void fragment_shader(in SceneData scene_data) {
 	float transmittance_boost = 0.0;
 	float metallic_highp = 0.0;
 	float specular = 0.5;
-	float surface_cache_transmission = 0.0;
+	float surface_cache_transmission = 0.0; // Fork(Lestoroer)
 	vec3 emission = vec3(0.0);
 	float roughness_highp = 1.0;
 	float rim = 0.0;
@@ -1348,17 +1353,17 @@ void fragment_shader(in SceneData scene_data) {
 	float alpha_highp = float(instances.data[instance_index].flags >> INSTANCE_FLAGS_FADE_SHIFT) / float(255.0);
 
 #ifdef TANGENT_USED
-	vec3 binormal = surface_cache_sample(binormal_interp);
-	vec3 tangent = surface_cache_sample(tangent_interp);
+	vec3 binormal = surface_cache_sample(binormal_interp); // Fork(Lestoroer)
+	vec3 tangent = surface_cache_sample(tangent_interp); // Fork(Lestoroer)
 #else
 	vec3 binormal = vec3(0.0);
 	vec3 tangent = vec3(0.0);
 #endif
 
 #ifdef NORMAL_USED
-	vec3 normal_highp = surface_cache_sample(normal_interp);
+	vec3 normal_highp = surface_cache_sample(normal_interp); // Fork(Lestoroer)
 #if defined(DO_SIDE_CHECK)
-	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE) : !gl_FrontFacing) {
+	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE) : !gl_FrontFacing) { // Fork(Lestoroer): capture side replaces gl_FrontFacing.
 		normal_highp = -normal_highp;
 	}
 #endif // DO_SIDE_CHECK
@@ -1444,6 +1449,7 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 #endif
 
+// Fork(Lestoroer): inputs for SURFACE_CACHE_IRRADIANCE and SURFACE_CACHE_GATHER_USED.
 #if defined(SURFACE_CACHE_INPUT_USED) || defined(SURFACE_CACHE_GATHER_INFO_USED)
 	vec4 surface_cache_input = vec4(0.0);
 	bool surface_cache_gather_used = false;
@@ -1457,7 +1463,7 @@ void fragment_shader(in SceneData scene_data) {
 	}
 #endif
 #endif
-	if (!bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE)) {
+	if (!bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE)) { // Fork(Lestoroer): was a bare block; the coverage pass skips user code.
 #CODE : FRAGMENT
 	}
 
@@ -1876,7 +1882,7 @@ void fragment_shader(in SceneData scene_data) {
 #if defined(CUSTOM_IRRADIANCE_USED)
 	ambient_light = mix(ambient_light, custom_irradiance.rgb, custom_irradiance.a);
 #endif
-#ifndef SURFACE_CACHE_INPUT_USED
+#ifndef SURFACE_CACHE_INPUT_USED // Fork(Lestoroer): Surface Cache replaces ambient light unless the material reads it itself.
 	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
 		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 		if (cache_surface > 0u) {
@@ -2308,7 +2314,7 @@ void fragment_shader(in SceneData scene_data) {
 		} else {
 			specular_occlusion = (ambient_light.r * 0.3 + ambient_light.g * 0.59 + ambient_light.b * 0.11) * 2.0; // Luminance of ambient light.
 			specular_occlusion = min(specular_occlusion * 4.0, 1.0); // This multiplication preserves speculars on bright areas.
-	
+
 			float reflective_f = (1.0 - roughness) * metallic;
 			// 10.0 is a magic number, it gives the intended effect in most scenarios.
 			// Low enough for occlusion, high enough for reaction to lights and shadows.
@@ -2500,7 +2506,6 @@ void fragment_shader(in SceneData scene_data) {
 	m_var.xyz += normal_bias;
 
 					//version with soft shadows, more expensive
-					// Fork(Lestoroer): temporary PCF-only comparison; preserve light size, bias and GI.
 					if (sc_use_directional_soft_shadows() && directional_lights.data[i].softshadow_angle > 0) {
 						uint blend_count = 0;
 						const uint blend_max = directional_lights.data[i].blend_splits ? 2 : 1;
@@ -2517,6 +2522,7 @@ void fragment_shader(in SceneData scene_data) {
 							float range_begin = directional_lights.data[i].shadow_range_begin.x;
 							float test_radius = (range_pos - range_begin) * directional_lights.data[i].softshadow_angle;
 							vec2 tex_scale = directional_lights.data[i].uv_scale1 * test_radius;
+							// Fork(Lestoroer): filter_scale and receiver-plane derivatives added to each cascade sample.
 							vec2 filter_scale = directional_lights.data[i].uv_scale1 * directional_lights.data[i].shadow_z_range.x * directional_lights.data[i].softshadow_angle * directional_lights.data[i].soft_shadow_scale;
 							shadow = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, filter_scale, scene_data.taa_frame_count, mat3(directional_lights.data[i].shadow_matrix1) * vertex_ddx, mat3(directional_lights.data[i].shadow_matrix1) * vertex_ddy);
 							blend_count++;
@@ -2534,7 +2540,7 @@ void fragment_shader(in SceneData scene_data) {
 							float range_begin = directional_lights.data[i].shadow_range_begin.y;
 							float test_radius = (range_pos - range_begin) * directional_lights.data[i].softshadow_angle;
 							vec2 tex_scale = directional_lights.data[i].uv_scale2 * test_radius;
-							vec2 filter_scale = directional_lights.data[i].uv_scale2 * directional_lights.data[i].shadow_z_range.y * directional_lights.data[i].softshadow_angle * directional_lights.data[i].soft_shadow_scale;
+							vec2 filter_scale = directional_lights.data[i].uv_scale2 * directional_lights.data[i].shadow_z_range.y * directional_lights.data[i].softshadow_angle * directional_lights.data[i].soft_shadow_scale; // Fork(Lestoroer)
 							float s = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, filter_scale, scene_data.taa_frame_count, mat3(directional_lights.data[i].shadow_matrix2) * vertex_ddx, mat3(directional_lights.data[i].shadow_matrix2) * vertex_ddy);
 
 							if (blend_count == 0) {
@@ -2560,7 +2566,7 @@ void fragment_shader(in SceneData scene_data) {
 							float range_begin = directional_lights.data[i].shadow_range_begin.z;
 							float test_radius = (range_pos - range_begin) * directional_lights.data[i].softshadow_angle;
 							vec2 tex_scale = directional_lights.data[i].uv_scale3 * test_radius;
-							vec2 filter_scale = directional_lights.data[i].uv_scale3 * directional_lights.data[i].shadow_z_range.z * directional_lights.data[i].softshadow_angle * directional_lights.data[i].soft_shadow_scale;
+							vec2 filter_scale = directional_lights.data[i].uv_scale3 * directional_lights.data[i].shadow_z_range.z * directional_lights.data[i].softshadow_angle * directional_lights.data[i].soft_shadow_scale; // Fork(Lestoroer)
 							float s = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, filter_scale, scene_data.taa_frame_count, mat3(directional_lights.data[i].shadow_matrix3) * vertex_ddx, mat3(directional_lights.data[i].shadow_matrix3) * vertex_ddy);
 
 							if (blend_count == 0) {
@@ -2586,7 +2592,7 @@ void fragment_shader(in SceneData scene_data) {
 							float range_begin = directional_lights.data[i].shadow_range_begin.w;
 							float test_radius = (range_pos - range_begin) * directional_lights.data[i].softshadow_angle;
 							vec2 tex_scale = directional_lights.data[i].uv_scale4 * test_radius;
-							vec2 filter_scale = directional_lights.data[i].uv_scale4 * directional_lights.data[i].shadow_z_range.w * directional_lights.data[i].softshadow_angle * directional_lights.data[i].soft_shadow_scale;
+							vec2 filter_scale = directional_lights.data[i].uv_scale4 * directional_lights.data[i].shadow_z_range.w * directional_lights.data[i].softshadow_angle * directional_lights.data[i].soft_shadow_scale; // Fork(Lestoroer)
 							float s = sample_directional_soft_shadow(directional_shadow_atlas, pssm_coord.xyz, tex_scale * directional_lights.data[i].soft_shadow_scale, filter_scale, scene_data.taa_frame_count, mat3(directional_lights.data[i].shadow_matrix4) * vertex_ddx, mat3(directional_lights.data[i].shadow_matrix4) * vertex_ddy);
 
 							if (blend_count == 0) {
@@ -3151,9 +3157,10 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 
 #ifdef MODE_RENDER_MATERIAL
-	if (!surface_cache_covered) { discard; }
+	if (!surface_cache_covered) { discard; } // Fork(Lestoroer): outside the exact triangle/texel intersection.
 
 	albedo_output_buffer.rgb = albedo;
+	// Fork(Lestoroer): capture outputs: unencoded normal, transmission, barycentrics + primitive, specular.
 	albedo_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE) ? 0.0 : alpha;
 
 	normal_output_buffer.rgb = (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? normalize(normal) : encode24(normal)) * 0.5 + 0.5;
@@ -3163,7 +3170,7 @@ void fragment_shader(in SceneData scene_data) {
 	orm_output_buffer.r = ao;
 	orm_output_buffer.g = roughness;
 	orm_output_buffer.b = metallic;
-	orm_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? specular : sss_strength;
+	orm_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? specular : sss_strength; // Fork(Lestoroer)
 
 	emission_output_buffer.rgb = emission;
 	emission_output_buffer.a = 0.0;
@@ -3171,7 +3178,7 @@ void fragment_shader(in SceneData scene_data) {
 
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
 	normal_roughness_output_buffer = vec4(encode24(normal) * 0.5 + 0.5, roughness);
-#ifdef MODE_RENDER_SURFACE_CACHE
+#ifdef MODE_RENDER_SURFACE_CACHE // Fork(Lestoroer): surface, primitive + 1 and centroid barycentrics.
 	uint surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 	uint primitive = uint(gl_PrimitiveID);
 	surface_cache_primary_output = uvec4(0u);
@@ -3272,6 +3279,7 @@ void fragment_shader(in SceneData scene_data) {
 	frag_color = vec4(albedo, alpha);
 #else
 	frag_color = vec4(emission + ambient_light + diffuse_light + direct_specular_light + indirect_specular_light, alpha);
+	// Fork(Lestoroer): thin glass: resolved transmitted light plus attenuated background.
 	if (surface_cache_transmission > 0.0 && bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
 		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 		ivec2 pixel = ivec2(gl_FragCoord.xy);

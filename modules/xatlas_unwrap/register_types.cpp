@@ -38,9 +38,9 @@
 
 #include <cstring>
 
-extern bool (*array_mesh_lightmap_unwrap_callback)(float p_texel_size, const float *p_vertices, const float *p_normals, int p_vertex_count, const int *p_indices, int p_index_count, const uint8_t *p_cache_data, bool *r_use_cache, uint8_t **r_mesh_cache, int *r_mesh_cache_size, float **r_uv, int **r_vertex, int *r_vertex_count, int **r_index, int *r_index_count, int *r_size_hint_x, int *r_size_hint_y, int **r_chart_ids);
+extern bool (*array_mesh_lightmap_unwrap_callback)(float p_texel_size, const float *p_vertices, const float *p_normals, int p_vertex_count, const int *p_indices, int p_index_count, const uint8_t *p_cache_data, bool *r_use_cache, uint8_t **r_mesh_cache, int *r_mesh_cache_size, float **r_uv, int **r_vertex, int *r_vertex_count, int **r_index, int *r_index_count, int *r_size_hint_x, int *r_size_hint_y);
 
-bool xatlas_mesh_lightmap_unwrap_callback(float p_texel_size, const float *p_vertices, const float *p_normals, int p_vertex_count, const int *p_indices, int p_index_count, const uint8_t *p_cache_data, bool *r_use_cache, uint8_t **r_mesh_cache, int *r_mesh_cache_size, float **r_uv, int **r_vertex, int *r_vertex_count, int **r_index, int *r_index_count, int *r_size_hint_x, int *r_size_hint_y, int **r_chart_ids) {
+bool xatlas_mesh_lightmap_unwrap_callback(float p_texel_size, const float *p_vertices, const float *p_normals, int p_vertex_count, const int *p_indices, int p_index_count, const uint8_t *p_cache_data, bool *r_use_cache, uint8_t **r_mesh_cache, int *r_mesh_cache_size, float **r_uv, int **r_vertex, int *r_vertex_count, int **r_index, int *r_index_count, int *r_size_hint_x, int *r_size_hint_y) {
 	CryptoCore::MD5Context ctx;
 	ctx.start();
 
@@ -58,7 +58,7 @@ bool xatlas_mesh_lightmap_unwrap_callback(float p_texel_size, const float *p_ver
 	*r_mesh_cache = nullptr;
 	*r_mesh_cache_size = 0;
 
-	if (p_cache_data && !r_chart_ids) {
+	if (p_cache_data) {
 		//Check if hash is in cache data
 		int *cache_data = (int *)p_cache_data;
 		int n_entries = cache_data[0];
@@ -129,7 +129,7 @@ bool xatlas_mesh_lightmap_unwrap_callback(float p_texel_size, const float *p_ver
 		ERR_FAIL_COND_V_MSG(p_texel_size <= 0.0f, false, "Texel size must be greater than 0.");
 
 		xatlas::PackOptions pack_options;
-		pack_options.padding = r_chart_ids ? 2 : 1;
+		pack_options.padding = 1;
 		pack_options.maxChartSize = 4094; // Lightmap atlassing needs 2 for padding between meshes, so 4096-2
 		pack_options.blockAlign = true;
 		pack_options.texelsPerUnit = 1.0 / p_texel_size;
@@ -161,17 +161,10 @@ bool xatlas_mesh_lightmap_unwrap_callback(float p_texel_size, const float *p_ver
 		*r_index = (int *)memalloc(sizeof(int) * output.indexCount);
 		ERR_FAIL_NULL_V_MSG(*r_index, false, "Out of memory.");
 
-		if (r_chart_ids) {
-			*r_chart_ids = (int *)memalloc(sizeof(int) * output.vertexCount);
-		}
-
 		float max_x = 0;
 		float max_y = 0;
 		for (uint32_t i = 0; i < output.vertexCount; i++) {
 			(*r_vertex)[i] = output.vertexArray[i].xref;
-			if (r_chart_ids) {
-				(*r_chart_ids)[i] = output.vertexArray[i].chartIndex + 1;
-			}
 			(*r_uv)[i * 2 + 0] = output.vertexArray[i].uv[0] / w;
 			(*r_uv)[i * 2 + 1] = output.vertexArray[i].uv[1] / h;
 			max_x = MAX(max_x, output.vertexArray[i].uv[0]);

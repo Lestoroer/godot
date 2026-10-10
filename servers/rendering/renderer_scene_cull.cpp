@@ -603,17 +603,17 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 				data["light_params"] = params;
 			} else {
 				data["deformed"] = instance->mesh_instance.is_valid();
-                data["mesh_revision"] = RSG::mesh_storage->mesh_get_geometry_revision(instance->base);
-                bool displacement = RSG::material_storage->material_has_shader_displacement(instance->material_overlay);
-                if (instance->material_override.is_valid()) {
-                    displacement |= RSG::material_storage->material_has_shader_displacement(instance->material_override);
-                } else {
-                    for (int i = 0; i < instance->materials.size(); i++) {
-                        RID material = instance->materials[i].is_valid() ? instance->materials[i] : RSG::mesh_storage->mesh_surface_get_material(instance->base, i);
-                        displacement |= RSG::material_storage->material_has_shader_displacement(material);
-                    }
-                }
-                data["shader_displacement"] = displacement;
+				data["mesh_revision"] = RSG::mesh_storage->mesh_get_geometry_revision(instance->base);
+				bool displacement = RSG::material_storage->material_has_shader_displacement(instance->material_overlay);
+				if (instance->material_override.is_valid()) {
+					displacement |= RSG::material_storage->material_has_shader_displacement(instance->material_override);
+				} else {
+					for (int i = 0; i < instance->materials.size(); i++) {
+						RID material = instance->materials[i].is_valid() ? instance->materials[i] : RSG::mesh_storage->mesh_surface_get_material(instance->base, i);
+						displacement |= RSG::material_storage->material_has_shader_displacement(material);
+					}
+				}
+				data["shader_displacement"] = displacement;
 			}
 		}
 		result.push_back(data);
@@ -630,7 +630,7 @@ Dictionary RendererSceneCull::instance_get_deformed_surface(RID p_instance, int 
 }
 
 void RendererSceneCull::_instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies) const {
-	_surface_cache_queue(p_instance, (p_update_aabb ? 2u : 4u) | (p_update_dependencies ? 1u : 0u));
+	_surface_cache_queue(p_instance, (p_update_aabb ? 2u : 4u) | (p_update_dependencies ? 1u : 0u)); // Fork(Lestoroer): no-op without a Surface Cache controller.
 	if (p_update_aabb) {
 		p_instance->update_aabb = true;
 	}
@@ -841,7 +841,7 @@ void RendererSceneCull::instance_set_base(RID p_instance, RID p_base) {
 				geom->geometry_instance->set_transparency(instance->transparency);
 				geom->geometry_instance->set_highlighted(instance->highlighted); // Fork(Lestoroer)
 				geom->geometry_instance->set_use_baked_light(instance->baked_light);
-				geom->geometry_instance->set_surface_cache_ids(instance->surface_cache_ids);
+				geom->geometry_instance->set_surface_cache_ids(instance->surface_cache_ids); // Fork(Lestoroer)
 				geom->geometry_instance->set_use_dynamic_gi(instance->dynamic_gi);
 				geom->geometry_instance->set_use_lightmap(RID(), instance->lightmap_uv_scale, instance->lightmap_slice_index);
 				geom->geometry_instance->set_instance_shader_uniforms_offset(instance->instance_uniforms.location());
@@ -933,7 +933,7 @@ void RendererSceneCull::instance_set_scenario(RID p_instance, RID p_scenario) {
 	ERR_FAIL_NULL(instance);
 
 	if (instance->scenario) {
-		_surface_cache_queue(instance, 15);
+		_surface_cache_queue(instance, 15); // Fork(Lestoroer)
 		instance->scenario->instances.remove(&instance->scenario_item);
 
 		if (instance->indexer_id.is_valid()) {
@@ -1152,7 +1152,7 @@ void RendererSceneCull::instance_set_blend_shape_weight(RID p_instance, int p_sh
 
 	if (instance->mesh_instance.is_valid()) {
 		RSG::mesh_storage->mesh_instance_set_blend_shape_weight(instance->mesh_instance, p_shape, p_weight);
-		_surface_cache_queue(instance, 8);
+		_surface_cache_queue(instance, 8); // Fork(Lestoroer)
 	}
 
 	_instance_queue_update(instance, false, false);
@@ -1183,7 +1183,7 @@ void RendererSceneCull::instance_set_visible(RID p_instance, bool p_visible) {
 	}
 
 	instance->visible = p_visible;
-	_surface_cache_queue(instance, 15);
+	_surface_cache_queue(instance, 15); // Fork(Lestoroer)
 
 	if (p_visible) {
 		if (instance->scenario != nullptr) {
@@ -1381,7 +1381,7 @@ void RendererSceneCull::instance_geometry_set_flag(RID p_instance, RSE::Instance
 	switch (p_flags) {
 		case RSE::INSTANCE_FLAG_USE_BAKED_LIGHT: {
 			instance->baked_light = p_enabled;
-			_surface_cache_queue(instance, 15);
+			_surface_cache_queue(instance, 15); // Fork(Lestoroer)
 
 			if (instance->scenario && instance->array_index >= 0) {
 				InstanceData &idata = instance->scenario->instance_data[instance->array_index];
@@ -1412,7 +1412,7 @@ void RendererSceneCull::instance_geometry_set_flag(RID p_instance, RSE::Instance
 
 			//once out of octree, can be changed
 			instance->dynamic_gi = p_enabled;
-			_surface_cache_queue(instance, 15);
+			_surface_cache_queue(instance, 15); // Fork(Lestoroer)
 
 			if ((1 << instance->base_type) & RSE::INSTANCE_GEOMETRY_MASK && instance->base_data) {
 				InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(instance->base_data);
@@ -1702,7 +1702,7 @@ void RendererSceneCull::instance_geometry_set_shader_parameter(RID p_instance, c
 	ERR_FAIL_NULL(instance);
 
 	instance->instance_uniforms.set(instance->self, p_parameter, p_value);
-	_surface_cache_queue(instance, 4);
+	_surface_cache_queue(instance, 4); // Fork(Lestoroer)
 }
 
 // Fork(Lestoroer): source owns material, transform and instance-uniform state.
@@ -3854,6 +3854,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	}
 
 	RENDER_TIMESTAMP("Render 3D Scene");
+	// Fork(Lestoroer): Surface Cache world update once per frame, then its render context.
 	// A mirror's camera consumes the same world snapshot; it cannot update it twice.
 	uint64_t surface_cache_frame = RSG::rasterizer->get_frame_number();
 	if (scenario->surface_cache_callback.is_valid() && scenario->surface_cache_frame != surface_cache_frame) {
@@ -3928,7 +3929,7 @@ void RendererSceneCull::render_empty_scene(const Ref<RenderSceneBuffers> &p_rend
 	RendererSceneRender::CameraData camera_data;
 	camera_data.set_camera(Transform3D(), Projection(), true, false);
 
-	scene_render->surface_cache_set_context(scenario->surface_cache_buffers, scenario->surface_cache_view_callback);
+	scene_render->surface_cache_set_context(scenario->surface_cache_buffers, scenario->surface_cache_view_callback); // Fork(Lestoroer)
 	scene_render->render_scene(p_render_buffers, &camera_data, &camera_data, PagedArray<RenderGeometryInstance *>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), environment, RID(), compositor, p_shadow_atlas, RID(), scenario->reflection_atlas, RID(), 0, 0, nullptr, 0, nullptr, 0, p_window_output_max_value, nullptr);
 #endif
 }
