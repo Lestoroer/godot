@@ -2802,7 +2802,7 @@ bool MaterialStorage::material_has_shader_displacement(RID p_material) {
 			(material->next_pass.is_valid() && material_has_shader_displacement(material->next_pass));
 }
 
-// Every pass only presents the surface (outline, highlight): Surface Cache capture skips it.
+// Fork(Lestoroer): every pass only presents the surface (outline, highlight); capture skips it.
 bool MaterialStorage::material_is_surface_cache_presentation(RID p_material) {
 	Material *material = material_owner.get_or_null(p_material);
 	if (!material || !material->shader || !material->shader->data || !material->shader->data->is_surface_cache_presentation()) return false;
