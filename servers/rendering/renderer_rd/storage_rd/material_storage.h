@@ -503,6 +503,7 @@ public:
 	virtual void material_set_shader(RID p_material, RID p_shader) override;
 	ShaderData *material_get_shader_data(RID p_material);
 	bool material_has_shader_displacement(RID p_material) override; // Fork(Lestoroer)
+	bool material_is_surface_cache_presentation(RID p_material) override; // Fork(Lestoroer)
 
 	virtual void material_set_param(RID p_material, const StringName &p_param, const Variant &p_value) override;
 	virtual Variant material_get_param(RID p_material, const StringName &p_param) const override;

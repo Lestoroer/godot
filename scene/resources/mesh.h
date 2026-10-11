@@ -184,6 +184,7 @@ public:
 	virtual AABB get_aabb() const;
 
 	Dictionary surface_cache_get_layout(int p_surface, float p_texel_size) const; // Fork(Lestoroer): non-destructive chart remap.
+	Dictionary surface_cache_prepare(const Vector<float> &p_texel_sizes) const; // Fork(Lestoroer): capture meshes and ray triangles in one pass.
 	Vector<Face3> get_faces() const;
 	Vector<Face3> get_surface_faces(int p_surface) const;
 	Ref<TriangleMesh> generate_triangle_mesh() const;
