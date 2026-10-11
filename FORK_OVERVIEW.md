@@ -119,9 +119,8 @@ Interior Star» в `FORK_NOTES.md`. GI работает только на Vulkan
 - Язык шейдеров: render modes `surface_cache_global_invariant` и
   `surface_cache_presentation`, built-ins `IN_SURFACE_CACHE_PASS`,
   `SURFACE_CACHE_IRRADIANCE`, `SURFACE_CACHE_TRANSMISSION`, `SURFACE_CACHE_GATHER_USED`.
-- Штатное поведение направленных теней изменено во всех сценах: PCSS и PCF сравнивают
-  глубину с плоскостью приёмника, полутень считается для параллельных лучей, качество
-  Hard не фильтрует.
+- Качество Hard направленных теней не фильтрует; PCSS и остальные уровни PCF — как
+  в upstream.
 - `--editor --script` не создаёт лишний SceneTree.
 - Мелкие отличия штатного поведения: region-обновления меша уведомляют зависимых,
   повторная установка того же параметра материала, global uniform или цвета света
