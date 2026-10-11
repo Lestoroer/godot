@@ -419,6 +419,17 @@ GI работает только на Vulkan с аппаратным ray query �
      `Geometry2D::make_atlas`. Результат: `capture_pixels`, `uv`, `source_vertices`,
      `charts`, `indices`, `size`, `tiles`, `sample_count`. Авторские UV/UV2/CUSTOM,
      порядок треугольников, skin и morph не меняются.
+   - `Mesh.surface_cache_prepare(texel_sizes)` — вся подготовка меша за один проход для
+     одного размера texel (раскладка материала) или двух (материала и освещения).
+     Поверхности складываются в атлас столбиком с отступом 2 texel. Для каждого размера —
+     свой `ArrayMesh` захвата: вершины повторены по углам треугольников, материалы
+     поверхностей и blend shapes исходного `ArrayMesh`, координаты захвата заданы
+     `mesh_surface_set_capture_uv`. Записи треугольников по 144 байта повторяют
+     `SurfaceCacheTriangle` из `surface_cache_inc.glsl`: вершины с исходными индексами,
+     UV и chart раскладки материала, знак ориентации по нормали, тайл; при втором размере —
+     UV, chart и тайл раскладки освещения. Результат: `layouts` (`size`, `sample_count`,
+     `mesh`, `surfaces` с `offset`, `size`, `tiles`, `charts`, `sample_count`),
+     `triangle_data`, `vertex_data` (float3 на угол).
    - `RenderingServer.mesh_surface_set_capture_uv` задаёт частному capture-мешу отдельный
      неизменяемый поток координат (в texel) до создания экземпляров.
    - `RenderingServer.instance_surface_cache_capture(instance, chart_instance, framebuffer,
@@ -461,6 +472,11 @@ GI работает только на Vulkan с аппаратным ray query �
    - `instance_get_deformed_surface` отдаёт заимствованный GPU-буфер skin/morph с layout и
      версией. Читать только на render thread; RID не хранить после callback.
    - `instance_set_surface_cache_ids` связывает поверхности экземпляра с таблицей кеша.
+   - `instance_geometry_set_material_overlay` не ставит событие Surface Cache, если старый
+     и новый overlay пусты или все их проходы `surface_cache_presentation`
+     (`RendererMaterialStorage::material_is_surface_cache_presentation`): захват такие
+     проходы пропускает. Уведомление `DEPENDENCY_CHANGED_MATERIAL` от такого материала
+     по-прежнему будит Surface Cache: оно не несёт источник.
 
    Проверки: `world_changes.gd`, `runtime_lifecycle.gd`, `profile_updates.gd`.
 

@@ -629,8 +629,10 @@ Dictionary RendererSceneCull::instance_get_deformed_surface(RID p_instance, int 
 	return RSG::mesh_storage->mesh_instance_get_deformed_surface(instance->mesh_instance, p_surface);
 }
 
-void RendererSceneCull::_instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies) const {
-	_surface_cache_queue(p_instance, (p_update_aabb ? 2u : 4u) | (p_update_dependencies ? 1u : 0u)); // Fork(Lestoroer): no-op without a Surface Cache controller.
+void RendererSceneCull::_instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies, bool p_surface_cache) const {
+	if (p_surface_cache) {
+		_surface_cache_queue(p_instance, (p_update_aabb ? 2u : 4u) | (p_update_dependencies ? 1u : 0u)); // Fork(Lestoroer): no-op without a Surface Cache controller.
+	}
 	if (p_update_aabb) {
 		p_instance->update_aabb = true;
 	}
@@ -1501,8 +1503,12 @@ void RendererSceneCull::instance_geometry_set_material_overlay(RID p_instance, R
 	Instance *instance = instance_owner.get_or_null(p_instance);
 	ERR_FAIL_NULL(instance);
 
+	// Fork(Lestoroer): Surface Cache capture skips presentation passes, so swapping such
+	// overlays (selection and hover outlines) leaves lighting unchanged.
+	const bool lighting_changed = (instance->material_overlay.is_valid() && !RSG::material_storage->material_is_surface_cache_presentation(instance->material_overlay)) ||
+			(p_material.is_valid() && !RSG::material_storage->material_is_surface_cache_presentation(p_material));
 	instance->material_overlay = p_material;
-	_instance_queue_update(instance, false, true);
+	_instance_queue_update(instance, false, true, lighting_changed);
 
 	if ((1 << instance->base_type) & RSE::INSTANCE_GEOMETRY_MASK && instance->base_data) {
 		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(instance->base_data);

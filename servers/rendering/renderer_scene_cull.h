@@ -640,7 +640,7 @@ public:
 	};
 
 	mutable SelfList<Instance>::List _instance_update_list;
-	void _instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies = false) const;
+	void _instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies = false, bool p_surface_cache = true) const; // Fork(Lestoroer): p_surface_cache
 
 	struct InstanceGeometryData : public InstanceBaseData {
 		RenderGeometryInstance *geometry_instance = nullptr;

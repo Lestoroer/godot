@@ -31,6 +31,7 @@
 #include "mesh.h"
 
 #include "core/math/convex_hull.h"
+#include "core/io/marshalls.h" // Fork(Lestoroer)
 #include "core/math/geometry_2d.h" // Fork(Lestoroer)
 #include "core/object/class_db.h"
 #include "core/templates/pair.h"
@@ -816,6 +817,7 @@ Ref<Resource> Mesh::create_placeholder() const {
 
 void Mesh::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("surface_cache_get_layout", "surface", "texel_size"), &Mesh::surface_cache_get_layout); // Fork(Lestoroer)
+	ClassDB::bind_method(D_METHOD("surface_cache_prepare", "texel_sizes"), &Mesh::surface_cache_prepare); // Fork(Lestoroer)
 	ClassDB::bind_method(D_METHOD("set_lightmap_size_hint", "size"), &Mesh::set_lightmap_size_hint);
 	ClassDB::bind_method(D_METHOD("get_lightmap_size_hint"), &Mesh::get_lightmap_size_hint);
 	ClassDB::bind_method(D_METHOD("get_aabb"), &Mesh::get_aabb);
@@ -2158,6 +2160,276 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 	result["size"] = size;
 	result["tiles"] = tiles;
 	result["sample_count"] = sample_count;
+	return result;
+}
+
+// Fork(Lestoroer): Surface Cache capture triangles own their three corners. The private
+// stream repeats every vertex attribute per corner; source geometry stays unchanged.
+// Returns false for an invalid attribute; an empty attribute leaves r_result unchanged.
+template <typename T>
+static bool _surface_cache_remap_vector(const Vector<T> &p_values, const Vector<int> &p_remap, int p_vertex_count, Variant &r_result) {
+	if (p_values.is_empty()) {
+		return true;
+	}
+	ERR_FAIL_COND_V_MSG(p_vertex_count <= 0 || p_values.size() % p_vertex_count != 0, false, "Surface Cache: vertex attribute length is not a multiple of the vertex count.");
+	const int stride = p_values.size() / p_vertex_count;
+	Vector<T> output;
+	output.resize(p_remap.size() * stride);
+	T *write = output.ptrw();
+	const T *read = p_values.ptr();
+	for (int vertex = 0; vertex < p_remap.size(); vertex++) {
+		const T *source = read + p_remap[vertex] * stride;
+		for (int component = 0; component < stride; component++) {
+			write[vertex * stride + component] = source[component];
+		}
+	}
+	r_result = output;
+	return true;
+}
+
+// Fork(Lestoroer): includes byte-packed CUSTOM, four tangent components and 4/8 bone weights.
+static bool _surface_cache_remap_arrays(const Array &p_arrays, const Vector<int> &p_remap, int p_vertex_count, Array &r_result) {
+	r_result.resize(Mesh::ARRAY_MAX);
+	for (int attribute = 0; attribute < Mesh::ARRAY_INDEX && attribute < p_arrays.size(); attribute++) {
+		const Variant &values = p_arrays[attribute];
+		Variant remapped;
+		bool valid = true;
+		switch (values.get_type()) {
+			case Variant::NIL:
+				break;
+			case Variant::PACKED_VECTOR3_ARRAY:
+				valid = _surface_cache_remap_vector(Vector<Vector3>(values), p_remap, p_vertex_count, remapped);
+				break;
+			case Variant::PACKED_VECTOR2_ARRAY:
+				valid = _surface_cache_remap_vector(Vector<Vector2>(values), p_remap, p_vertex_count, remapped);
+				break;
+			case Variant::PACKED_COLOR_ARRAY:
+				valid = _surface_cache_remap_vector(Vector<Color>(values), p_remap, p_vertex_count, remapped);
+				break;
+			case Variant::PACKED_FLOAT32_ARRAY:
+				valid = _surface_cache_remap_vector(Vector<float>(values), p_remap, p_vertex_count, remapped);
+				break;
+			case Variant::PACKED_FLOAT64_ARRAY:
+				valid = _surface_cache_remap_vector(Vector<double>(values), p_remap, p_vertex_count, remapped);
+				break;
+			case Variant::PACKED_INT32_ARRAY:
+				valid = _surface_cache_remap_vector(Vector<int32_t>(values), p_remap, p_vertex_count, remapped);
+				break;
+			case Variant::PACKED_BYTE_ARRAY:
+				valid = _surface_cache_remap_vector(Vector<uint8_t>(values), p_remap, p_vertex_count, remapped);
+				break;
+			default:
+				ERR_FAIL_V_MSG(false, "Surface Cache: unsupported vertex attribute array type.");
+		}
+		if (!valid) {
+			return false;
+		}
+		r_result[attribute] = remapped;
+	}
+	return true;
+}
+
+// Fork(Lestoroer): the complete Surface Cache preparation of a mesh. Every texel size gets
+// its own capture chart and capture mesh; the remap shared by them is computed once. Ray
+// triangle records (SurfaceCacheTriangle in surface_cache_inc.glsl) pack the first layout
+// and, for a second texel size, its chart coordinates and tiles as the lighting layout.
+Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const {
+	static constexpr int TRIANGLE_BYTES = 144;
+	const int layout_count = p_texel_sizes.size();
+	ERR_FAIL_COND_V_MSG(layout_count < 1 || layout_count > 2, Dictionary(), "Surface Cache prepares a material layout and an optional lighting layout.");
+	const int surface_count = get_surface_count();
+	ERR_FAIL_COND_V_MSG(surface_count == 0, Dictionary(), "Surface Cache: mesh has no surfaces.");
+	const ArrayMesh *array_mesh = Object::cast_to<ArrayMesh>(this);
+
+	struct Layout {
+		Vector<Dictionary> surfaces;
+		Size2i size;
+		int sample_count = 0;
+	};
+	Vector<Layout> layouts;
+	layouts.resize(layout_count);
+	for (int layout_index = 0; layout_index < layout_count; layout_index++) {
+		Layout &layout = layouts.write[layout_index];
+		for (int surface = 0; surface < surface_count; surface++) {
+			Dictionary chart = surface_cache_get_layout(surface, p_texel_sizes[layout_index]);
+			ERR_FAIL_COND_V_MSG(chart.is_empty(), Dictionary(), vformat("Surface Cache could not lay out surface %d of %s.", surface, get_path()));
+			// Surfaces stack vertically with a two-texel border.
+			const Vector2i offset(2, layout.size.y + 2);
+			const Size2i size = chart["size"];
+			layout.size.x = MAX(layout.size.x, size.x + 4);
+			layout.size.y += size.y + 4;
+			Vector<int> tiles = chart["tiles"];
+			int *tile = tiles.ptrw();
+			for (int triangle = 0; triangle < tiles.size() / 4; triangle++) {
+				tile[triangle * 4] += offset.x;
+				tile[triangle * 4 + 1] += offset.y;
+				tile[triangle * 4 + 3] += layout.sample_count;
+			}
+			layout.sample_count += int(chart["sample_count"]);
+			chart["tiles"] = tiles;
+			chart["offset"] = offset;
+			layout.surfaces.push_back(chart);
+		}
+	}
+
+	Vector<Ref<ArrayMesh>> meshes;
+	meshes.resize(layout_count);
+	for (int layout_index = 0; layout_index < layout_count; layout_index++) {
+		Ref<ArrayMesh> mesh;
+		mesh.instantiate();
+		if (array_mesh) {
+			for (int shape = 0; shape < array_mesh->get_blend_shape_count(); shape++) {
+				mesh->add_blend_shape(array_mesh->get_blend_shape_name(shape));
+			}
+			mesh->set_blend_shape_mode(array_mesh->get_blend_shape_mode());
+		}
+		meshes.write[layout_index] = mesh;
+	}
+
+	Array triangle_data;
+	Array vertex_data;
+	for (int surface = 0; surface < surface_count; surface++) {
+		const Dictionary first_chart = layouts[0].surfaces[surface];
+		const Vector<int> indices = first_chart["indices"];
+		const Vector<int> source_vertices = first_chart["source_vertices"];
+		const Array arrays = surface_get_arrays(surface);
+		const Vector<Vector3> positions = arrays[ARRAY_VERTEX];
+		const Vector<Vector3> normals = arrays[ARRAY_NORMAL];
+		const int corner_count = indices.size();
+
+		Vector<int> capture_remap;
+		capture_remap.resize(corner_count);
+		Vector<int> capture_indices;
+		capture_indices.resize(corner_count);
+		for (int corner = 0; corner < corner_count; corner++) {
+			capture_remap.write[corner] = source_vertices[indices[corner]];
+			capture_indices.write[corner] = corner;
+		}
+		Array remapped;
+		ERR_FAIL_COND_V(!_surface_cache_remap_arrays(arrays, capture_remap, positions.size(), remapped), Dictionary());
+		remapped[ARRAY_INDEX] = capture_indices;
+		TypedArray<Array> shapes;
+		BitField<ArrayFormat> flags = 0;
+		if (array_mesh) {
+			const TypedArray<Array> shape_arrays = surface_get_blend_shape_arrays(surface);
+			for (int shape = 0; shape < shape_arrays.size(); shape++) {
+				Array remapped_shape;
+				ERR_FAIL_COND_V(!_surface_cache_remap_arrays(shape_arrays[shape], capture_remap, positions.size(), remapped_shape), Dictionary());
+				shapes.push_back(remapped_shape);
+			}
+			flags = uint64_t(surface_get_format(surface)) & ~uint64_t(ARRAY_FLAG_COMPRESS_ATTRIBUTES);
+		}
+
+		// Chart coordinates per corner: capture pixels for the GPU capture, atlas UV for rays.
+		Vector<Vector<Vector2>> primitive_uv;
+		primitive_uv.resize(layout_count);
+		for (int layout_index = 0; layout_index < layout_count; layout_index++) {
+			const Dictionary chart = layouts[layout_index].surfaces[surface];
+			const Vector<int> chart_indices = chart["indices"];
+			const Vector<Vector2> uv = chart["uv"];
+			const Vector<Vector2> pixels = chart["capture_pixels"];
+			const Vector2 offset = Vector2(Vector2i(chart["offset"]));
+			const Vector2 chart_size = Vector2(Size2i(chart["size"]));
+			const Vector2 atlas = Vector2(layouts[layout_index].size);
+			Vector<Vector2> corner_uv;
+			corner_uv.resize(corner_count);
+			Vector<Vector2> capture_pixels;
+			capture_pixels.resize(corner_count);
+			for (int corner = 0; corner < corner_count; corner++) {
+				corner_uv.write[corner] = (uv[chart_indices[corner]] * chart_size + offset) / atlas;
+				capture_pixels.write[corner] = pixels[chart_indices[corner]] + offset;
+			}
+			Ref<ArrayMesh> mesh = meshes[layout_index];
+			mesh->add_surface_from_arrays(PRIMITIVE_TRIANGLES, remapped, shapes, Dictionary(), flags);
+			mesh->surface_set_material(surface, surface_get_material(surface));
+			RS::get_singleton()->mesh_surface_set_capture_uv(mesh->get_rid(), surface, capture_pixels);
+			primitive_uv.write[layout_index] = corner_uv;
+		}
+
+		const Vector<int> material_charts = first_chart["charts"];
+		const Vector<int> material_tiles = first_chart["tiles"];
+		Vector<int> lighting_charts;
+		Vector<int> lighting_tiles;
+		if (layout_count == 2) {
+			const Dictionary lighting_chart = layouts[1].surfaces[surface];
+			lighting_charts = lighting_chart["charts"];
+			lighting_tiles = lighting_chart["tiles"];
+		}
+		Vector<uint8_t> packed;
+		packed.resize(corner_count / 3 * TRIANGLE_BYTES);
+		memset(packed.ptrw(), 0, packed.size());
+		Vector<uint8_t> ray_vertices;
+		ray_vertices.resize(corner_count * 12);
+		uint8_t *write = packed.ptrw();
+		uint8_t *ray_write = ray_vertices.ptrw();
+		for (int corner = 0; corner < corner_count; corner += 3) {
+			uint8_t *record = write + corner / 3 * TRIANGLE_BYTES;
+			for (int word = 0; word < 4; word++) {
+				encode_uint32(uint32_t(material_tiles[corner / 3 * 4 + word]), record + 112 + word * 4);
+			}
+			Vector3 vertex[3];
+			for (int c = 0; c < 3; c++) {
+				const int original = source_vertices[indices[corner + c]];
+				vertex[c] = positions[original];
+				encode_float(vertex[c].x, record + c * 16);
+				encode_float(vertex[c].y, record + c * 16 + 4);
+				encode_float(vertex[c].z, record + c * 16 + 8);
+				encode_uint32(uint32_t(original), record + c * 16 + 12);
+				encode_float(vertex[c].x, ray_write + (corner + c) * 12);
+				encode_float(vertex[c].y, ray_write + (corner + c) * 12 + 4);
+				encode_float(vertex[c].z, ray_write + (corner + c) * 12 + 8);
+				encode_float(primitive_uv[0][corner + c].x, record + 48 + c * 8);
+				encode_float(primitive_uv[0][corner + c].y, record + 52 + c * 8);
+			}
+			encode_uint32(uint32_t(material_charts[indices[corner]]), record + 72);
+			// Godot's authored winding is clockwise; normals establish the semantic front.
+			float orientation = -1.0f;
+			if (!normals.is_empty()) {
+				orientation = SIGN(normals[source_vertices[indices[corner]]].dot((vertex[1] - vertex[0]).cross(vertex[2] - vertex[0])));
+			}
+			if (orientation == 0.0f) {
+				orientation = -1.0f;
+			}
+			encode_float(orientation, record + 76);
+			if (layout_count == 2) {
+				for (int c = 0; c < 3; c++) {
+					encode_float(primitive_uv[1][corner + c].x, record + 80 + c * 8);
+					encode_float(primitive_uv[1][corner + c].y, record + 84 + c * 8);
+				}
+				encode_uint32(uint32_t(lighting_charts[indices[corner]]), record + 104);
+				encode_float(orientation, record + 108);
+				for (int word = 0; word < 4; word++) {
+					encode_uint32(uint32_t(lighting_tiles[corner / 3 * 4 + word]), record + 128 + word * 4);
+				}
+			}
+		}
+		triangle_data.push_back(packed);
+		vertex_data.push_back(ray_vertices);
+	}
+
+	Array result_layouts;
+	for (int layout_index = 0; layout_index < layout_count; layout_index++) {
+		Array surfaces;
+		for (const Dictionary &chart : layouts[layout_index].surfaces) {
+			Dictionary surface;
+			surface["offset"] = chart["offset"];
+			surface["size"] = chart["size"];
+			surface["tiles"] = chart["tiles"];
+			surface["charts"] = chart["charts"];
+			surface["sample_count"] = chart["sample_count"];
+			surfaces.push_back(surface);
+		}
+		Dictionary layout;
+		layout["size"] = Vector2i(layouts[layout_index].size);
+		layout["sample_count"] = layouts[layout_index].sample_count;
+		layout["mesh"] = meshes[layout_index];
+		layout["surfaces"] = surfaces;
+		result_layouts.push_back(layout);
+	}
+	Dictionary result;
+	result["layouts"] = result_layouts;
+	result["triangle_data"] = triangle_data;
+	result["vertex_data"] = vertex_data;
 	return result;
 }
 

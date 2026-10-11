@@ -2802,6 +2802,13 @@ bool MaterialStorage::material_has_shader_displacement(RID p_material) {
 			(material->next_pass.is_valid() && material_has_shader_displacement(material->next_pass));
 }
 
+// Fork(Lestoroer): every pass only presents the surface (outline, highlight); capture skips it.
+bool MaterialStorage::material_is_surface_cache_presentation(RID p_material) {
+	Material *material = material_owner.get_or_null(p_material);
+	if (!material || !material->shader || !material->shader->data || !material->shader->data->is_surface_cache_presentation()) return false;
+	return material->next_pass.is_null() || material_is_surface_cache_presentation(material->next_pass);
+}
+
 void MaterialStorage::MaterialData::surface_texture_changed(Dependency::DependencyChangedNotification p_notification, DependencyTracker *p_tracker) {
 	MaterialData *data = static_cast<MaterialData *>(p_tracker->userdata);
 	Material *material = MaterialStorage::get_singleton()->get_material(data->self);

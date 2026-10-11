@@ -112,6 +112,10 @@ Interior Star» в `FORK_NOTES.md`. GI работает только на Vulkan
   NVIDIA 610.88). Из GDScript доступны лимиты subgroup.
 - `Mesh.surface_cache_get_layout` и `RenderingServer.instance_surface_cache_capture` дают
   недеструктивные charts и GPU-захват настоящего материала экземпляра.
+  `Mesh.surface_cache_prepare` за один проход строит для меша раскладки, меши захвата
+  и записи треугольников для лучей.
+- Смена overlay, у которого все проходы только отображают поверхность (контур выделения),
+  не сообщает Surface Cache об изменении материала.
 - Scenario раз в кадр сообщает Surface Cache изменения мира и даёт доступ к GPU-буферу
   skin/morph без чтения на CPU.
 - Forward+ применяет из Surface Cache непрямой свет, трассированные отражения и свет
