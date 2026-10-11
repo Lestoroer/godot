@@ -520,23 +520,11 @@ GI работает только на Vulkan с аппаратным ray query �
       (fragment, read-only bool). В проходе захвата `FRONT_FACING` задаётся стороной
       захвата, а не winding развёртки.
 
-12. **Направленные тени — меняет штатное поведение** |
-    `renderer_rd/shaders/scene_forward_lights_inc.glsl`, вызовы в
-    `scene_forward_clustered.glsl` и `scene_forward_mobile.glsl` |
-    Действует во всех сценах, независимо от Surface Cache; include общий для Forward+ и
-    Forward Mobile.
-    - PCSS классифицирует каждую из четырёх глубин texel отдельно, с поправкой на плоскость
-      приёмника в каждой точке ядра. Радиус полутени — по разнице глубин блокера и
-      приёмника, умноженной на диапазон карты и угловой размер солнца, без перспективного
-      множителя. Радиус выборки меняется внутри равновеликих страт. Пустой широкий поиск
-      перед признанием точки освещённой проверяет центральный footprint. Смещение
-      приёмника — только к свету.
-    - Bilinear PCF проверяет плоскость приёмника в каждом из четырёх depth texel.
-    - Качество Hard — один `texelFetch` и одно сравнение reverse-Z, без bilinear PCF
-      comparison sampler.
-
-    Проверки: `pcf_bias.gd`, `pcf_edge.gd`, `pcf_isolation.gd`, `shadow_plane.gd`,
-    `shadow_isolation.gd`.
+12. **Направленные тени, качество Hard — меняет штатное поведение** |
+    `renderer_rd/shaders/scene_forward_lights_inc.glsl` |
+    Качество Hard — один `texelFetch` и одно сравнение reverse-Z, без bilinear PCF
+    comparison sampler. Действует во всех сценах, независимо от Surface Cache; include
+    общий для Forward+ и Forward Mobile. PCSS и остальные уровни PCF — как в upstream.
 
 13. **Редактор со скриптом** | `main/main.cpp` | `--editor --script` не создаёт отдельный
     SceneTree до дерева скрипта. Так проверка открывает настоящий редактор без утечки
