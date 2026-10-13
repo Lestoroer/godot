@@ -170,7 +170,10 @@ void JoltCloth3D::_skin_to_targets(bool p_hard_reset) {
 void JoltCloth3D::_reshape_rest() {
 	// Edges and bends rest in the current pose, so a gathered curtain does not push its folds apart.
 	for (uint32_t i = 0; i < targets.size(); i++) {
-		to_jolt(targets[i]).StoreFloat3(&shared_settings->mVertices[i].mPosition);
+		const JPH::Vec3 position = to_jolt(targets[i]);
+		position.StoreFloat3(&shared_settings->mVertices[i].mPosition);
+		// Skinning starts from the bind position, so the inverse bind moves with it.
+		shared_settings->mInvBindMatrices[i].mInvBind = JPH::Mat44::sTranslation(-position);
 	}
 	shared_settings->CalculateEdgeLengths();
 	shared_settings->CalculateBendConstraintConstants();
