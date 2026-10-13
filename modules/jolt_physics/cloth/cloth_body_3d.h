@@ -68,6 +68,7 @@ class ClothBody3D : public GeometryInstance3D {
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 	uint32_t lying_collision_layer = 0;
+	float drop_height = 0.0f;
 
 	LocalVector<Vector3> pose_local;
 	LocalVector<Basis> pose_frames;
@@ -162,6 +163,8 @@ public:
 	uint32_t get_collision_mask() const { return collision_mask; }
 	void set_lying_collision_layer(uint32_t p_layer) { lying_collision_layer = p_layer; }
 	uint32_t get_lying_collision_layer() const { return lying_collision_layer; }
+	void set_drop_height(float p_height) { drop_height = MAX(p_height, 0.0f); }
+	float get_drop_height() const { return drop_height; }
 
 	void push(const Vector3 &p_point, const Vector3 &p_velocity, float p_radius);
 	int grab(const Vector3 &p_point);

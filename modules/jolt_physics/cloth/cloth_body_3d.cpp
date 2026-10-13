@@ -611,11 +611,20 @@ void ClothBody3D::set_carried(bool p_carried) {
 
 	if (carried) {
 		// While carried the cloth keeps its shape and costs nothing: the instance moves, the particles
-		// sleep where they were.
+		// sleep where they were. Free cloth is held a little above where it lay; released, it falls
+		// onto what lies under it, lying cloth included.
 		_free_lying_collision(true);
 		cloth->release_grab();
 		cloth->put_to_sleep();
 		carry_local = current_local;
+		if (!follow_pose && drop_height > 0.0f) {
+			const Vector3 lift = get_global_transform().affine_inverse().basis.xform(Vector3(0.0, drop_height, 0.0));
+			for (Vector3 &point : carry_local) {
+				point += lift;
+			}
+			render_local = carry_local;
+			_draw_settling(0.0f);
+		}
 		return;
 	}
 
@@ -723,6 +732,8 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_collision_mask"), &ClothBody3D::get_collision_mask);
 	ClassDB::bind_method(D_METHOD("set_lying_collision_layer", "layer"), &ClothBody3D::set_lying_collision_layer);
 	ClassDB::bind_method(D_METHOD("get_lying_collision_layer"), &ClothBody3D::get_lying_collision_layer);
+	ClassDB::bind_method(D_METHOD("set_drop_height", "height"), &ClothBody3D::set_drop_height);
+	ClassDB::bind_method(D_METHOD("get_drop_height"), &ClothBody3D::get_drop_height);
 
 	ClassDB::bind_method(D_METHOD("push", "point", "velocity", "radius"), &ClothBody3D::push);
 	ClassDB::bind_method(D_METHOD("grab", "point"), &ClothBody3D::grab);
@@ -761,6 +772,7 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_mask", "get_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "lying_collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_lying_collision_layer", "get_lying_collision_layer");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drop_height", PROPERTY_HINT_RANGE, "0,0.5,0.005,suffix:m"), "set_drop_height", "get_drop_height");
 
 	ADD_SIGNAL(MethodInfo("sleeping_changed", PropertyInfo(Variant::BOOL, "sleeping")));
 }
