@@ -245,7 +245,16 @@ void JoltCloth3D::_apply_drive(float p_step) {
 		}
 		const JPH::Vec3 target = JPH::Vec3(to_jolt_r(targets[i]) - origin);
 		const JPH::Vec3 target_velocity = to_jolt((targets[i] - previous_targets[i]) * inverse_step);
-		const JPH::Vec3 acceleration = drive_stiffness * (target - vertex.mPosition) + drive_damping * (target_velocity - vertex.mVelocity);
+		JPH::Vec3 acceleration = drive_stiffness * (target - vertex.mPosition) + drive_damping * (target_velocity - vertex.mVelocity);
+		if (vertex.mHasContact) {
+			// The drive does not press a particle into what it touches: a cover over a pillow rests on
+			// the pillow instead of trembling between it and the pose, and comes back when it is gone.
+			const JPH::Vec3 normal = vertex.mCollisionPlane.GetNormal();
+			const float into = acceleration.Dot(normal);
+			if (into < 0.0f) {
+				acceleration -= into * normal;
+			}
+		}
 		vertex.mVelocity += acceleration * p_step;
 	}
 }

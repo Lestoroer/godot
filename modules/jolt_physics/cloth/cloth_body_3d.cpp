@@ -241,7 +241,8 @@ void ClothBody3D::_push_targets() {
 	}
 
 	const Transform3D transform = get_global_transform();
-	if (follow_pose && (targets_dirty || transform != target_transform)) {
+	// Reparenting recomputes the transform with rounding; that is no motion.
+	if (follow_pose && (targets_dirty || !transform.is_equal_approx(target_transform))) {
 		world_scratch.resize(pose_local.size());
 		for (uint32_t i = 0; i < pose_local.size(); i++) {
 			world_scratch[i] = transform.xform(pose_local[i]);
