@@ -37,6 +37,7 @@
 #include "../spaces/jolt_space_3d.h"
 
 #include "core/config/engine.h"
+#include "core/object/class_db.h"
 #include "scene/resources/3d/world_3d.h"
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"

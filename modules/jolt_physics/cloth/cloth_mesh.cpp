@@ -33,6 +33,7 @@
 #include "cloth_mesh.h"
 
 #include "core/math/face3.h"
+#include "core/object/class_db.h"
 #include "core/templates/hash_map.h"
 
 namespace {
