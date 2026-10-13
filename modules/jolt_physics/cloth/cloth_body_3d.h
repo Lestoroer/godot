@@ -83,6 +83,8 @@ class ClothBody3D : public GeometryInstance3D {
 	uint64_t read_physics_frame = 0;
 	bool targets_dirty = true;
 	bool pose_reshaped = false;
+	// Until the first physics step a pose change is the initial state, not a motion.
+	bool physics_started = false;
 	bool was_active = false;
 	bool drawn_in_pose = true;
 

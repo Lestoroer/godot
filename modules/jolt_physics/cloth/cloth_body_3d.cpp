@@ -135,6 +135,7 @@ void ClothBody3D::_create_physics() {
 	was_active = false;
 	targets_dirty = false;
 	pose_reshaped = false;
+	physics_started = false;
 }
 
 void ClothBody3D::_free_physics() {
@@ -196,6 +197,7 @@ void ClothBody3D::_push_targets() {
 	if (cloth == nullptr || carried) {
 		return;
 	}
+	physics_started = true;
 
 	const Transform3D transform = get_global_transform();
 	if (follow_pose && (targets_dirty || transform != target_transform)) {
@@ -371,6 +373,9 @@ void ClothBody3D::set_pose_position(float p_position) {
 	pose_position = MAX(p_position, 0.0f);
 	if (cloth_mesh.is_valid() && cloth_mesh->get_particle_count() > 0 && is_inside_world()) {
 		_update_pose();
+		if (cloth != nullptr && !physics_started) {
+			reset_to_pose();
+		}
 	}
 }
 
