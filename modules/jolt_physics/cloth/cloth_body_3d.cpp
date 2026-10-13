@@ -256,7 +256,12 @@ void ClothBody3D::_push_targets() {
 		target_transform = transform;
 		targets_dirty = false;
 		pose_reshaped = false;
+		targets_moving = true;
 		_targets_moved();
+	} else if (targets_moving) {
+		// The pose stopped: other cloth may lie on it again without waiting for this cloth to sleep.
+		targets_moving = false;
+		_update_lying_collision();
 	}
 	step_inverse = transform.affine_inverse();
 }

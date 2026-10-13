@@ -84,6 +84,8 @@ class ClothBody3D : public GeometryInstance3D {
 	Transform3D step_inverse;
 	uint64_t read_physics_frame = 0;
 	bool targets_dirty = true;
+	// The targets moved on the last physics step.
+	bool targets_moving = false;
 	bool pose_reshaped = false;
 	// Until the first physics step a pose change is the initial state, not a motion.
 	bool physics_started = false;
