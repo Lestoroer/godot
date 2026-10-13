@@ -59,6 +59,22 @@ float push_falloff(float p_distance, float p_radius) {
 
 } // namespace
 
+HashMap<ObjectID, uint64_t> JoltCloth3D::resting_shape_stamps;
+uint64_t JoltCloth3D::stamp_counter = 0;
+
+void JoltCloth3D::set_resting_shape_stamp(ObjectID p_instance, uint64_t p_stamp) {
+	if (p_stamp == 0) {
+		resting_shape_stamps.erase(p_instance);
+	} else {
+		resting_shape_stamps[p_instance] = p_stamp;
+	}
+}
+
+uint64_t JoltCloth3D::get_resting_shape_stamp(ObjectID p_instance) {
+	const uint64_t *stamp = resting_shape_stamps.getptr(p_instance);
+	return stamp != nullptr ? *stamp : 0;
+}
+
 JPH::BroadPhaseLayer JoltCloth3D::_get_broad_phase_layer() const {
 	return JoltBroadPhaseLayer::BODY_DYNAMIC;
 }
@@ -460,6 +476,12 @@ bool JoltCloth3D::interacts_with(const JoltObject3D &p_other) const {
 	// The body a resting cloth leaves for other cloth to lie on carries the cloth's instance; the
 	// cloth itself moves through it.
 	if (p_other.get_instance_id() == get_instance_id()) {
+		return false;
+	}
+	// A resting shape that appeared after this cloth was let go is not solid for it: both cloths
+	// moved and went through each other, and this one would get stuck inside the other.
+	const uint64_t *resting_stamp = resting_shape_stamps.getptr(p_other.get_instance_id());
+	if (resting_stamp != nullptr && *resting_stamp > release_stamp) {
 		return false;
 	}
 	return p_other.is_body() && (can_collide_with(p_other) || p_other.can_collide_with(*this));

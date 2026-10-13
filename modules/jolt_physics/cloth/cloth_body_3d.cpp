@@ -58,6 +58,9 @@ constexpr float SETTLE_SECONDS = 0.3f;
 // from where they were, or it falls asleep anyway.
 constexpr float REST_CHECK_SECONDS = 0.5f;
 constexpr real_t REST_CHECK_DISTANCE = 0.01;
+// A few particles may keep trembling, like those caught between the floor and another garment;
+// if on average the particles got less far than this, the cloth falls asleep too.
+constexpr real_t REST_CHECK_MEAN_DISTANCE = 0.003;
 // A resting cloth rebuilds the shape other cloth lies on only if it came to rest this much elsewhere.
 constexpr real_t LYING_REBUILD_DISTANCE = 0.005;
 // Cloth this close above a changed resting shape is woken to settle again.
@@ -150,6 +153,7 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	cloth->set_instance_id(get_instance_id());
 	_update_motion();
 	cloth->configure(setup);
+	cloth->set_release_stamp(JoltCloth3D::next_stamp());
 	cloth->set_space(space);
 	if (p_start_world != nullptr && follow_pose) {
 		reach_ramp = REACH_RAMP_SECONDS;
@@ -294,14 +298,20 @@ void ClothBody3D::_check_rest(uint64_t p_steps) {
 	if (rest_check_time < REST_CHECK_SECONDS) {
 		return;
 	}
-	real_t moved = 0.0;
+	real_t moved_most = 0.0;
+	real_t moved_total = 0.0;
 	for (uint32_t i = 0; i < world_scratch.size(); i++) {
-		moved = MAX(moved, rest_check_world[i].distance_squared_to(world_scratch[i]));
+		const real_t moved = rest_check_world[i].distance_to(world_scratch[i]);
+		moved_most = MAX(moved_most, moved);
+		moved_total += moved;
 	}
 	rest_check_world = world_scratch;
 	rest_check_time = 0.0f;
-	// A held cloth stays awake for the hand.
-	if (moved < REST_CHECK_DISTANCE * REST_CHECK_DISTANCE && cloth->get_grabbed_particle() < 0) {
+	// Cloth under the cursor or in the hand stays awake for it.
+	const bool touched = attended || cloth->get_grabbed_particle() >= 0;
+	attended = false;
+	const real_t moved_mean = moved_total / real_t(MAX(world_scratch.size(), 1u));
+	if (!touched && (moved_most < REST_CHECK_DISTANCE || moved_mean < REST_CHECK_MEAN_DISTANCE)) {
 		cloth->put_to_sleep();
 	}
 }
@@ -415,8 +425,11 @@ void ClothBody3D::_update_lying_collision() {
 		}
 	}
 	// Cloth resting on the old shape is not woken: two cloths lying on each other would wake each
-	// other forever. It is woken when the shape goes away.
+	// other forever. It is woken when the shape goes away. A rebuilt shape keeps the moment it first
+	// appeared: cloth that lay on it before keeps lying on it.
+	const uint64_t stamp = had_body ? JoltCloth3D::get_resting_shape_stamp(get_instance_id()) : JoltCloth3D::next_stamp();
 	_free_lying_collision(false);
+	JoltCloth3D::set_resting_shape_stamp(get_instance_id(), stamp);
 	lying_positions = world_scratch;
 	lying_bounds = bounds_of(lying_positions, 0.0);
 
@@ -446,6 +459,7 @@ void ClothBody3D::_free_lying_collision(bool p_wake_resting) {
 	if (lying_body.is_valid()) {
 		physics->free_rid(lying_body);
 		lying_body = RID();
+		JoltCloth3D::set_resting_shape_stamp(get_instance_id(), 0);
 	}
 	if (lying_shape.is_valid()) {
 		physics->free_rid(lying_shape);
@@ -600,6 +614,7 @@ void ClothBody3D::push(const Vector3 &p_point, const Vector3 &p_velocity, float 
 	if (cloth == nullptr || carried) {
 		return;
 	}
+	attended = true;
 	cloth->push(p_point, p_velocity * push_response, p_radius);
 }
 
@@ -675,6 +690,7 @@ void ClothBody3D::set_carried(bool p_carried) {
 	}
 	cloth->set_targets(world_scratch, true);
 	cloth->reset_to_targets();
+	cloth->set_release_stamp(JoltCloth3D::next_stamp());
 	previous_local = shape;
 	current_local = shape;
 	target_transform = transform;

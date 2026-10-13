@@ -99,6 +99,8 @@ class ClothBody3D : public GeometryInstance3D {
 	// Where the particles were at the start of the current rest check, in world space.
 	LocalVector<Vector3> rest_check_world;
 	float rest_check_time = 0.0f;
+	// The cursor or a hand touched the cloth since the last rest check.
+	bool attended = false;
 
 	// Static body other cloth lies on while this cloth rests, and the particle positions it was built from.
 	RID lying_body;

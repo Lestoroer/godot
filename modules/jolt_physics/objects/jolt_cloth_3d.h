@@ -34,6 +34,7 @@
 
 #include "jolt_object_3d.h"
 
+#include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 
 #include <Jolt/Jolt.h>
@@ -70,7 +71,13 @@ private:
 		float radius = 0.0f;
 	};
 
+	// When each resting shape other cloth lies on appeared, by the instance that left it. Written on the
+	// main thread between steps, read by the collision filter during steps.
+	static HashMap<ObjectID, uint64_t> resting_shape_stamps;
+	static uint64_t stamp_counter;
+
 	Setup setup;
+	uint64_t release_stamp = 0;
 	LocalVector<Vector3> targets;
 	LocalVector<Vector3> previous_targets;
 	LocalVector<Push> pushes;
@@ -114,6 +121,14 @@ public:
 	// The targets start at the rest shape.
 	void configure(const Setup &p_setup);
 	int get_particle_count() const { return (int)setup.positions.size(); }
+
+	// Stamps order releases of cloth and the appearance of resting shapes.
+	static uint64_t next_stamp() { return ++stamp_counter; }
+	// p_stamp 0 removes the resting shape of the instance.
+	static void set_resting_shape_stamp(ObjectID p_instance, uint64_t p_stamp);
+	static uint64_t get_resting_shape_stamp(ObjectID p_instance);
+	// The cloth was let go to move on its own: put down, unfolded, created.
+	void set_release_stamp(uint64_t p_stamp) { release_stamp = p_stamp; }
 
 	// p_reshape: the targets form a new pose, not the same pose moved; the fabric then rests in it.
 	void set_targets(const LocalVector<Vector3> &p_world_targets, bool p_reshape);
