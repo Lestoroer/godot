@@ -664,6 +664,8 @@ void ClothBody3D::reset_to_pose() {
 	previous_local = pose_local;
 	current_local = pose_local;
 	target_transform = transform;
+	targets_dirty = false;
+	pose_reshaped = false;
 	_draw_pose();
 	if (follow_pose) {
 		// Exactly in its pose, the cloth rests in it: other cloth may lie on it right away.
