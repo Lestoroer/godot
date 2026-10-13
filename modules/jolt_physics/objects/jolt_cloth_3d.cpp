@@ -96,7 +96,7 @@ void JoltCloth3D::_add_to_space() {
 
 	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
 	motion->SetSkinnedMaxDistanceMultiplier(max_distance_scale);
-	hard_reset_requested = targets_valid;
+	hard_reset_requested = targets_valid && start_at_targets;
 }
 
 JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
@@ -267,12 +267,13 @@ JoltCloth3D::JoltCloth3D() :
 
 JoltCloth3D::~JoltCloth3D() = default;
 
-void JoltCloth3D::configure(const Setup &p_setup) {
+void JoltCloth3D::configure(const Setup &p_setup, bool p_start_at_targets) {
 	const uint32_t particle_count = p_setup.positions.size();
 	ERR_FAIL_COND_MSG(p_setup.pin_weights.size() != particle_count || p_setup.max_distances.size() != particle_count, "Cloth particle attributes must match the particle count.");
 	ERR_FAIL_COND_MSG(p_setup.triangles.size() % 3 != 0, "Cloth triangles must come in groups of three indices.");
 
 	setup = p_setup;
+	start_at_targets = p_start_at_targets;
 	particle_inverse_masses.resize(particle_count);
 	const float inverse_mass = 1.0f / MAX(setup.particle_mass, 0.0001f);
 	for (uint32_t i = 0; i < particle_count; i++) {

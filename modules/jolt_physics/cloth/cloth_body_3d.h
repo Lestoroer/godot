@@ -85,6 +85,10 @@ class ClothBody3D : public GeometryInstance3D {
 	bool pose_reshaped = false;
 	// Until the first physics step a pose change is the initial state, not a motion.
 	bool physics_started = false;
+	// Seconds left while a cloth that started away from its pose may leave it further than usual.
+	float reach_ramp = 0.0f;
+	// Seconds left of the blend from the simulated shape into the exact pose after falling asleep.
+	float settle_left = 0.0f;
 	bool was_active = false;
 	bool drawn_in_pose = true;
 
@@ -92,7 +96,8 @@ class ClothBody3D : public GeometryInstance3D {
 	RID lying_shape;
 
 	void _rebuild();
-	void _create_physics();
+	void _create_physics(const LocalVector<Vector3> *p_start_world = nullptr);
+	void _draw_settling(float p_weight);
 	void _free_physics();
 	void _update_pose();
 	void _push_targets();

@@ -86,6 +86,7 @@ private:
 	Vector3 grab_target;
 	bool targets_valid = false;
 	bool hard_reset_requested = false;
+	bool start_at_targets = true;
 	bool rest_shape_dirty = false;
 
 	virtual JPH::BroadPhaseLayer _get_broad_phase_layer() const override;
@@ -105,7 +106,9 @@ public:
 	JoltCloth3D();
 	virtual ~JoltCloth3D() override;
 
-	void configure(const Setup &p_setup);
+	// p_start_at_targets: particles start in the pose; otherwise they start at Setup::positions
+	// and the drive brings them to the targets.
+	void configure(const Setup &p_setup, bool p_start_at_targets = true);
 	int get_particle_count() const { return (int)setup.positions.size(); }
 
 	// p_reshape: the targets form a new pose, not the same pose moved; the fabric then rests in it.

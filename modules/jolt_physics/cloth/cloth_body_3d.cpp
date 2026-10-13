@@ -46,6 +46,12 @@ namespace {
 
 // Margin around the particles for the visible mesh, which may stand off the coarse simulation surface.
 constexpr real_t RENDER_MARGIN = 0.05;
+// A cloth that starts away from its pose, like a cover laid on a bed, may leave it this much farther
+// at first, so it flows into the pose instead of snapping to the allowed distance.
+constexpr float REACH_RAMP_SECONDS = 1.2f;
+constexpr float REACH_RAMP_SCALE = 25.0f;
+// After falling asleep the cloth blends from where it rests into the exact pose.
+constexpr float SETTLE_SECONDS = 0.3f;
 
 AABB bounds_of(const LocalVector<Vector3> &p_points, real_t p_margin) {
 	if (p_points.is_empty()) {
@@ -90,7 +96,7 @@ void ClothBody3D::_rebuild() {
 	}
 }
 
-void ClothBody3D::_create_physics() {
+void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	JoltPhysicsServer3D *server = JoltPhysicsServer3D::get_singleton();
 	ERR_FAIL_NULL_MSG(server, "ClothBody3D requires Jolt Physics as the 3D physics engine.");
 	ERR_FAIL_COND_MSG(server->is_on_separate_thread(), "ClothBody3D does not support running physics on a separate thread.");
@@ -101,7 +107,7 @@ void ClothBody3D::_create_physics() {
 	JoltCloth3D::Setup setup;
 	setup.positions.resize(pose_local.size());
 	for (uint32_t i = 0; i < pose_local.size(); i++) {
-		setup.positions[i] = transform.xform(pose_local[i]);
+		setup.positions[i] = p_start_world != nullptr ? (*p_start_world)[i] : transform.xform(pose_local[i]);
 	}
 	const PackedInt32Array triangles = cloth_mesh->get_triangles();
 	const PackedFloat32Array pins = cloth_mesh->get_pin_weights();
@@ -126,8 +132,17 @@ void ClothBody3D::_create_physics() {
 	cloth = memnew(JoltCloth3D);
 	cloth->set_instance_id(get_instance_id());
 	_update_motion();
-	cloth->configure(setup);
+	cloth->configure(setup, p_start_world == nullptr);
 	cloth->set_space(space);
+	if (p_start_world != nullptr && follow_pose) {
+		world_scratch.resize(pose_local.size());
+		for (uint32_t i = 0; i < pose_local.size(); i++) {
+			world_scratch[i] = transform.xform(pose_local[i]);
+		}
+		cloth->set_targets(world_scratch, true);
+		reach_ramp = REACH_RAMP_SECONDS;
+		cloth->set_max_distance_scale(max_distance_scale * REACH_RAMP_SCALE);
+	}
 
 	target_transform = transform;
 	step_inverse = transform.affine_inverse();
@@ -135,7 +150,15 @@ void ClothBody3D::_create_physics() {
 	was_active = false;
 	targets_dirty = false;
 	pose_reshaped = false;
-	physics_started = false;
+	physics_started = p_start_world != nullptr;
+	settle_left = 0.0f;
+	if (p_start_world != nullptr) {
+		current_local.resize(p_start_world->size());
+		for (uint32_t i = 0; i < p_start_world->size(); i++) {
+			current_local[i] = step_inverse.xform((*p_start_world)[i]);
+		}
+		previous_local = current_local;
+	}
 }
 
 void ClothBody3D::_free_physics() {
@@ -198,6 +221,11 @@ void ClothBody3D::_push_targets() {
 		return;
 	}
 	physics_started = true;
+	if (reach_ramp > 0.0f) {
+		reach_ramp = MAX(reach_ramp - float(get_physics_process_delta_time()), 0.0f);
+		const float weight = reach_ramp / REACH_RAMP_SECONDS;
+		cloth->set_max_distance_scale(max_distance_scale * Math::lerp(1.0f, REACH_RAMP_SCALE, weight * weight));
+	}
 
 	const Transform3D transform = get_global_transform();
 	if (follow_pose && (targets_dirty || transform != target_transform)) {
@@ -236,8 +264,17 @@ void ClothBody3D::_update_render() {
 
 	const bool active = cloth->is_active();
 	if (!active && !was_active) {
+		if (settle_left > 0.0f) {
+			settle_left = MAX(settle_left - float(get_process_delta_time()), 0.0f);
+			if (settle_left > 0.0f) {
+				_draw_settling(1.0f - settle_left / SETTLE_SECONDS);
+			} else {
+				_draw_pose();
+			}
+		}
 		return;
 	}
+	settle_left = 0.0f;
 	_read_simulation();
 	if (!active) {
 		_fell_asleep();
@@ -253,6 +290,17 @@ void ClothBody3D::_update_render() {
 	render_local.resize(current_local.size());
 	for (uint32_t i = 0; i < current_local.size(); i++) {
 		render_local[i] = previous_local[i].lerp(current_local[i], fraction);
+	}
+	_draw_settling(0.0f);
+}
+
+void ClothBody3D::_draw_settling(float p_weight) {
+	// p_weight blends the drawn shape from the simulation (0) into the exact pose (1).
+	if (p_weight > 0.0f) {
+		const float smooth = p_weight * p_weight * (3.0f - 2.0f * p_weight);
+		for (uint32_t i = 0; i < render_local.size(); i++) {
+			render_local[i] = current_local[i].lerp(pose_local[i], smooth);
+		}
 	}
 	cloth_mesh->calculate_frames(render_local, render_frames);
 
@@ -284,8 +332,8 @@ void ClothBody3D::_draw_pose() {
 void ClothBody3D::_fell_asleep() {
 	was_active = false;
 	if (follow_pose) {
-		// Asleep, the cloth rests within millimeters of its pose; drawing the exact pose keeps folds clean.
-		_draw_pose();
+		// Asleep, the cloth rests near its pose; it blends into the exact pose so folds stay clean.
+		settle_left = SETTLE_SECONDS;
 	} else {
 		_build_lying_collision();
 	}
@@ -380,10 +428,32 @@ void ClothBody3D::set_pose_position(float p_position) {
 }
 
 void ClothBody3D::set_follow_pose(bool p_follow) {
-	follow_pose = p_follow;
-	if (is_inside_world()) {
-		_rebuild();
+	if (follow_pose == p_follow) {
+		return;
 	}
+	follow_pose = p_follow;
+	if (cloth == nullptr || !is_inside_world()) {
+		if (is_inside_world()) {
+			_rebuild();
+		}
+		return;
+	}
+	// The cloth keeps its shape across the switch: a cover laid on a bed flows from how it was
+	// carried into its pose.
+	LocalVector<Vector3> start;
+	if (carried) {
+		const Transform3D transform = get_global_transform();
+		start.resize(carry_local.size());
+		for (uint32_t i = 0; i < carry_local.size(); i++) {
+			start[i] = transform.xform(carry_local[i]);
+		}
+		carried = false;
+	} else {
+		cloth->get_positions(start);
+	}
+	_free_physics();
+	_free_lying_collision();
+	_create_physics(&start);
 }
 
 #define CLOTH_REBUILD_SETTER(m_name, m_type)    \
