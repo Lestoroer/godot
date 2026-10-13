@@ -162,6 +162,8 @@ public:
 
 	bool is_sleeping() const;
 	void reset_to_pose();
+	// Particle positions in world space, for tests and tools.
+	PackedVector3Array get_particle_positions() const;
 
 	virtual AABB get_aabb() const override;
 

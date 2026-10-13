@@ -298,13 +298,13 @@ void ClothBody3D::_build_lying_collision() {
 	for (int index : cloth_mesh->get_triangles()) {
 		faces.push_back(world_scratch[index]);
 	}
-	Dictionary data;
-	data["faces"] = faces;
-	data["backface_collision"] = true;
+	Dictionary shape_data;
+	shape_data["faces"] = faces;
+	shape_data["backface_collision"] = true;
 
 	PhysicsServer3D *physics = PhysicsServer3D::get_singleton();
 	lying_shape = physics->concave_polygon_shape_create();
-	physics->shape_set_data(lying_shape, data);
+	physics->shape_set_data(lying_shape, shape_data);
 	lying_body = physics->body_create();
 	physics->body_set_mode(lying_body, PhysicsServer3D::BODY_MODE_STATIC);
 	physics->body_add_shape(lying_body, lying_shape);
@@ -510,6 +510,23 @@ void ClothBody3D::reset_to_pose() {
 	_draw_pose();
 }
 
+PackedVector3Array ClothBody3D::get_particle_positions() const {
+	PackedVector3Array positions;
+	if (cloth == nullptr) {
+		const Transform3D transform = get_global_transform();
+		for (const Vector3 &point : pose_local) {
+			positions.push_back(transform.xform(point));
+		}
+		return positions;
+	}
+	LocalVector<Vector3> world;
+	cloth->get_positions(world);
+	for (const Vector3 &point : world) {
+		positions.push_back(point);
+	}
+	return positions;
+}
+
 AABB ClothBody3D::get_aabb() const {
 	if (cloth_mesh.is_null() || cloth_mesh->get_render_mesh().is_null()) {
 		return AABB();
@@ -569,6 +586,7 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_carried"), &ClothBody3D::is_carried);
 	ClassDB::bind_method(D_METHOD("is_sleeping"), &ClothBody3D::is_sleeping);
 	ClassDB::bind_method(D_METHOD("reset_to_pose"), &ClothBody3D::reset_to_pose);
+	ClassDB::bind_method(D_METHOD("get_particle_positions"), &ClothBody3D::get_particle_positions);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "cloth_mesh", PROPERTY_HINT_RESOURCE_TYPE, "ClothMesh"), "set_cloth_mesh", "get_cloth_mesh");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "pose_position", PROPERTY_HINT_RANGE, "0,16,0.001,or_greater"), "set_pose_position", "get_pose_position");
