@@ -44,6 +44,9 @@
 
 namespace {
 
+// Long range attachments allow this much more than the pin distance in the pose.
+constexpr float LRA_SLACK = 1.03f;
+
 // Smooth falloff of a cursor push from its center to its radius.
 float push_falloff(float p_distance, float p_radius) {
 	const float t = 1.0f - p_distance / p_radius;
@@ -119,8 +122,8 @@ JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 	}
 
 	// Long range attachments keep fabric from stretching under its pins.
-	const JPH::SoftBodySharedSettings::ELRAType lra = has_pins ? JPH::SoftBodySharedSettings::ELRAType::GeodesicDistance : JPH::SoftBodySharedSettings::ELRAType::None;
-	const JPH::SoftBodySharedSettings::VertexAttributes attributes(setup.stretch_compliance, setup.shear_compliance, setup.bend_compliance, lra);
+	const JPH::SoftBodySharedSettings::ELRAType lra = has_pins ? JPH::SoftBodySharedSettings::ELRAType::EuclideanDistance : JPH::SoftBodySharedSettings::ELRAType::None;
+	const JPH::SoftBodySharedSettings::VertexAttributes attributes(setup.stretch_compliance, setup.shear_compliance, setup.bend_compliance, lra, LRA_SLACK);
 	shared->CreateConstraints(&attributes, 1, JPH::SoftBodySharedSettings::EBendType::Dihedral);
 
 	if (setup.follow_targets) {
@@ -177,6 +180,9 @@ void JoltCloth3D::_reshape_rest() {
 	}
 	shared_settings->CalculateEdgeLengths();
 	shared_settings->CalculateBendConstraintConstants();
+	// Baked poses stretch the fabric a little; long range attachments measured in another pose
+	// would pull such a pose back toward the pins.
+	shared_settings->CalculateLRALengths(LRA_SLACK);
 }
 
 float JoltCloth3D::_effective_gravity_scale() const {
