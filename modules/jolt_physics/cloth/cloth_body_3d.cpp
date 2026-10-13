@@ -33,6 +33,7 @@
 #include "cloth_body_3d.h"
 
 #include "../jolt_physics_server_3d.h"
+#include "../misc/jolt_type_conversions.h"
 #include "../objects/jolt_cloth_3d.h"
 #include "../spaces/jolt_space_3d.h"
 
@@ -52,6 +53,10 @@ constexpr float REACH_RAMP_SECONDS = 1.2f;
 constexpr float REACH_RAMP_SCALE = 25.0f;
 // After falling asleep the cloth blends from where it rests into the exact pose.
 constexpr float SETTLE_SECONDS = 0.3f;
+// A resting cloth rebuilds the shape other cloth lies on only if it came to rest this much elsewhere.
+constexpr real_t LYING_REBUILD_DISTANCE = 0.005;
+// Cloth this close above a changed resting shape is woken to settle again.
+constexpr real_t LYING_WAKE_MARGIN = 0.03;
 
 AABB bounds_of(const LocalVector<Vector3> &p_points, real_t p_margin) {
 	if (p_points.is_empty()) {
@@ -68,7 +73,7 @@ AABB bounds_of(const LocalVector<Vector3> &p_points, real_t p_margin) {
 
 void ClothBody3D::_rebuild() {
 	_free_physics();
-	_free_lying_collision();
+	_free_lying_collision(true);
 
 	RenderingServer *rendering = RenderingServer::get_singleton();
 	if (cloth_mesh.is_null() || cloth_mesh->get_render_mesh().is_null() || cloth_mesh->get_particle_count() == 0) {
@@ -91,7 +96,8 @@ void ClothBody3D::_rebuild() {
 	render_local = pose_local;
 	_draw_pose();
 
-	if (is_inside_world() && !Engine::get_singleton()->is_editor_hint()) {
+	// A hidden cloth, like a folded garment, has no physics.
+	if (is_inside_world() && is_visible_in_tree() && !Engine::get_singleton()->is_editor_hint()) {
 		_create_physics();
 	}
 }
@@ -105,9 +111,14 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 
 	const Transform3D transform = get_global_transform();
 	JoltCloth3D::Setup setup;
+	// The fabric rests in its pose wherever it starts: a garment crumpled on a bed edge still
+	// rests flat.
 	setup.positions.resize(pose_local.size());
 	for (uint32_t i = 0; i < pose_local.size(); i++) {
-		setup.positions[i] = p_start_world != nullptr ? (*p_start_world)[i] : transform.xform(pose_local[i]);
+		setup.positions[i] = transform.xform(pose_local[i]);
+	}
+	if (p_start_world != nullptr) {
+		setup.start_positions = *p_start_world;
 	}
 	const PackedInt32Array triangles = cloth_mesh->get_triangles();
 	const PackedFloat32Array pins = cloth_mesh->get_pin_weights();
@@ -132,14 +143,9 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	cloth = memnew(JoltCloth3D);
 	cloth->set_instance_id(get_instance_id());
 	_update_motion();
-	cloth->configure(setup, p_start_world == nullptr);
+	cloth->configure(setup);
 	cloth->set_space(space);
 	if (p_start_world != nullptr && follow_pose) {
-		world_scratch.resize(pose_local.size());
-		for (uint32_t i = 0; i < pose_local.size(); i++) {
-			world_scratch[i] = transform.xform(pose_local[i]);
-		}
-		cloth->set_targets(world_scratch, true);
 		reach_ramp = REACH_RAMP_SECONDS;
 		cloth->set_max_distance_scale(max_distance_scale * REACH_RAMP_SCALE);
 	}
@@ -158,6 +164,10 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 			current_local[i] = step_inverse.xform((*p_start_world)[i]);
 		}
 		previous_local = current_local;
+	}
+	if (carried) {
+		carry_local = current_local;
+		cloth->put_to_sleep();
 	}
 }
 
@@ -210,7 +220,7 @@ void ClothBody3D::_update_pose() {
 	targets_dirty = true;
 	pose_reshaped = true;
 	if (cloth != nullptr) {
-		_wake_up();
+		_targets_moved();
 	} else {
 		_draw_pose();
 	}
@@ -237,7 +247,7 @@ void ClothBody3D::_push_targets() {
 		target_transform = transform;
 		targets_dirty = false;
 		pose_reshaped = false;
-		_wake_up();
+		_targets_moved();
 	}
 	step_inverse = transform.affine_inverse();
 }
@@ -334,22 +344,44 @@ void ClothBody3D::_fell_asleep() {
 	if (follow_pose) {
 		// Asleep, the cloth rests near its pose; it blends into the exact pose so folds stay clean.
 		settle_left = SETTLE_SECONDS;
-	} else {
-		_build_lying_collision();
 	}
+	_update_lying_collision();
 	emit_signal(SNAME("sleeping_changed"), true);
 }
 
-void ClothBody3D::_build_lying_collision() {
+// Resting cloth is solid for other settling cloth. A cloth pushed by the cursor keeps the shape
+// it rested in until it rests again; only then the shape is rebuilt, if the cloth moved.
+void ClothBody3D::_update_lying_collision() {
 	if (lying_collision_layer == 0 || cloth == nullptr) {
 		return;
 	}
-	_free_lying_collision();
+	if (follow_pose) {
+		const Transform3D transform = get_global_transform();
+		world_scratch.resize(pose_local.size());
+		for (uint32_t i = 0; i < pose_local.size(); i++) {
+			world_scratch[i] = transform.xform(pose_local[i]);
+		}
+	} else {
+		cloth->get_positions(world_scratch);
+	}
+	const bool had_body = lying_body.is_valid();
+	if (had_body && lying_positions.size() == world_scratch.size()) {
+		real_t moved = 0.0;
+		for (uint32_t i = 0; i < world_scratch.size(); i++) {
+			moved = MAX(moved, lying_positions[i].distance_squared_to(world_scratch[i]));
+		}
+		if (moved < LYING_REBUILD_DISTANCE * LYING_REBUILD_DISTANCE) {
+			return;
+		}
+	}
+	const AABB previous_bounds = lying_bounds;
+	_free_lying_collision(false);
+	lying_positions = world_scratch;
+	lying_bounds = bounds_of(lying_positions, 0.0);
 
-	cloth->get_positions(world_scratch);
 	PackedVector3Array faces;
 	for (int index : cloth_mesh->get_triangles()) {
-		faces.push_back(world_scratch[index]);
+		faces.push_back(lying_positions[index]);
 	}
 	Dictionary shape_data;
 	shape_data["faces"] = faces;
@@ -365,9 +397,13 @@ void ClothBody3D::_build_lying_collision() {
 	physics->body_set_collision_mask(lying_body, 0);
 	physics->body_attach_object_instance_id(lying_body, get_instance_id());
 	physics->body_set_space(lying_body, get_world_3d()->get_space());
+	if (had_body) {
+		_wake_resting_on(previous_bounds.merge(lying_bounds));
+	}
 }
 
-void ClothBody3D::_free_lying_collision() {
+void ClothBody3D::_free_lying_collision(bool p_wake_resting) {
+	const bool had_body = lying_body.is_valid();
 	PhysicsServer3D *physics = PhysicsServer3D::get_singleton();
 	if (lying_body.is_valid()) {
 		physics->free_rid(lying_body);
@@ -377,10 +413,34 @@ void ClothBody3D::_free_lying_collision() {
 		physics->free_rid(lying_shape);
 		lying_shape = RID();
 	}
+	lying_positions.clear();
+	if (had_body && p_wake_resting) {
+		_wake_resting_on(lying_bounds);
+	}
 }
 
-void ClothBody3D::_wake_up() {
-	_free_lying_collision();
+// Cloth lying on a resting shape that changed or went away settles again instead of hanging in the air.
+void ClothBody3D::_wake_resting_on(const AABB &p_bounds) {
+	JoltPhysicsServer3D *server = JoltPhysicsServer3D::get_singleton();
+	if (server == nullptr || !is_inside_world() || get_world_3d().is_null()) {
+		return;
+	}
+	JoltSpace3D *space = server->get_space(get_world_3d()->get_space());
+	if (space == nullptr) {
+		return;
+	}
+	// Activation by area wakes this cloth as well; it stays as it was.
+	const bool was_sleeping = cloth != nullptr && !cloth->is_active();
+	const AABB box = p_bounds.grow(LYING_WAKE_MARGIN);
+	space->get_body_iface().ActivateBodiesInAABox(JPH::AABox(to_jolt(box.position), to_jolt(box.get_end())), JPH::BroadPhaseLayerFilter(), JPH::ObjectLayerFilter());
+	if (was_sleeping) {
+		cloth->put_to_sleep();
+	}
+}
+
+void ClothBody3D::_targets_moved() {
+	// The pose moved away from the shape other cloth rests on.
+	_free_lying_collision(true);
 	cloth->wake_up();
 }
 
@@ -394,9 +454,15 @@ void ClothBody3D::_notification(int p_what) {
 
 		case NOTIFICATION_EXIT_WORLD: {
 			_free_physics();
-			_free_lying_collision();
+			_free_lying_collision(true);
 			set_physics_process_internal(false);
 			set_process_internal(false);
+		} break;
+
+		case NOTIFICATION_VISIBILITY_CHANGED: {
+			if (is_inside_world()) {
+				_rebuild();
+			}
 		} break;
 
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
@@ -452,7 +518,7 @@ void ClothBody3D::set_follow_pose(bool p_follow) {
 		cloth->get_positions(start);
 	}
 	_free_physics();
-	_free_lying_collision();
+	_free_lying_collision(true);
 	_create_physics(&start);
 }
 
@@ -494,7 +560,6 @@ void ClothBody3D::push(const Vector3 &p_point, const Vector3 &p_velocity, float 
 	if (cloth == nullptr || carried) {
 		return;
 	}
-	_free_lying_collision();
 	cloth->push(p_point, p_velocity, p_radius);
 }
 
@@ -513,7 +578,6 @@ int ClothBody3D::grab(const Vector3 &p_point) {
 		}
 	}
 	ERR_FAIL_COND_V(nearest < 0, -1);
-	_free_lying_collision();
 	cloth->grab(nearest, p_point);
 	return nearest;
 }
@@ -545,9 +609,11 @@ void ClothBody3D::set_carried(bool p_carried) {
 	}
 
 	if (carried) {
-		// While carried the cloth keeps its shape and costs nothing: the instance moves, the particles wait.
-		_free_lying_collision();
+		// While carried the cloth keeps its shape and costs nothing: the instance moves, the particles
+		// sleep where they were.
+		_free_lying_collision(true);
 		cloth->release_grab();
+		cloth->put_to_sleep();
 		carry_local = current_local;
 		return;
 	}
@@ -579,7 +645,7 @@ void ClothBody3D::reset_to_pose() {
 	for (uint32_t i = 0; i < pose_local.size(); i++) {
 		world_scratch[i] = transform.xform(pose_local[i]);
 	}
-	_free_lying_collision();
+	_free_lying_collision(true);
 	cloth->set_targets(world_scratch, true);
 	cloth->reset_to_targets();
 	previous_local = pose_local;
@@ -701,7 +767,7 @@ ClothBody3D::ClothBody3D() {
 
 ClothBody3D::~ClothBody3D() {
 	_free_physics();
-	_free_lying_collision();
+	_free_lying_collision(false);
 	if (skeleton.is_valid()) {
 		RenderingServer::get_singleton()->free_rid(skeleton);
 	}

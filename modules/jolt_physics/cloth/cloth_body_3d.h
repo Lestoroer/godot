@@ -92,8 +92,11 @@ class ClothBody3D : public GeometryInstance3D {
 	bool was_active = false;
 	bool drawn_in_pose = true;
 
+	// Static body other cloth lies on while this cloth rests, and the particle positions it was built from.
 	RID lying_body;
 	RID lying_shape;
+	LocalVector<Vector3> lying_positions;
+	AABB lying_bounds;
 
 	void _rebuild();
 	void _create_physics(const LocalVector<Vector3> *p_start_world = nullptr);
@@ -105,9 +108,10 @@ class ClothBody3D : public GeometryInstance3D {
 	void _update_render();
 	void _draw_pose();
 	void _fell_asleep();
-	void _build_lying_collision();
-	void _free_lying_collision();
-	void _wake_up();
+	void _update_lying_collision();
+	void _free_lying_collision(bool p_wake_resting);
+	void _wake_resting_on(const AABB &p_bounds);
+	void _targets_moved();
 	void _update_motion();
 
 protected:

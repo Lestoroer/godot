@@ -63,6 +63,8 @@ public:
 
 	void set_pin_weights(const PackedFloat32Array &p_weights) { pin_weights = p_weights; }
 	PackedFloat32Array get_pin_weights() const { return pin_weights; }
+	// A pinned cloth hangs on its support: it is pulled by a point, not carried.
+	bool has_pins() const;
 
 	void set_max_distances(const PackedFloat32Array &p_distances) { max_distances = p_distances; }
 	PackedFloat32Array get_max_distances() const { return max_distances; }

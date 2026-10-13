@@ -99,7 +99,20 @@ void JoltCloth3D::_add_to_space() {
 
 	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
 	motion->SetSkinnedMaxDistanceMultiplier(max_distance_scale);
-	hard_reset_requested = targets_valid && start_at_targets;
+	if (setup.start_positions.is_empty()) {
+		hard_reset_requested = targets_valid;
+		return;
+	}
+	hard_reset_requested = false;
+	JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
+	const JPH::RVec3 origin = jolt_body->GetCenterOfMassPosition();
+	for (uint32_t i = 0; i < vertices.size(); i++) {
+		vertices[i].mPosition = JPH::Vec3(to_jolt_r(setup.start_positions[i]) - origin);
+		vertices[i].mPreviousPosition = vertices[i].mPosition;
+		vertices[i].mVelocity = JPH::Vec3::sZero();
+	}
+	// Re-entering a space later starts at rest.
+	setup.start_positions.clear();
 }
 
 bool JoltCloth3D::_is_kinematic(uint32_t p_particle) const {
@@ -277,13 +290,13 @@ JoltCloth3D::JoltCloth3D() :
 
 JoltCloth3D::~JoltCloth3D() = default;
 
-void JoltCloth3D::configure(const Setup &p_setup, bool p_start_at_targets) {
+void JoltCloth3D::configure(const Setup &p_setup) {
 	const uint32_t particle_count = p_setup.positions.size();
 	ERR_FAIL_COND_MSG(p_setup.pin_weights.size() != particle_count || p_setup.max_distances.size() != particle_count, "Cloth particle attributes must match the particle count.");
+	ERR_FAIL_COND_MSG(!p_setup.start_positions.is_empty() && p_setup.start_positions.size() != particle_count, "Cloth start positions must match the particle count.");
 	ERR_FAIL_COND_MSG(p_setup.triangles.size() % 3 != 0, "Cloth triangles must come in groups of three indices.");
 
 	setup = p_setup;
-	start_at_targets = p_start_at_targets;
 	particle_inverse_masses.resize(particle_count);
 	const float inverse_mass = 1.0f / MAX(setup.particle_mass, 0.0001f);
 	for (uint32_t i = 0; i < particle_count; i++) {
@@ -410,6 +423,11 @@ void JoltCloth3D::get_positions(LocalVector<Vector3> &r_positions) const {
 
 bool JoltCloth3D::interacts_with(const JoltObject3D &p_other) const {
 	// Cloth collides with rigid bodies only; areas, soft bodies and other cloth pass through it.
+	// The body a resting cloth leaves for other cloth to lie on carries the cloth's instance; the
+	// cloth itself moves through it.
+	if (p_other.get_instance_id() == get_instance_id()) {
+		return false;
+	}
 	return p_other.is_body() && (can_collide_with(p_other) || p_other.can_collide_with(*this));
 }
 

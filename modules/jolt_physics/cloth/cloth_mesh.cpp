@@ -86,6 +86,7 @@ void ClothMesh::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_triangles"), &ClothMesh::get_triangles);
 	ClassDB::bind_method(D_METHOD("set_pin_weights", "weights"), &ClothMesh::set_pin_weights);
 	ClassDB::bind_method(D_METHOD("get_pin_weights"), &ClothMesh::get_pin_weights);
+	ClassDB::bind_method(D_METHOD("has_pins"), &ClothMesh::has_pins);
 	ClassDB::bind_method(D_METHOD("set_max_distances", "distances"), &ClothMesh::set_max_distances);
 	ClassDB::bind_method(D_METHOD("get_max_distances"), &ClothMesh::get_max_distances);
 	ClassDB::bind_method(D_METHOD("set_poses", "poses"), &ClothMesh::set_poses);
@@ -101,6 +102,15 @@ void ClothMesh::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "max_distances", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), "set_max_distances", "get_max_distances");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "poses", PROPERTY_HINT_ARRAY_TYPE, "PackedVector3Array", PROPERTY_USAGE_NO_EDITOR), "set_poses", "get_poses");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "render_mesh", PROPERTY_HINT_RESOURCE_TYPE, "ArrayMesh"), "set_render_mesh", "get_render_mesh");
+}
+
+bool ClothMesh::has_pins() const {
+	for (float weight : pin_weights) {
+		if (weight > 0.5f) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void ClothMesh::set_triangles(const PackedInt32Array &p_triangles) {

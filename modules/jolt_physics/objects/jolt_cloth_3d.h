@@ -44,7 +44,10 @@ class JoltCloth3D final : public JoltObject3D {
 public:
 	// Particle data in world space at the moment the cloth enters the space.
 	struct Setup {
+		// Rest shape of the fabric: edge lengths and bends are measured here.
 		LocalVector<Vector3> positions;
+		// Where the particles start; empty means at rest.
+		LocalVector<Vector3> start_positions;
 		LocalVector<int32_t> triangles;
 		LocalVector<float> pin_weights;
 		// Distance a particle may leave its target, in meters; negative means unlimited.
@@ -86,7 +89,6 @@ private:
 	Vector3 grab_target;
 	bool targets_valid = false;
 	bool hard_reset_requested = false;
-	bool start_at_targets = true;
 	bool rest_shape_dirty = false;
 
 	virtual JPH::BroadPhaseLayer _get_broad_phase_layer() const override;
@@ -107,9 +109,8 @@ public:
 	JoltCloth3D();
 	virtual ~JoltCloth3D() override;
 
-	// p_start_at_targets: particles start in the pose; otherwise they start at Setup::positions
-	// and the drive brings them to the targets.
-	void configure(const Setup &p_setup, bool p_start_at_targets = true);
+	// The targets start at the rest shape.
+	void configure(const Setup &p_setup);
 	int get_particle_count() const { return (int)setup.positions.size(); }
 
 	// p_reshape: the targets form a new pose, not the same pose moved; the fabric then rests in it.
