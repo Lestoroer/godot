@@ -82,6 +82,7 @@ class ClothBody3D : public GeometryInstance3D {
 	Transform3D step_inverse;
 	uint64_t read_physics_frame = 0;
 	bool targets_dirty = true;
+	bool pose_reshaped = false;
 	bool was_active = false;
 	bool drawn_in_pose = true;
 

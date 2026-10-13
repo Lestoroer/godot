@@ -134,6 +134,7 @@ void ClothBody3D::_create_physics() {
 	read_physics_frame = Engine::get_singleton()->get_physics_frames();
 	was_active = false;
 	targets_dirty = false;
+	pose_reshaped = false;
 }
 
 void ClothBody3D::_free_physics() {
@@ -183,6 +184,7 @@ void ClothBody3D::_update_pose() {
 	}
 
 	targets_dirty = true;
+	pose_reshaped = true;
 	if (cloth != nullptr) {
 		_wake_up();
 	} else {
@@ -201,9 +203,10 @@ void ClothBody3D::_push_targets() {
 		for (uint32_t i = 0; i < pose_local.size(); i++) {
 			world_scratch[i] = transform.xform(pose_local[i]);
 		}
-		cloth->set_targets(world_scratch);
+		cloth->set_targets(world_scratch, pose_reshaped);
 		target_transform = transform;
 		targets_dirty = false;
+		pose_reshaped = false;
 		_wake_up();
 	}
 	step_inverse = transform.affine_inverse();
@@ -480,7 +483,7 @@ void ClothBody3D::set_carried(bool p_carried) {
 	for (uint32_t i = 0; i < shape.size(); i++) {
 		world_scratch[i] = transform.xform(shape[i]);
 	}
-	cloth->set_targets(world_scratch);
+	cloth->set_targets(world_scratch, true);
 	cloth->reset_to_targets();
 	previous_local = shape;
 	current_local = shape;
@@ -502,7 +505,7 @@ void ClothBody3D::reset_to_pose() {
 		world_scratch[i] = transform.xform(pose_local[i]);
 	}
 	_free_lying_collision();
-	cloth->set_targets(world_scratch);
+	cloth->set_targets(world_scratch, true);
 	cloth->reset_to_targets();
 	previous_local = pose_local;
 	current_local = pose_local;

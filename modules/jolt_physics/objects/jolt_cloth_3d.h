@@ -71,6 +71,7 @@ private:
 	LocalVector<Push> pushes;
 	LocalVector<float> particle_inverse_masses;
 	JPH::Array<JPH::Mat44> joint_matrices;
+	JPH::Ref<JPH::SoftBodySharedSettings> shared_settings;
 
 	float drive_stiffness = 0.0f;
 	float drive_damping = 0.0f;
@@ -85,6 +86,7 @@ private:
 	Vector3 grab_target;
 	bool targets_valid = false;
 	bool hard_reset_requested = false;
+	bool rest_shape_dirty = false;
 
 	virtual JPH::BroadPhaseLayer _get_broad_phase_layer() const override;
 	virtual JPH::ObjectLayer _get_object_layer() const override;
@@ -92,6 +94,8 @@ private:
 
 	JPH::SoftBodySharedSettings *_create_shared_settings() const;
 	void _skin_to_targets(bool p_hard_reset);
+	void _reshape_rest();
+	float _effective_gravity_scale() const;
 	void _apply_drive(float p_step);
 	void _apply_pushes();
 	void _apply_grab();
@@ -104,7 +108,8 @@ public:
 	void configure(const Setup &p_setup);
 	int get_particle_count() const { return (int)setup.positions.size(); }
 
-	void set_targets(const LocalVector<Vector3> &p_world_targets);
+	// p_reshape: the targets form a new pose, not the same pose moved; the fabric then rests in it.
+	void set_targets(const LocalVector<Vector3> &p_world_targets, bool p_reshape);
 	void reset_to_targets();
 
 	void set_drive(float p_stiffness, float p_damping);

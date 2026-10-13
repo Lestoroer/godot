@@ -71,13 +71,14 @@ void JoltCloth3D::_add_to_space() {
 	JoltGroupFilter::encode_object(this, group_id, sub_group_id);
 
 	// The body stays at the origin, so particle positions are world positions.
-	JPH::SoftBodyCreationSettings settings(_create_shared_settings(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), _get_object_layer());
+	shared_settings = _create_shared_settings();
+	JPH::SoftBodyCreationSettings settings(shared_settings.GetPtr(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), _get_object_layer());
 	settings.mUserData = reinterpret_cast<JPH::uint64>(this);
 	settings.mCollisionGroup = JPH::CollisionGroup(nullptr, group_id, sub_group_id);
 	settings.mNumIterations = (JPH::uint32)iterations;
 	settings.mLinearDamping = linear_damping;
 	settings.mFriction = friction;
-	settings.mGravityFactor = gravity_scale;
+	settings.mGravityFactor = _effective_gravity_scale();
 	settings.mVertexRadius = vertex_radius;
 	settings.mMaxLinearVelocity = JoltProjectSettings::max_linear_velocity;
 	settings.mUpdatePosition = false;
@@ -166,6 +167,20 @@ void JoltCloth3D::_skin_to_targets(bool p_hard_reset) {
 	motion->SkinVertices(jolt_body->GetCenterOfMassTransform(), joint_matrices.data(), particle_count, p_hard_reset, space->get_temp_allocator());
 }
 
+void JoltCloth3D::_reshape_rest() {
+	// Edges and bends rest in the current pose, so a gathered curtain does not push its folds apart.
+	for (uint32_t i = 0; i < targets.size(); i++) {
+		to_jolt(targets[i]).StoreFloat3(&shared_settings->mVertices[i].mPosition);
+	}
+	shared_settings->CalculateEdgeLengths();
+	shared_settings->CalculateBendConstraintConstants();
+}
+
+float JoltCloth3D::_effective_gravity_scale() const {
+	// A pose already hangs under gravity; pulling it down again would sag it below the pose.
+	return setup.follow_targets ? 0.0f : gravity_scale;
+}
+
 void JoltCloth3D::_apply_drive(float p_step) {
 	if (!setup.follow_targets || drive_stiffness <= 0.0f) {
 		return;
@@ -231,7 +246,7 @@ void JoltCloth3D::_update_motion_settings() {
 	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
 	motion->SetNumIterations((JPH::uint32)iterations);
 	motion->SetLinearDamping(linear_damping);
-	motion->SetGravityFactor(gravity_scale);
+	motion->SetGravityFactor(_effective_gravity_scale());
 	motion->SetVertexRadius(vertex_radius);
 	motion->SetSkinnedMaxDistanceMultiplier(max_distance_scale);
 	jolt_body->SetFriction(friction);
@@ -264,10 +279,11 @@ void JoltCloth3D::configure(const Setup &p_setup) {
 	}
 }
 
-void JoltCloth3D::set_targets(const LocalVector<Vector3> &p_world_targets) {
+void JoltCloth3D::set_targets(const LocalVector<Vector3> &p_world_targets, bool p_reshape) {
 	ERR_FAIL_COND(p_world_targets.size() != setup.positions.size());
 	targets = p_world_targets;
 	targets_valid = true;
+	rest_shape_dirty = rest_shape_dirty || p_reshape;
 }
 
 void JoltCloth3D::reset_to_targets() {
@@ -392,6 +408,10 @@ bool JoltCloth3D::can_interact_with(const JoltArea3D &p_other) const {
 void JoltCloth3D::pre_step(float p_step) {
 	JoltObject3D::pre_step(p_step);
 
+	if (rest_shape_dirty && setup.follow_targets) {
+		_reshape_rest();
+	}
+	rest_shape_dirty = false;
 	if (targets_valid) {
 		_skin_to_targets(hard_reset_requested);
 		hard_reset_requested = false;
