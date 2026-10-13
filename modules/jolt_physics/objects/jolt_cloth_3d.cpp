@@ -269,13 +269,24 @@ void JoltCloth3D::_apply_pushes() {
 	const Vector3 origin = to_godot(jolt_body->GetCenterOfMassPosition());
 
 	for (const Push &push : pushes) {
+		const real_t speed = push.velocity.length();
+		if (speed == 0.0) {
+			continue;
+		}
+		const Vector3 direction = push.velocity / speed;
 		for (JPH::SoftBodyVertex &vertex : vertices) {
 			if (vertex.mInvMass == 0.0f) {
 				continue;
 			}
 			const float distance = (origin + to_godot(vertex.mPosition)).distance_to(push.point);
-			if (distance < push.radius) {
-				vertex.mVelocity += to_jolt(push.velocity * push_falloff(distance, push.radius));
+			if (distance >= push.radius) {
+				continue;
+			}
+			// A push carries the fabric along like a hand: up to the push speed in its direction and
+			// never faster, so a cursor moving over free cloth does not keep accelerating it.
+			const real_t along = to_godot(vertex.mVelocity).dot(direction);
+			if (along < speed) {
+				vertex.mVelocity += to_jolt(direction * ((speed - along) * push_falloff(distance, push.radius)));
 			}
 		}
 	}
