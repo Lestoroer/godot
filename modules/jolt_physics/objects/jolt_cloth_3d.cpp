@@ -81,7 +81,9 @@ void JoltCloth3D::_add_to_space() {
 	shared_settings = _create_shared_settings();
 	JPH::SoftBodyCreationSettings settings(shared_settings.GetPtr(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), _get_object_layer());
 	settings.mUserData = reinterpret_cast<JPH::uint64>(this);
-	settings.mCollisionGroup = JPH::CollisionGroup(nullptr, group_id, sub_group_id);
+	// Jolt asks the group filter whether the cloth touches a body; without it the cloth would also
+	// collide with the shape it leaves for other cloth to rest on.
+	settings.mCollisionGroup = JPH::CollisionGroup(JoltGroupFilter::instance, group_id, sub_group_id);
 	settings.mNumIterations = (JPH::uint32)iterations;
 	settings.mLinearDamping = linear_damping;
 	settings.mFriction = friction;
