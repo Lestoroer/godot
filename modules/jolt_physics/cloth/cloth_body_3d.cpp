@@ -168,6 +168,9 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	if (carried) {
 		carry_local = current_local;
 		cloth->put_to_sleep();
+	} else if (follow_pose) {
+		// The pose is the resting shape: other cloth may lie on it before this cloth first sleeps.
+		_update_lying_collision();
 	}
 }
 
