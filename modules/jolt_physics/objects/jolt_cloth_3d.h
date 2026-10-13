@@ -99,7 +99,7 @@ private:
 	JPH::SoftBodySharedSettings *_create_shared_settings() const;
 	void _skin_to_targets(bool p_hard_reset);
 	void _reshape_rest();
-	float _effective_gravity_scale() const;
+	void _apply_gravity(float p_step);
 	void _apply_drive(float p_step);
 	void _apply_pushes();
 	void _apply_grab();

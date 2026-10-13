@@ -36,6 +36,7 @@
 #include "../misc/jolt_type_conversions.h"
 #include "../spaces/jolt_broad_phase_layer.h"
 #include "../spaces/jolt_space_3d.h"
+#include "jolt_area_3d.h"
 #include "jolt_body_3d.h"
 #include "jolt_group_filter.h"
 
@@ -84,7 +85,8 @@ void JoltCloth3D::_add_to_space() {
 	settings.mNumIterations = (JPH::uint32)iterations;
 	settings.mLinearDamping = linear_damping;
 	settings.mFriction = friction;
-	settings.mGravityFactor = _effective_gravity_scale();
+	// The space has no gravity of its own; the cloth applies it before each step, like Godot soft bodies.
+	settings.mGravityFactor = 0.0f;
 	settings.mVertexRadius = vertex_radius;
 	settings.mMaxLinearVelocity = JoltProjectSettings::max_linear_velocity;
 	settings.mUpdatePosition = false;
@@ -208,9 +210,20 @@ void JoltCloth3D::_reshape_rest() {
 	shared_settings->CalculateLRALengths(LRA_SLACK);
 }
 
-float JoltCloth3D::_effective_gravity_scale() const {
+void JoltCloth3D::_apply_gravity(float p_step) {
 	// A pose already hangs under gravity; pulling it down again would sag it below the pose.
-	return setup.follow_targets ? 0.0f : gravity_scale;
+	if (setup.follow_targets || gravity_scale == 0.0f) {
+		return;
+	}
+
+	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	const Vector3 gravity = space->get_default_area()->compute_gravity(to_godot(jolt_body->GetCenterOfMassPosition()));
+	const JPH::Vec3 velocity_change = to_jolt(gravity * (gravity_scale * p_step));
+	for (JPH::SoftBodyVertex &vertex : motion->GetVertices()) {
+		if (vertex.mInvMass != 0.0f) {
+			vertex.mVelocity += velocity_change;
+		}
+	}
 }
 
 void JoltCloth3D::_apply_drive(float p_step) {
@@ -278,7 +291,6 @@ void JoltCloth3D::_update_motion_settings() {
 	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
 	motion->SetNumIterations((JPH::uint32)iterations);
 	motion->SetLinearDamping(linear_damping);
-	motion->SetGravityFactor(_effective_gravity_scale());
 	motion->SetVertexRadius(vertex_radius);
 	motion->SetSkinnedMaxDistanceMultiplier(max_distance_scale);
 	jolt_body->SetFriction(friction);
@@ -454,6 +466,7 @@ void JoltCloth3D::pre_step(float p_step) {
 		_skin_to_targets(hard_reset_requested);
 		hard_reset_requested = false;
 	}
+	_apply_gravity(p_step);
 	_apply_drive(p_step);
 	_apply_pushes();
 	_apply_grab();
