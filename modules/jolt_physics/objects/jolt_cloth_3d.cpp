@@ -1,0 +1,401 @@
+/**************************************************************************/
+/*  jolt_cloth_3d.cpp                                                     */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+// Fork(Lestoroer): cloth that follows an authored pose. See modules/jolt_physics/cloth/README.md.
+
+#include "jolt_cloth_3d.h"
+
+#include "../jolt_project_settings.h"
+#include "../misc/jolt_type_conversions.h"
+#include "../spaces/jolt_broad_phase_layer.h"
+#include "../spaces/jolt_space_3d.h"
+#include "jolt_body_3d.h"
+#include "jolt_group_filter.h"
+
+#include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
+#include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
+
+namespace {
+
+// Smooth falloff of a cursor push from its center to its radius.
+float push_falloff(float p_distance, float p_radius) {
+	const float t = 1.0f - p_distance / p_radius;
+	return t * t * (3.0f - 2.0f * t);
+}
+
+} // namespace
+
+JPH::BroadPhaseLayer JoltCloth3D::_get_broad_phase_layer() const {
+	return JoltBroadPhaseLayer::BODY_DYNAMIC;
+}
+
+JPH::ObjectLayer JoltCloth3D::_get_object_layer() const {
+	ERR_FAIL_NULL_V(space, 0);
+	return space->map_to_object_layer(_get_broad_phase_layer(), collision_layer, collision_mask);
+}
+
+void JoltCloth3D::_add_to_space() {
+	if (unlikely(space == nullptr || setup.positions.is_empty())) {
+		return;
+	}
+
+	JPH::CollisionGroup::GroupID group_id = 0;
+	JPH::CollisionGroup::SubGroupID sub_group_id = 0;
+	JoltGroupFilter::encode_object(this, group_id, sub_group_id);
+
+	// The body stays at the origin, so particle positions are world positions.
+	JPH::SoftBodyCreationSettings settings(_create_shared_settings(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), _get_object_layer());
+	settings.mUserData = reinterpret_cast<JPH::uint64>(this);
+	settings.mCollisionGroup = JPH::CollisionGroup(nullptr, group_id, sub_group_id);
+	settings.mNumIterations = (JPH::uint32)iterations;
+	settings.mLinearDamping = linear_damping;
+	settings.mFriction = friction;
+	settings.mGravityFactor = gravity_scale;
+	settings.mVertexRadius = vertex_radius;
+	settings.mMaxLinearVelocity = JoltProjectSettings::max_linear_velocity;
+	settings.mUpdatePosition = false;
+	settings.mAllowSleeping = true;
+	settings.mFacesDoubleSided = true;
+
+	JPH::Body *new_jolt_body = space->add_object(*this, settings);
+	if (new_jolt_body == nullptr) {
+		return;
+	}
+	jolt_body = new_jolt_body;
+
+	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	motion->SetSkinnedMaxDistanceMultiplier(max_distance_scale);
+	hard_reset_requested = targets_valid;
+}
+
+JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
+	JPH::SoftBodySharedSettings *shared = new JPH::SoftBodySharedSettings();
+	const uint32_t particle_count = setup.positions.size();
+	const float inverse_mass = 1.0f / MAX(setup.particle_mass, 0.0001f);
+
+	bool has_pins = false;
+	shared->mVertices.reserve(particle_count);
+	for (uint32_t i = 0; i < particle_count; i++) {
+		const bool pinned = setup.pin_weights[i] > 0.5f;
+		has_pins = has_pins || pinned;
+		shared->mVertices.push_back(JPH::SoftBodySharedSettings::Vertex(to_jolt(setup.positions[i]), JPH::Float3(0, 0, 0), pinned ? 0.0f : inverse_mass));
+	}
+
+	for (uint32_t i = 0; i + 2 < setup.triangles.size(); i += 3) {
+		const JPH::SoftBodySharedSettings::Face face(setup.triangles[i], setup.triangles[i + 1], setup.triangles[i + 2]);
+		if (!face.IsDegenerate()) {
+			shared->AddFace(face);
+		}
+	}
+
+	// Long range attachments keep fabric from stretching under its pins.
+	const JPH::SoftBodySharedSettings::ELRAType lra = has_pins ? JPH::SoftBodySharedSettings::ELRAType::GeodesicDistance : JPH::SoftBodySharedSettings::ELRAType::None;
+	const JPH::SoftBodySharedSettings::VertexAttributes attributes(setup.stretch_compliance, setup.shear_compliance, setup.bend_compliance, lra);
+	shared->CreateConstraints(&attributes, 1, JPH::SoftBodySharedSettings::EBendType::Dihedral);
+
+	if (setup.follow_targets) {
+		// One joint per particle: the joint places the particle's skinned position at its pose target.
+		shared->mInvBindMatrices.reserve(particle_count);
+		shared->mSkinnedConstraints.reserve(particle_count);
+		const float backstop_distance = setup.backstop_distance < 0.0f ? FLT_MAX : setup.backstop_distance;
+		for (uint32_t i = 0; i < particle_count; i++) {
+			const bool pinned = setup.pin_weights[i] > 0.5f;
+			const float max_distance = pinned ? 0.0f : (setup.max_distances[i] < 0.0f ? FLT_MAX : setup.max_distances[i]);
+			shared->mInvBindMatrices.push_back(JPH::SoftBodySharedSettings::InvBind(i, JPH::Mat44::sTranslation(-to_jolt(setup.positions[i]))));
+			JPH::SoftBodySharedSettings::Skinned skinned(i, max_distance, backstop_distance, setup.backstop_radius);
+			skinned.mWeights[0] = JPH::SoftBodySharedSettings::SkinWeight(i, 1.0f);
+			shared->mSkinnedConstraints.push_back(skinned);
+		}
+		shared->CalculateSkinnedConstraintNormals();
+	}
+
+	shared->Optimize();
+	return shared;
+}
+
+void JoltCloth3D::_skin_to_targets(bool p_hard_reset) {
+	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	const JPH::RVec3 origin = jolt_body->GetCenterOfMassPosition();
+	const uint32_t particle_count = targets.size();
+
+	if (!setup.follow_targets) {
+		if (p_hard_reset) {
+			JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
+			for (uint32_t i = 0; i < particle_count; i++) {
+				vertices[i].mPosition = JPH::Vec3(to_jolt_r(targets[i]) - origin);
+				vertices[i].mPreviousPosition = vertices[i].mPosition;
+				vertices[i].mVelocity = JPH::Vec3::sZero();
+			}
+		}
+		return;
+	}
+
+	joint_matrices.resize(particle_count);
+	for (uint32_t i = 0; i < particle_count; i++) {
+		joint_matrices[i] = JPH::Mat44::sTranslation(JPH::Vec3(to_jolt_r(targets[i]) - origin));
+	}
+	motion->SkinVertices(jolt_body->GetCenterOfMassTransform(), joint_matrices.data(), particle_count, p_hard_reset, space->get_temp_allocator());
+}
+
+void JoltCloth3D::_apply_drive(float p_step) {
+	if (!setup.follow_targets || drive_stiffness <= 0.0f) {
+		return;
+	}
+
+	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
+	const JPH::RVec3 origin = jolt_body->GetCenterOfMassPosition();
+	const float inverse_step = 1.0f / p_step;
+
+	for (uint32_t i = 0; i < targets.size(); i++) {
+		JPH::SoftBodyVertex &vertex = vertices[i];
+		if (vertex.mInvMass == 0.0f) {
+			continue;
+		}
+		const JPH::Vec3 target = JPH::Vec3(to_jolt_r(targets[i]) - origin);
+		const JPH::Vec3 target_velocity = to_jolt((targets[i] - previous_targets[i]) * inverse_step);
+		const JPH::Vec3 acceleration = drive_stiffness * (target - vertex.mPosition) + drive_damping * (target_velocity - vertex.mVelocity);
+		vertex.mVelocity += acceleration * p_step;
+	}
+}
+
+void JoltCloth3D::_apply_pushes() {
+	if (pushes.is_empty()) {
+		return;
+	}
+
+	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
+	const Vector3 origin = to_godot(jolt_body->GetCenterOfMassPosition());
+
+	for (const Push &push : pushes) {
+		for (JPH::SoftBodyVertex &vertex : vertices) {
+			if (vertex.mInvMass == 0.0f) {
+				continue;
+			}
+			const float distance = (origin + to_godot(vertex.mPosition)).distance_to(push.point);
+			if (distance < push.radius) {
+				vertex.mVelocity += to_jolt(push.velocity * push_falloff(distance, push.radius));
+			}
+		}
+	}
+	pushes.clear();
+}
+
+void JoltCloth3D::_apply_grab() {
+	if (grabbed_particle < 0) {
+		return;
+	}
+
+	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	JPH::SoftBodyVertex &vertex = motion->GetVertices()[grabbed_particle];
+	vertex.mInvMass = 0.0f;
+	vertex.mPosition = JPH::Vec3(to_jolt_r(grab_target) - jolt_body->GetCenterOfMassPosition());
+	vertex.mVelocity = JPH::Vec3::sZero();
+}
+
+void JoltCloth3D::_update_motion_settings() {
+	if (!in_space()) {
+		return;
+	}
+
+	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	motion->SetNumIterations((JPH::uint32)iterations);
+	motion->SetLinearDamping(linear_damping);
+	motion->SetGravityFactor(gravity_scale);
+	motion->SetVertexRadius(vertex_radius);
+	motion->SetSkinnedMaxDistanceMultiplier(max_distance_scale);
+	jolt_body->SetFriction(friction);
+}
+
+JoltCloth3D::JoltCloth3D() :
+		JoltObject3D(OBJECT_TYPE_CLOTH) {
+}
+
+JoltCloth3D::~JoltCloth3D() = default;
+
+void JoltCloth3D::configure(const Setup &p_setup) {
+	const uint32_t particle_count = p_setup.positions.size();
+	ERR_FAIL_COND_MSG(p_setup.pin_weights.size() != particle_count || p_setup.max_distances.size() != particle_count, "Cloth particle attributes must match the particle count.");
+	ERR_FAIL_COND_MSG(p_setup.triangles.size() % 3 != 0, "Cloth triangles must come in groups of three indices.");
+
+	setup = p_setup;
+	particle_inverse_masses.resize(particle_count);
+	const float inverse_mass = 1.0f / MAX(setup.particle_mass, 0.0001f);
+	for (uint32_t i = 0; i < particle_count; i++) {
+		particle_inverse_masses[i] = setup.pin_weights[i] > 0.5f ? 0.0f : inverse_mass;
+	}
+	targets = setup.positions;
+	previous_targets = setup.positions;
+	targets_valid = true;
+	grabbed_particle = -1;
+
+	if (space != nullptr) {
+		_reset_space();
+	}
+}
+
+void JoltCloth3D::set_targets(const LocalVector<Vector3> &p_world_targets) {
+	ERR_FAIL_COND(p_world_targets.size() != setup.positions.size());
+	targets = p_world_targets;
+	targets_valid = true;
+}
+
+void JoltCloth3D::reset_to_targets() {
+	hard_reset_requested = true;
+	previous_targets = targets;
+	wake_up();
+}
+
+void JoltCloth3D::set_drive(float p_stiffness, float p_damping) {
+	drive_stiffness = MAX(p_stiffness, 0.0f);
+	drive_damping = MAX(p_damping, 0.0f);
+}
+
+void JoltCloth3D::set_gravity_scale(float p_scale) {
+	gravity_scale = p_scale;
+	_update_motion_settings();
+}
+
+void JoltCloth3D::set_linear_damping(float p_damping) {
+	linear_damping = MAX(p_damping, 0.0f);
+	_update_motion_settings();
+}
+
+void JoltCloth3D::set_friction(float p_friction) {
+	friction = MAX(p_friction, 0.0f);
+	_update_motion_settings();
+}
+
+void JoltCloth3D::set_vertex_radius(float p_radius) {
+	vertex_radius = MAX(p_radius, 0.0f);
+	_update_motion_settings();
+}
+
+void JoltCloth3D::set_max_distance_scale(float p_scale) {
+	max_distance_scale = MAX(p_scale, 0.0f);
+	_update_motion_settings();
+}
+
+void JoltCloth3D::set_iterations(int p_iterations) {
+	iterations = MAX(p_iterations, 1);
+	_update_motion_settings();
+}
+
+void JoltCloth3D::push(const Vector3 &p_point, const Vector3 &p_velocity, float p_radius) {
+	ERR_FAIL_COND(p_radius <= 0.0f);
+	pushes.push_back({ p_point, p_velocity, p_radius });
+	wake_up();
+}
+
+void JoltCloth3D::grab(int p_particle, const Vector3 &p_world_position) {
+	ERR_FAIL_INDEX(p_particle, get_particle_count());
+	release_grab();
+	grabbed_particle = p_particle;
+	grab_target = p_world_position;
+	wake_up();
+}
+
+void JoltCloth3D::move_grab(const Vector3 &p_world_position) {
+	grab_target = p_world_position;
+	wake_up();
+}
+
+void JoltCloth3D::release_grab() {
+	if (grabbed_particle < 0) {
+		return;
+	}
+	if (in_space()) {
+		JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+		motion->GetVertices()[grabbed_particle].mInvMass = particle_inverse_masses[grabbed_particle];
+	}
+	grabbed_particle = -1;
+}
+
+bool JoltCloth3D::is_active() const {
+	return in_space() && jolt_body->IsActive();
+}
+
+void JoltCloth3D::wake_up() {
+	if (in_space() && jolt_body->IsInBroadPhase()) {
+		space->get_body_iface().ActivateBody(jolt_body->GetID());
+	}
+}
+
+void JoltCloth3D::put_to_sleep() {
+	if (in_space() && jolt_body->IsInBroadPhase()) {
+		space->get_body_iface().DeactivateBody(jolt_body->GetID());
+	}
+}
+
+void JoltCloth3D::get_positions(LocalVector<Vector3> &r_positions) const {
+	if (!in_space()) {
+		r_positions = targets;
+		return;
+	}
+
+	const JPH::SoftBodyMotionProperties *motion = static_cast<const JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	const JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
+	const Vector3 origin = to_godot(jolt_body->GetCenterOfMassPosition());
+	r_positions.resize(vertices.size());
+	for (uint32_t i = 0; i < vertices.size(); i++) {
+		r_positions[i] = origin + to_godot(vertices[i].mPosition);
+	}
+}
+
+bool JoltCloth3D::interacts_with(const JoltObject3D &p_other) const {
+	// Cloth collides with rigid bodies only; areas, soft bodies and other cloth pass through it.
+	return p_other.is_body() && (can_collide_with(p_other) || p_other.can_collide_with(*this));
+}
+
+bool JoltCloth3D::can_interact_with(const JoltBody3D &p_other) const {
+	return interacts_with(static_cast<const JoltObject3D &>(p_other));
+}
+
+bool JoltCloth3D::can_interact_with(const JoltSoftBody3D &p_other) const {
+	return false;
+}
+
+bool JoltCloth3D::can_interact_with(const JoltArea3D &p_other) const {
+	return false;
+}
+
+void JoltCloth3D::pre_step(float p_step) {
+	JoltObject3D::pre_step(p_step);
+
+	if (targets_valid) {
+		_skin_to_targets(hard_reset_requested);
+		hard_reset_requested = false;
+	}
+	_apply_drive(p_step);
+	_apply_pushes();
+	_apply_grab();
+	previous_targets = targets;
+}

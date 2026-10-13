@@ -1,0 +1,611 @@
+/**************************************************************************/
+/*  cloth_body_3d.cpp                                                     */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+// Fork(Lestoroer): cloth node. See modules/jolt_physics/cloth/README.md.
+
+#include "cloth_body_3d.h"
+
+#include "../jolt_physics_server_3d.h"
+#include "../objects/jolt_cloth_3d.h"
+#include "../spaces/jolt_space_3d.h"
+
+#include "core/config/engine.h"
+#include "scene/resources/3d/world_3d.h"
+#include "servers/physics_3d/physics_server_3d.h"
+#include "servers/rendering/rendering_server.h"
+
+namespace {
+
+// Margin around the particles for the visible mesh, which may stand off the coarse simulation surface.
+constexpr real_t RENDER_MARGIN = 0.05;
+
+AABB bounds_of(const LocalVector<Vector3> &p_points, real_t p_margin) {
+	if (p_points.is_empty()) {
+		return AABB();
+	}
+	AABB bounds(p_points[0], Vector3());
+	for (const Vector3 &point : p_points) {
+		bounds.expand_to(point);
+	}
+	return bounds.grow(p_margin);
+}
+
+} // namespace
+
+void ClothBody3D::_rebuild() {
+	_free_physics();
+	_free_lying_collision();
+
+	RenderingServer *rendering = RenderingServer::get_singleton();
+	if (cloth_mesh.is_null() || cloth_mesh->get_render_mesh().is_null() || cloth_mesh->get_particle_count() == 0) {
+		set_base(RID());
+		return;
+	}
+
+	set_base(cloth_mesh->get_render_mesh()->get_rid());
+	if (!skeleton.is_valid()) {
+		skeleton = rendering->skeleton_create();
+	}
+	rendering->skeleton_allocate_data(skeleton, cloth_mesh->get_particle_count());
+	if (is_inside_world()) {
+		rendering->instance_attach_skeleton(get_instance(), skeleton);
+	}
+
+	_update_pose();
+	previous_local = pose_local;
+	current_local = pose_local;
+	render_local = pose_local;
+	_draw_pose();
+
+	if (is_inside_world() && !Engine::get_singleton()->is_editor_hint()) {
+		_create_physics();
+	}
+}
+
+void ClothBody3D::_create_physics() {
+	JoltPhysicsServer3D *server = JoltPhysicsServer3D::get_singleton();
+	ERR_FAIL_NULL_MSG(server, "ClothBody3D requires Jolt Physics as the 3D physics engine.");
+	ERR_FAIL_COND_MSG(server->is_on_separate_thread(), "ClothBody3D does not support running physics on a separate thread.");
+	JoltSpace3D *space = server->get_space(get_world_3d()->get_space());
+	ERR_FAIL_NULL(space);
+
+	const Transform3D transform = get_global_transform();
+	JoltCloth3D::Setup setup;
+	setup.positions.resize(pose_local.size());
+	for (uint32_t i = 0; i < pose_local.size(); i++) {
+		setup.positions[i] = transform.xform(pose_local[i]);
+	}
+	const PackedInt32Array triangles = cloth_mesh->get_triangles();
+	const PackedFloat32Array pins = cloth_mesh->get_pin_weights();
+	const PackedFloat32Array distances = cloth_mesh->get_max_distances();
+	for (int index : triangles) {
+		setup.triangles.push_back(index);
+	}
+	for (float pin : pins) {
+		setup.pin_weights.push_back(pin);
+	}
+	for (float distance : distances) {
+		setup.max_distances.push_back(distance);
+	}
+	setup.particle_mass = particle_mass;
+	setup.stretch_compliance = stretch_compliance;
+	setup.shear_compliance = shear_compliance;
+	setup.bend_compliance = bend_compliance;
+	setup.backstop_distance = backstop_distance;
+	setup.backstop_radius = backstop_radius;
+	setup.follow_targets = follow_pose;
+
+	cloth = memnew(JoltCloth3D);
+	cloth->set_instance_id(get_instance_id());
+	_update_motion();
+	cloth->configure(setup);
+	cloth->set_space(space);
+
+	target_transform = transform;
+	step_inverse = transform.affine_inverse();
+	read_physics_frame = Engine::get_singleton()->get_physics_frames();
+	was_active = false;
+	targets_dirty = false;
+}
+
+void ClothBody3D::_free_physics() {
+	if (cloth == nullptr) {
+		return;
+	}
+	cloth->set_space(nullptr);
+	memdelete(cloth);
+	cloth = nullptr;
+}
+
+void ClothBody3D::_update_motion() {
+	if (cloth == nullptr) {
+		return;
+	}
+	cloth->set_collision_layer(collision_layer);
+	cloth->set_collision_mask(collision_mask);
+	cloth->set_drive(drive_stiffness, drive_damping);
+	cloth->set_gravity_scale(gravity_scale);
+	cloth->set_linear_damping(linear_damping);
+	cloth->set_friction(friction);
+	cloth->set_vertex_radius(vertex_radius);
+	cloth->set_max_distance_scale(max_distance_scale);
+	cloth->set_iterations(iterations);
+}
+
+void ClothBody3D::_update_pose() {
+	cloth_mesh->sample_pose(pose_position, pose_local);
+	cloth_mesh->calculate_frames(pose_local, pose_frames);
+
+	// Pose k > 0 is blend shape k - 1; the visible mesh blends the same two poses as the particles.
+	const int pose_count = cloth_mesh->get_pose_count();
+	const float position = CLAMP(pose_position, 0.0f, float(pose_count - 1));
+	const int from = MIN(int(Math::floor(position)), pose_count - 1);
+	const int to = MIN(from + 1, pose_count - 1);
+	const float weight = position - float(from);
+	RenderingServer *rendering = RenderingServer::get_singleton();
+	for (int shape = 0; shape < pose_count - 1; shape++) {
+		float shape_weight = 0.0f;
+		if (shape == from - 1) {
+			shape_weight += 1.0f - weight;
+		}
+		if (shape == to - 1) {
+			shape_weight += weight;
+		}
+		rendering->instance_set_blend_shape_weight(get_instance(), shape, shape_weight);
+	}
+
+	targets_dirty = true;
+	if (cloth != nullptr) {
+		_wake_up();
+	} else {
+		_draw_pose();
+	}
+}
+
+void ClothBody3D::_push_targets() {
+	if (cloth == nullptr || carried) {
+		return;
+	}
+
+	const Transform3D transform = get_global_transform();
+	if (follow_pose && (targets_dirty || transform != target_transform)) {
+		world_scratch.resize(pose_local.size());
+		for (uint32_t i = 0; i < pose_local.size(); i++) {
+			world_scratch[i] = transform.xform(pose_local[i]);
+		}
+		cloth->set_targets(world_scratch);
+		target_transform = transform;
+		targets_dirty = false;
+		_wake_up();
+	}
+	step_inverse = transform.affine_inverse();
+}
+
+void ClothBody3D::_read_simulation() {
+	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
+	if (frame == read_physics_frame) {
+		return;
+	}
+	read_physics_frame = frame;
+
+	cloth->get_positions(world_scratch);
+	previous_local = current_local;
+	current_local.resize(world_scratch.size());
+	for (uint32_t i = 0; i < world_scratch.size(); i++) {
+		current_local[i] = step_inverse.xform(world_scratch[i]);
+	}
+}
+
+void ClothBody3D::_update_render() {
+	if (cloth == nullptr || carried) {
+		return;
+	}
+
+	const bool active = cloth->is_active();
+	if (!active && !was_active) {
+		return;
+	}
+	_read_simulation();
+	if (!active) {
+		_fell_asleep();
+		return;
+	}
+	if (!was_active) {
+		emit_signal(SNAME("sleeping_changed"), false);
+	}
+	was_active = true;
+	drawn_in_pose = false;
+
+	const float fraction = Engine::get_singleton()->get_physics_interpolation_fraction();
+	render_local.resize(current_local.size());
+	for (uint32_t i = 0; i < current_local.size(); i++) {
+		render_local[i] = previous_local[i].lerp(current_local[i], fraction);
+	}
+	cloth_mesh->calculate_frames(render_local, render_frames);
+
+	// Each particle is a bone that carries the posed mesh from the pose frame to the simulated frame.
+	RenderingServer *rendering = RenderingServer::get_singleton();
+	for (uint32_t i = 0; i < render_local.size(); i++) {
+		const Basis rotation = render_frames[i] * pose_frames[i].transposed();
+		rendering->skeleton_bone_set_transform(skeleton, i, Transform3D(rotation, render_local[i] - rotation.xform(pose_local[i])));
+	}
+	rendering->instance_set_custom_aabb(get_instance(), bounds_of(render_local, RENDER_MARGIN));
+}
+
+void ClothBody3D::_draw_pose() {
+	if (!skeleton.is_valid()) {
+		return;
+	}
+	RenderingServer *rendering = RenderingServer::get_singleton();
+	for (uint32_t i = 0; i < pose_local.size(); i++) {
+		rendering->skeleton_bone_set_transform(skeleton, i, Transform3D());
+	}
+	real_t margin = RENDER_MARGIN;
+	for (float distance : cloth_mesh->get_max_distances()) {
+		margin = MAX(margin, distance * max_distance_scale);
+	}
+	rendering->instance_set_custom_aabb(get_instance(), bounds_of(pose_local, margin));
+	drawn_in_pose = true;
+}
+
+void ClothBody3D::_fell_asleep() {
+	was_active = false;
+	if (follow_pose) {
+		// Asleep, the cloth rests within millimeters of its pose; drawing the exact pose keeps folds clean.
+		_draw_pose();
+	} else {
+		_build_lying_collision();
+	}
+	emit_signal(SNAME("sleeping_changed"), true);
+}
+
+void ClothBody3D::_build_lying_collision() {
+	if (lying_collision_layer == 0 || cloth == nullptr) {
+		return;
+	}
+	_free_lying_collision();
+
+	cloth->get_positions(world_scratch);
+	PackedVector3Array faces;
+	for (int index : cloth_mesh->get_triangles()) {
+		faces.push_back(world_scratch[index]);
+	}
+	Dictionary data;
+	data["faces"] = faces;
+	data["backface_collision"] = true;
+
+	PhysicsServer3D *physics = PhysicsServer3D::get_singleton();
+	lying_shape = physics->concave_polygon_shape_create();
+	physics->shape_set_data(lying_shape, data);
+	lying_body = physics->body_create();
+	physics->body_set_mode(lying_body, PhysicsServer3D::BODY_MODE_STATIC);
+	physics->body_add_shape(lying_body, lying_shape);
+	physics->body_set_collision_layer(lying_body, lying_collision_layer);
+	physics->body_set_collision_mask(lying_body, 0);
+	physics->body_attach_object_instance_id(lying_body, get_instance_id());
+	physics->body_set_space(lying_body, get_world_3d()->get_space());
+}
+
+void ClothBody3D::_free_lying_collision() {
+	PhysicsServer3D *physics = PhysicsServer3D::get_singleton();
+	if (lying_body.is_valid()) {
+		physics->free_rid(lying_body);
+		lying_body = RID();
+	}
+	if (lying_shape.is_valid()) {
+		physics->free_rid(lying_shape);
+		lying_shape = RID();
+	}
+}
+
+void ClothBody3D::_wake_up() {
+	_free_lying_collision();
+	cloth->wake_up();
+}
+
+void ClothBody3D::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_ENTER_WORLD: {
+			_rebuild();
+			set_physics_process_internal(true);
+			set_process_internal(true);
+		} break;
+
+		case NOTIFICATION_EXIT_WORLD: {
+			_free_physics();
+			_free_lying_collision();
+			set_physics_process_internal(false);
+			set_process_internal(false);
+		} break;
+
+		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+			_push_targets();
+		} break;
+
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			_update_render();
+		} break;
+	}
+}
+
+void ClothBody3D::set_cloth_mesh(const Ref<ClothMesh> &p_mesh) {
+	cloth_mesh = p_mesh;
+	if (is_inside_world()) {
+		_rebuild();
+	}
+	update_gizmos();
+}
+
+void ClothBody3D::set_pose_position(float p_position) {
+	pose_position = MAX(p_position, 0.0f);
+	if (cloth_mesh.is_valid() && cloth_mesh->get_particle_count() > 0 && is_inside_world()) {
+		_update_pose();
+	}
+}
+
+void ClothBody3D::set_follow_pose(bool p_follow) {
+	follow_pose = p_follow;
+	if (is_inside_world()) {
+		_rebuild();
+	}
+}
+
+#define CLOTH_REBUILD_SETTER(m_name, m_type)    \
+	void ClothBody3D::set_##m_name(m_type p_value) { \
+		m_name = p_value;                         \
+		if (cloth != nullptr) {                   \
+			_rebuild();                           \
+		}                                         \
+	}
+
+#define CLOTH_MOTION_SETTER(m_name, m_type)     \
+	void ClothBody3D::set_##m_name(m_type p_value) { \
+		m_name = p_value;                         \
+		_update_motion();                         \
+	}
+
+CLOTH_REBUILD_SETTER(particle_mass, float)
+CLOTH_REBUILD_SETTER(stretch_compliance, float)
+CLOTH_REBUILD_SETTER(shear_compliance, float)
+CLOTH_REBUILD_SETTER(bend_compliance, float)
+CLOTH_REBUILD_SETTER(backstop_distance, float)
+CLOTH_REBUILD_SETTER(backstop_radius, float)
+CLOTH_MOTION_SETTER(linear_damping, float)
+CLOTH_MOTION_SETTER(friction, float)
+CLOTH_MOTION_SETTER(gravity_scale, float)
+CLOTH_MOTION_SETTER(vertex_radius, float)
+CLOTH_MOTION_SETTER(drive_stiffness, float)
+CLOTH_MOTION_SETTER(drive_damping, float)
+CLOTH_MOTION_SETTER(max_distance_scale, float)
+CLOTH_MOTION_SETTER(iterations, int)
+CLOTH_MOTION_SETTER(collision_layer, uint32_t)
+CLOTH_MOTION_SETTER(collision_mask, uint32_t)
+
+#undef CLOTH_REBUILD_SETTER
+#undef CLOTH_MOTION_SETTER
+
+void ClothBody3D::push(const Vector3 &p_point, const Vector3 &p_velocity, float p_radius) {
+	if (cloth == nullptr || carried) {
+		return;
+	}
+	_free_lying_collision();
+	cloth->push(p_point, p_velocity, p_radius);
+}
+
+int ClothBody3D::grab(const Vector3 &p_point) {
+	if (cloth == nullptr || carried) {
+		return -1;
+	}
+	cloth->get_positions(world_scratch);
+	int nearest = -1;
+	real_t nearest_distance = Math::INF;
+	for (uint32_t i = 0; i < world_scratch.size(); i++) {
+		const real_t distance = world_scratch[i].distance_squared_to(p_point);
+		if (distance < nearest_distance) {
+			nearest_distance = distance;
+			nearest = i;
+		}
+	}
+	ERR_FAIL_COND_V(nearest < 0, -1);
+	_free_lying_collision();
+	cloth->grab(nearest, p_point);
+	return nearest;
+}
+
+void ClothBody3D::move_grab(const Vector3 &p_point) {
+	if (cloth != nullptr) {
+		cloth->move_grab(p_point);
+	}
+}
+
+void ClothBody3D::release_grab() {
+	if (cloth != nullptr) {
+		cloth->release_grab();
+		cloth->wake_up();
+	}
+}
+
+bool ClothBody3D::is_grabbing() const {
+	return cloth != nullptr && cloth->get_grabbed_particle() >= 0;
+}
+
+void ClothBody3D::set_carried(bool p_carried) {
+	if (carried == p_carried) {
+		return;
+	}
+	carried = p_carried;
+	if (cloth == nullptr) {
+		return;
+	}
+
+	if (carried) {
+		// While carried the cloth keeps its shape and costs nothing: the instance moves, the particles wait.
+		_free_lying_collision();
+		cloth->release_grab();
+		carry_local = current_local;
+		return;
+	}
+
+	const Transform3D transform = get_global_transform();
+	const LocalVector<Vector3> &shape = follow_pose ? pose_local : carry_local;
+	world_scratch.resize(shape.size());
+	for (uint32_t i = 0; i < shape.size(); i++) {
+		world_scratch[i] = transform.xform(shape[i]);
+	}
+	cloth->set_targets(world_scratch);
+	cloth->reset_to_targets();
+	previous_local = shape;
+	current_local = shape;
+	target_transform = transform;
+	step_inverse = transform.affine_inverse();
+}
+
+bool ClothBody3D::is_sleeping() const {
+	return cloth == nullptr || !cloth->is_active();
+}
+
+void ClothBody3D::reset_to_pose() {
+	if (cloth == nullptr) {
+		return;
+	}
+	const Transform3D transform = get_global_transform();
+	world_scratch.resize(pose_local.size());
+	for (uint32_t i = 0; i < pose_local.size(); i++) {
+		world_scratch[i] = transform.xform(pose_local[i]);
+	}
+	_free_lying_collision();
+	cloth->set_targets(world_scratch);
+	cloth->reset_to_targets();
+	previous_local = pose_local;
+	current_local = pose_local;
+	target_transform = transform;
+	_draw_pose();
+}
+
+AABB ClothBody3D::get_aabb() const {
+	if (cloth_mesh.is_null() || cloth_mesh->get_render_mesh().is_null()) {
+		return AABB();
+	}
+	return cloth_mesh->get_render_mesh()->get_aabb();
+}
+
+void ClothBody3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_cloth_mesh", "mesh"), &ClothBody3D::set_cloth_mesh);
+	ClassDB::bind_method(D_METHOD("get_cloth_mesh"), &ClothBody3D::get_cloth_mesh);
+	ClassDB::bind_method(D_METHOD("set_pose_position", "position"), &ClothBody3D::set_pose_position);
+	ClassDB::bind_method(D_METHOD("get_pose_position"), &ClothBody3D::get_pose_position);
+	ClassDB::bind_method(D_METHOD("set_follow_pose", "follow"), &ClothBody3D::set_follow_pose);
+	ClassDB::bind_method(D_METHOD("is_following_pose"), &ClothBody3D::is_following_pose);
+
+	ClassDB::bind_method(D_METHOD("set_particle_mass", "mass"), &ClothBody3D::set_particle_mass);
+	ClassDB::bind_method(D_METHOD("get_particle_mass"), &ClothBody3D::get_particle_mass);
+	ClassDB::bind_method(D_METHOD("set_stretch_compliance", "compliance"), &ClothBody3D::set_stretch_compliance);
+	ClassDB::bind_method(D_METHOD("get_stretch_compliance"), &ClothBody3D::get_stretch_compliance);
+	ClassDB::bind_method(D_METHOD("set_shear_compliance", "compliance"), &ClothBody3D::set_shear_compliance);
+	ClassDB::bind_method(D_METHOD("get_shear_compliance"), &ClothBody3D::get_shear_compliance);
+	ClassDB::bind_method(D_METHOD("set_bend_compliance", "compliance"), &ClothBody3D::set_bend_compliance);
+	ClassDB::bind_method(D_METHOD("get_bend_compliance"), &ClothBody3D::get_bend_compliance);
+	ClassDB::bind_method(D_METHOD("set_linear_damping", "damping"), &ClothBody3D::set_linear_damping);
+	ClassDB::bind_method(D_METHOD("get_linear_damping"), &ClothBody3D::get_linear_damping);
+	ClassDB::bind_method(D_METHOD("set_friction", "friction"), &ClothBody3D::set_friction);
+	ClassDB::bind_method(D_METHOD("get_friction"), &ClothBody3D::get_friction);
+	ClassDB::bind_method(D_METHOD("set_gravity_scale", "scale"), &ClothBody3D::set_gravity_scale);
+	ClassDB::bind_method(D_METHOD("get_gravity_scale"), &ClothBody3D::get_gravity_scale);
+	ClassDB::bind_method(D_METHOD("set_vertex_radius", "radius"), &ClothBody3D::set_vertex_radius);
+	ClassDB::bind_method(D_METHOD("get_vertex_radius"), &ClothBody3D::get_vertex_radius);
+	ClassDB::bind_method(D_METHOD("set_drive_stiffness", "stiffness"), &ClothBody3D::set_drive_stiffness);
+	ClassDB::bind_method(D_METHOD("get_drive_stiffness"), &ClothBody3D::get_drive_stiffness);
+	ClassDB::bind_method(D_METHOD("set_drive_damping", "damping"), &ClothBody3D::set_drive_damping);
+	ClassDB::bind_method(D_METHOD("get_drive_damping"), &ClothBody3D::get_drive_damping);
+	ClassDB::bind_method(D_METHOD("set_max_distance_scale", "scale"), &ClothBody3D::set_max_distance_scale);
+	ClassDB::bind_method(D_METHOD("get_max_distance_scale"), &ClothBody3D::get_max_distance_scale);
+	ClassDB::bind_method(D_METHOD("set_backstop_distance", "distance"), &ClothBody3D::set_backstop_distance);
+	ClassDB::bind_method(D_METHOD("get_backstop_distance"), &ClothBody3D::get_backstop_distance);
+	ClassDB::bind_method(D_METHOD("set_backstop_radius", "radius"), &ClothBody3D::set_backstop_radius);
+	ClassDB::bind_method(D_METHOD("get_backstop_radius"), &ClothBody3D::get_backstop_radius);
+	ClassDB::bind_method(D_METHOD("set_iterations", "iterations"), &ClothBody3D::set_iterations);
+	ClassDB::bind_method(D_METHOD("get_iterations"), &ClothBody3D::get_iterations);
+	ClassDB::bind_method(D_METHOD("set_collision_layer", "layer"), &ClothBody3D::set_collision_layer);
+	ClassDB::bind_method(D_METHOD("get_collision_layer"), &ClothBody3D::get_collision_layer);
+	ClassDB::bind_method(D_METHOD("set_collision_mask", "mask"), &ClothBody3D::set_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_collision_mask"), &ClothBody3D::get_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_lying_collision_layer", "layer"), &ClothBody3D::set_lying_collision_layer);
+	ClassDB::bind_method(D_METHOD("get_lying_collision_layer"), &ClothBody3D::get_lying_collision_layer);
+
+	ClassDB::bind_method(D_METHOD("push", "point", "velocity", "radius"), &ClothBody3D::push);
+	ClassDB::bind_method(D_METHOD("grab", "point"), &ClothBody3D::grab);
+	ClassDB::bind_method(D_METHOD("move_grab", "point"), &ClothBody3D::move_grab);
+	ClassDB::bind_method(D_METHOD("release_grab"), &ClothBody3D::release_grab);
+	ClassDB::bind_method(D_METHOD("is_grabbing"), &ClothBody3D::is_grabbing);
+	ClassDB::bind_method(D_METHOD("set_carried", "carried"), &ClothBody3D::set_carried);
+	ClassDB::bind_method(D_METHOD("is_carried"), &ClothBody3D::is_carried);
+	ClassDB::bind_method(D_METHOD("is_sleeping"), &ClothBody3D::is_sleeping);
+	ClassDB::bind_method(D_METHOD("reset_to_pose"), &ClothBody3D::reset_to_pose);
+
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "cloth_mesh", PROPERTY_HINT_RESOURCE_TYPE, "ClothMesh"), "set_cloth_mesh", "get_cloth_mesh");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "pose_position", PROPERTY_HINT_RANGE, "0,16,0.001,or_greater"), "set_pose_position", "get_pose_position");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "follow_pose"), "set_follow_pose", "is_following_pose");
+
+	ADD_GROUP("Fabric", "");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "particle_mass", PROPERTY_HINT_RANGE, "0.0001,1,0.0001,or_greater,suffix:kg"), "set_particle_mass", "get_particle_mass");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stretch_compliance", PROPERTY_HINT_RANGE, "0,0.01,0.00001,or_greater"), "set_stretch_compliance", "get_stretch_compliance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shear_compliance", PROPERTY_HINT_RANGE, "0,0.01,0.00001,or_greater"), "set_shear_compliance", "get_shear_compliance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bend_compliance", PROPERTY_HINT_RANGE, "0,1,0.0001,or_greater"), "set_bend_compliance", "get_bend_compliance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "linear_damping", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_linear_damping", "get_linear_damping");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_friction", "get_friction");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gravity_scale", PROPERTY_HINT_RANGE, "-2,2,0.01"), "set_gravity_scale", "get_gravity_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vertex_radius", PROPERTY_HINT_RANGE, "0,0.05,0.0005,suffix:m"), "set_vertex_radius", "get_vertex_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "iterations", PROPERTY_HINT_RANGE, "1,32,1"), "set_iterations", "get_iterations");
+
+	ADD_GROUP("Pose Drive", "");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drive_stiffness", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater"), "set_drive_stiffness", "get_drive_stiffness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drive_damping", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater"), "set_drive_damping", "get_drive_damping");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_distance_scale", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_max_distance_scale", "get_max_distance_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "backstop_distance", PROPERTY_HINT_RANGE, "-1,1,0.001,suffix:m"), "set_backstop_distance", "get_backstop_distance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "backstop_radius", PROPERTY_HINT_RANGE, "0.01,10,0.01,suffix:m"), "set_backstop_radius", "get_backstop_radius");
+
+	ADD_GROUP("Collision", "");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_mask", "get_collision_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "lying_collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_lying_collision_layer", "get_lying_collision_layer");
+
+	ADD_SIGNAL(MethodInfo("sleeping_changed", PropertyInfo(Variant::BOOL, "sleeping")));
+}
+
+ClothBody3D::ClothBody3D() {
+}
+
+ClothBody3D::~ClothBody3D() {
+	_free_physics();
+	_free_lying_collision();
+	if (skeleton.is_valid()) {
+		RenderingServer::get_singleton()->free_rid(skeleton);
+	}
+}

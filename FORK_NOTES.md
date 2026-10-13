@@ -546,6 +546,13 @@ GI работает только на Vulkan с аппаратным ray query �
     SceneTree до дерева скрипта. Так проверка открывает настоящий редактор без утечки
     первого дерева (`editor_lifecycle.gd`).
 
+14. **Ткань на Jolt** | `interior-star/feat-cloth` | `modules/jolt_physics/cloth/`,
+    `modules/jolt_physics/objects/jolt_cloth_3d.{h,cpp}`, `objects/jolt_object_3d.{h,cpp}`,
+    `register_types.cpp`, `SCsub` | Классы `ClothMesh` и `ClothBody3D`: ткань следует
+    заготовленной позе, а мягкое тело Jolt добавляет вокруг неё движение. Новый тип объекта
+    `OBJECT_TYPE_CLOTH` не выдаёт себя за `JoltSoftBody3D`, поэтому области, контакты и запросы
+    обходят его штатно. Устройство — `modules/jolt_physics/cloth/README.md`.
+
 ### Чеклист обновления `interior-star/main`
 
 1. Перед merge записать число строк `Fork(Lestoroer)` в `interior-star/main` (команда из

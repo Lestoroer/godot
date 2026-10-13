@@ -45,6 +45,7 @@
 
 class JoltArea3D;
 class JoltBody3D;
+class JoltCloth3D; // Fork(Lestoroer): cloth object type.
 class JoltShapedObject3D;
 class JoltShape3D;
 class JoltSoftBody3D;
@@ -57,6 +58,7 @@ public:
 		OBJECT_TYPE_BODY,
 		OBJECT_TYPE_SOFT_BODY,
 		OBJECT_TYPE_AREA,
+		OBJECT_TYPE_CLOTH, // Fork(Lestoroer): soft body driven by JoltCloth3D, not by SoftBody3D.
 	};
 
 protected:
@@ -97,7 +99,8 @@ public:
 	bool is_body() const { return object_type == OBJECT_TYPE_BODY; }
 	bool is_soft_body() const { return object_type == OBJECT_TYPE_SOFT_BODY; }
 	bool is_area() const { return object_type == OBJECT_TYPE_AREA; }
-	bool is_shaped() const { return object_type != OBJECT_TYPE_SOFT_BODY; }
+	bool is_cloth() const { return object_type == OBJECT_TYPE_CLOTH; } // Fork(Lestoroer)
+	bool is_shaped() const { return object_type != OBJECT_TYPE_SOFT_BODY && object_type != OBJECT_TYPE_CLOTH; } // Fork(Lestoroer): cloth has no shapes.
 
 	JoltShapedObject3D *as_shaped() { return is_shaped() ? reinterpret_cast<JoltShapedObject3D *>(this) : nullptr; }
 	const JoltShapedObject3D *as_shaped() const { return is_shaped() ? reinterpret_cast<const JoltShapedObject3D *>(this) : nullptr; }
@@ -107,6 +110,9 @@ public:
 
 	JoltSoftBody3D *as_soft_body() { return is_soft_body() ? reinterpret_cast<JoltSoftBody3D *>(this) : nullptr; }
 	const JoltSoftBody3D *as_soft_body() const { return is_soft_body() ? reinterpret_cast<const JoltSoftBody3D *>(this) : nullptr; }
+
+	JoltCloth3D *as_cloth() { return is_cloth() ? reinterpret_cast<JoltCloth3D *>(this) : nullptr; } // Fork(Lestoroer)
+	const JoltCloth3D *as_cloth() const { return is_cloth() ? reinterpret_cast<const JoltCloth3D *>(this) : nullptr; } // Fork(Lestoroer)
 
 	JoltArea3D *as_area() { return is_area() ? reinterpret_cast<JoltArea3D *>(this) : nullptr; }
 	const JoltArea3D *as_area() const { return is_area() ? reinterpret_cast<const JoltArea3D *>(this) : nullptr; }
