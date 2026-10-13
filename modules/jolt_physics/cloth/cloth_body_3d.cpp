@@ -498,7 +498,8 @@ void ClothBody3D::set_follow_pose(bool p_follow) {
 		return;
 	}
 	follow_pose = p_follow;
-	if (cloth == nullptr || !is_inside_world()) {
+	// Before the first physics step the switch is the initial state, not a motion.
+	if (cloth == nullptr || !is_inside_world() || !physics_started) {
 		if (is_inside_world()) {
 			_rebuild();
 		}
@@ -656,9 +657,11 @@ void ClothBody3D::reset_to_pose() {
 
 PackedVector3Array ClothBody3D::get_particle_positions() const {
 	PackedVector3Array positions;
-	if (cloth == nullptr) {
+	// A carried cloth is where it is drawn; its particles wait where it was picked up.
+	const LocalVector<Vector3> *local = cloth == nullptr ? &pose_local : (carried ? &carry_local : nullptr);
+	if (local != nullptr) {
 		const Transform3D transform = get_global_transform();
-		for (const Vector3 &point : pose_local) {
+		for (const Vector3 &point : *local) {
 			positions.push_back(transform.xform(point));
 		}
 		return positions;
