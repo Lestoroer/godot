@@ -105,7 +105,9 @@ JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 	for (uint32_t i = 0; i < particle_count; i++) {
 		const bool pinned = setup.pin_weights[i] > 0.5f;
 		has_pins = has_pins || pinned;
-		shared->mVertices.push_back(JPH::SoftBodySharedSettings::Vertex(to_jolt(setup.positions[i]), JPH::Float3(0, 0, 0), pinned ? 0.0f : inverse_mass));
+		JPH::Float3 position;
+		to_jolt(setup.positions[i]).StoreFloat3(&position);
+		shared->mVertices.push_back(JPH::SoftBodySharedSettings::Vertex(position, JPH::Float3(0, 0, 0), pinned ? 0.0f : inverse_mass));
 	}
 
 	for (uint32_t i = 0; i + 2 < setup.triangles.size(); i += 3) {
