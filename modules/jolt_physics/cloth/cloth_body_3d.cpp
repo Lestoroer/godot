@@ -144,6 +144,7 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	setup.backstop_distance = backstop_distance;
 	setup.backstop_radius = backstop_radius;
 	setup.follow_targets = follow_pose;
+	setup.dihedral_bends = dihedral_bends;
 
 	cloth = memnew(JoltCloth3D);
 	cloth->set_instance_id(get_instance_id());
@@ -413,7 +414,8 @@ void ClothBody3D::_update_lying_collision() {
 			return;
 		}
 	}
-	const AABB previous_bounds = lying_bounds;
+	// Cloth resting on the old shape is not woken: two cloths lying on each other would wake each
+	// other forever. It is woken when the shape goes away.
 	_free_lying_collision(false);
 	lying_positions = world_scratch;
 	lying_bounds = bounds_of(lying_positions, 0.0);
@@ -436,9 +438,6 @@ void ClothBody3D::_update_lying_collision() {
 	physics->body_set_collision_mask(lying_body, 0);
 	physics->body_attach_object_instance_id(lying_body, get_instance_id());
 	physics->body_set_space(lying_body, get_world_3d()->get_space());
-	if (had_body) {
-		_wake_resting_on(previous_bounds.merge(lying_bounds));
-	}
 }
 
 void ClothBody3D::_free_lying_collision(bool p_wake_resting) {
@@ -582,6 +581,7 @@ CLOTH_REBUILD_SETTER(shear_compliance, float)
 CLOTH_REBUILD_SETTER(bend_compliance, float)
 CLOTH_REBUILD_SETTER(backstop_distance, float)
 CLOTH_REBUILD_SETTER(backstop_radius, float)
+CLOTH_REBUILD_SETTER(dihedral_bends, bool)
 CLOTH_MOTION_SETTER(linear_damping, float)
 CLOTH_MOTION_SETTER(friction, float)
 CLOTH_MOTION_SETTER(gravity_scale, float)
@@ -751,6 +751,8 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shear_compliance"), &ClothBody3D::get_shear_compliance);
 	ClassDB::bind_method(D_METHOD("set_bend_compliance", "compliance"), &ClothBody3D::set_bend_compliance);
 	ClassDB::bind_method(D_METHOD("get_bend_compliance"), &ClothBody3D::get_bend_compliance);
+	ClassDB::bind_method(D_METHOD("set_dihedral_bends", "dihedral"), &ClothBody3D::set_dihedral_bends);
+	ClassDB::bind_method(D_METHOD("is_dihedral_bends"), &ClothBody3D::is_dihedral_bends);
 	ClassDB::bind_method(D_METHOD("set_linear_damping", "damping"), &ClothBody3D::set_linear_damping);
 	ClassDB::bind_method(D_METHOD("get_linear_damping"), &ClothBody3D::get_linear_damping);
 	ClassDB::bind_method(D_METHOD("set_friction", "friction"), &ClothBody3D::set_friction);
@@ -802,6 +804,7 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stretch_compliance", PROPERTY_HINT_RANGE, "0,0.01,0.00001,or_greater"), "set_stretch_compliance", "get_stretch_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shear_compliance", PROPERTY_HINT_RANGE, "0,0.01,0.00001,or_greater"), "set_shear_compliance", "get_shear_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bend_compliance", PROPERTY_HINT_RANGE, "0,1,0.0001,or_greater"), "set_bend_compliance", "get_bend_compliance");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dihedral_bends"), "set_dihedral_bends", "is_dihedral_bends");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "linear_damping", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_linear_damping", "get_linear_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_friction", "get_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gravity_scale", PROPERTY_HINT_RANGE, "-2,2,0.01"), "set_gravity_scale", "get_gravity_scale");

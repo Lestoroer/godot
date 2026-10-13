@@ -56,6 +56,8 @@ public:
 		float stretch_compliance = 0.0f;
 		float shear_compliance = 0.0f;
 		float bend_compliance = 0.0001f;
+		// Dihedral bends keep hanging folds crisp; distance bends cost several times less.
+		bool dihedral_bends = true;
 		float backstop_distance = -1.0f;
 		float backstop_radius = 0.5f;
 		bool follow_targets = true;

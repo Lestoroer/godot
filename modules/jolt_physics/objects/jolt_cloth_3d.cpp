@@ -151,7 +151,7 @@ JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 	// Long range attachments keep fabric from stretching under its pins.
 	const JPH::SoftBodySharedSettings::ELRAType lra = has_pins ? JPH::SoftBodySharedSettings::ELRAType::EuclideanDistance : JPH::SoftBodySharedSettings::ELRAType::None;
 	const JPH::SoftBodySharedSettings::VertexAttributes attributes(setup.stretch_compliance, setup.shear_compliance, setup.bend_compliance, lra, LRA_SLACK);
-	shared->CreateConstraints(&attributes, 1, JPH::SoftBodySharedSettings::EBendType::Dihedral);
+	shared->CreateConstraints(&attributes, 1, setup.dihedral_bends ? JPH::SoftBodySharedSettings::EBendType::Dihedral : JPH::SoftBodySharedSettings::EBendType::Distance);
 
 	if (setup.follow_targets) {
 		// One joint per particle: the joint places the particle's skinned position at its pose target.
