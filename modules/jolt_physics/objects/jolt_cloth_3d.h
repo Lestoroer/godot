@@ -93,6 +93,7 @@ private:
 	virtual JPH::ObjectLayer _get_object_layer() const override;
 	virtual void _add_to_space() override;
 
+	bool _is_kinematic(uint32_t p_particle) const;
 	JPH::SoftBodySharedSettings *_create_shared_settings() const;
 	void _skin_to_targets(bool p_hard_reset);
 	void _reshape_rest();

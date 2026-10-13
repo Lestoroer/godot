@@ -46,6 +46,9 @@ namespace {
 
 // Long range attachments allow this much more than the pin distance in the pose.
 constexpr float LRA_SLACK = 1.03f;
+// A particle allowed to leave its pose by less than this follows the pose exactly: next to pins it
+// barely moves anyway, and as a free particle it fights the pins and the bends and never sleeps.
+constexpr float HARD_REACH = 0.035f;
 
 // Smooth falloff of a cursor push from its center to its radius.
 float push_falloff(float p_distance, float p_radius) {
@@ -99,6 +102,13 @@ void JoltCloth3D::_add_to_space() {
 	hard_reset_requested = targets_valid && start_at_targets;
 }
 
+bool JoltCloth3D::_is_kinematic(uint32_t p_particle) const {
+	if (setup.pin_weights[p_particle] > 0.5f) {
+		return true;
+	}
+	return setup.follow_targets && setup.max_distances[p_particle] >= 0.0f && setup.max_distances[p_particle] < HARD_REACH;
+}
+
 JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 	JPH::SoftBodySharedSettings *shared = new JPH::SoftBodySharedSettings();
 	const uint32_t particle_count = setup.positions.size();
@@ -107,7 +117,7 @@ JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 	bool has_pins = false;
 	shared->mVertices.reserve(particle_count);
 	for (uint32_t i = 0; i < particle_count; i++) {
-		const bool pinned = setup.pin_weights[i] > 0.5f;
+		const bool pinned = _is_kinematic(i);
 		has_pins = has_pins || pinned;
 		JPH::Float3 position;
 		to_jolt(setup.positions[i]).StoreFloat3(&position);
@@ -124,9 +134,7 @@ JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 	// Long range attachments keep fabric from stretching under its pins.
 	const JPH::SoftBodySharedSettings::ELRAType lra = has_pins ? JPH::SoftBodySharedSettings::ELRAType::EuclideanDistance : JPH::SoftBodySharedSettings::ELRAType::None;
 	const JPH::SoftBodySharedSettings::VertexAttributes attributes(setup.stretch_compliance, setup.shear_compliance, setup.bend_compliance, lra, LRA_SLACK);
-	// Distance bends: dihedral bends flip near fully folded triangles, which coarse meshes of thin
-	// straps and tight pleats have, and such a cloth never falls asleep.
-	shared->CreateConstraints(&attributes, 1, JPH::SoftBodySharedSettings::EBendType::Distance);
+	shared->CreateConstraints(&attributes, 1, JPH::SoftBodySharedSettings::EBendType::Dihedral);
 
 	if (setup.follow_targets) {
 		// One joint per particle: the joint places the particle's skinned position at its pose target.
@@ -134,7 +142,7 @@ JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 		shared->mSkinnedConstraints.reserve(particle_count);
 		const float backstop_distance = setup.backstop_distance < 0.0f ? FLT_MAX : setup.backstop_distance;
 		for (uint32_t i = 0; i < particle_count; i++) {
-			const bool pinned = setup.pin_weights[i] > 0.5f;
+			const bool pinned = _is_kinematic(i);
 			const float max_distance = pinned ? 0.0f : (setup.max_distances[i] < 0.0f ? FLT_MAX : setup.max_distances[i]);
 			shared->mInvBindMatrices.push_back(JPH::SoftBodySharedSettings::InvBind(i, JPH::Mat44::sTranslation(-to_jolt(setup.positions[i]))));
 			JPH::SoftBodySharedSettings::Skinned skinned(i, max_distance, backstop_distance, setup.backstop_radius);
@@ -279,7 +287,7 @@ void JoltCloth3D::configure(const Setup &p_setup, bool p_start_at_targets) {
 	particle_inverse_masses.resize(particle_count);
 	const float inverse_mass = 1.0f / MAX(setup.particle_mass, 0.0001f);
 	for (uint32_t i = 0; i < particle_count; i++) {
-		particle_inverse_masses[i] = setup.pin_weights[i] > 0.5f ? 0.0f : inverse_mass;
+		particle_inverse_masses[i] = _is_kinematic(i) ? 0.0f : inverse_mass;
 	}
 	targets = setup.positions;
 	previous_targets = setup.positions;
