@@ -564,7 +564,7 @@ void ClothBody3D::push(const Vector3 &p_point, const Vector3 &p_velocity, float 
 	if (cloth == nullptr || carried) {
 		return;
 	}
-	cloth->push(p_point, p_velocity, p_radius);
+	cloth->push(p_point, p_velocity * push_response, p_radius);
 }
 
 int ClothBody3D::grab(const Vector3 &p_point) {
@@ -665,6 +665,10 @@ void ClothBody3D::reset_to_pose() {
 	current_local = pose_local;
 	target_transform = transform;
 	_draw_pose();
+	if (follow_pose) {
+		// Exactly in its pose, the cloth rests in it: other cloth may lie on it right away.
+		_update_lying_collision();
+	}
 }
 
 PackedVector3Array ClothBody3D::get_particle_positions() const {
@@ -737,6 +741,8 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_lying_collision_layer"), &ClothBody3D::get_lying_collision_layer);
 	ClassDB::bind_method(D_METHOD("set_drop_height", "height"), &ClothBody3D::set_drop_height);
 	ClassDB::bind_method(D_METHOD("get_drop_height"), &ClothBody3D::get_drop_height);
+	ClassDB::bind_method(D_METHOD("set_push_response", "response"), &ClothBody3D::set_push_response);
+	ClassDB::bind_method(D_METHOD("get_push_response"), &ClothBody3D::get_push_response);
 
 	ClassDB::bind_method(D_METHOD("push", "point", "velocity", "radius"), &ClothBody3D::push);
 	ClassDB::bind_method(D_METHOD("grab", "point"), &ClothBody3D::grab);
@@ -768,6 +774,7 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drive_stiffness", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater"), "set_drive_stiffness", "get_drive_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drive_damping", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater"), "set_drive_damping", "get_drive_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_distance_scale", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_max_distance_scale", "get_max_distance_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "push_response", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_push_response", "get_push_response");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "backstop_distance", PROPERTY_HINT_RANGE, "-1,1,0.001,suffix:m"), "set_backstop_distance", "get_backstop_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "backstop_radius", PROPERTY_HINT_RANGE, "0.01,10,0.01,suffix:m"), "set_backstop_radius", "get_backstop_radius");
 
