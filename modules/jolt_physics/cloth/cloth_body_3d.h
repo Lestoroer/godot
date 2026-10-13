@@ -93,6 +93,9 @@ class ClothBody3D : public GeometryInstance3D {
 	float settle_left = 0.0f;
 	bool was_active = false;
 	bool drawn_in_pose = true;
+	// Where the particles were at the start of the current rest check, in world space.
+	LocalVector<Vector3> rest_check_world;
+	float rest_check_time = 0.0f;
 
 	// Static body other cloth lies on while this cloth rests, and the particle positions it was built from.
 	RID lying_body;
@@ -107,6 +110,7 @@ class ClothBody3D : public GeometryInstance3D {
 	void _update_pose();
 	void _push_targets();
 	void _read_simulation();
+	void _check_rest(uint64_t p_steps);
 	void _update_render();
 	void _draw_pose();
 	void _fell_asleep();

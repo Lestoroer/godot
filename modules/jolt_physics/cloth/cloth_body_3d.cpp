@@ -53,6 +53,11 @@ constexpr float REACH_RAMP_SECONDS = 1.2f;
 constexpr float REACH_RAMP_SCALE = 25.0f;
 // After falling asleep the cloth blends from where it rests into the exact pose.
 constexpr float SETTLE_SECONDS = 0.3f;
+// Cloth that trembles in place, like a cover pressed between a folded towel and the mattress, never
+// gets slow enough for Jolt to put it to sleep. Over this time its particles have to get this far
+// from where they were, or it falls asleep anyway.
+constexpr float REST_CHECK_SECONDS = 0.5f;
+constexpr real_t REST_CHECK_DISTANCE = 0.01;
 // A resting cloth rebuilds the shape other cloth lies on only if it came to rest this much elsewhere.
 constexpr real_t LYING_REBUILD_DISTANCE = 0.005;
 // Cloth this close above a changed resting shape is woken to settle again.
@@ -261,6 +266,7 @@ void ClothBody3D::_read_simulation() {
 	if (frame == read_physics_frame) {
 		return;
 	}
+	const uint64_t steps = frame - read_physics_frame;
 	read_physics_frame = frame;
 
 	cloth->get_positions(world_scratch);
@@ -268,6 +274,29 @@ void ClothBody3D::_read_simulation() {
 	current_local.resize(world_scratch.size());
 	for (uint32_t i = 0; i < world_scratch.size(); i++) {
 		current_local[i] = step_inverse.xform(world_scratch[i]);
+	}
+	_check_rest(steps);
+}
+
+void ClothBody3D::_check_rest(uint64_t p_steps) {
+	if (rest_check_world.size() != world_scratch.size()) {
+		rest_check_world = world_scratch;
+		rest_check_time = 0.0f;
+		return;
+	}
+	rest_check_time += float(p_steps) * float(get_physics_process_delta_time());
+	if (rest_check_time < REST_CHECK_SECONDS) {
+		return;
+	}
+	real_t moved = 0.0;
+	for (uint32_t i = 0; i < world_scratch.size(); i++) {
+		moved = MAX(moved, rest_check_world[i].distance_squared_to(world_scratch[i]));
+	}
+	rest_check_world = world_scratch;
+	rest_check_time = 0.0f;
+	// A held cloth stays awake for the hand.
+	if (moved < REST_CHECK_DISTANCE * REST_CHECK_DISTANCE && cloth->get_grabbed_particle() < 0) {
+		cloth->put_to_sleep();
 	}
 }
 
@@ -295,6 +324,7 @@ void ClothBody3D::_update_render() {
 		return;
 	}
 	if (!was_active) {
+		rest_check_world.clear();
 		emit_signal(SNAME("sleeping_changed"), false);
 	}
 	was_active = true;
