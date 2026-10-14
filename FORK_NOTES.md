@@ -403,6 +403,8 @@ GI работает только на Vulkan с аппаратным ray query �
      compute/fragment-потребителю AS добавляются `MEMORY_READ` и stage
      `ACCELERATION_STRUCTURE_BUILD`. Условие привязано к этой версии драйвера.
    - В GDScript доступны существующие лимиты subgroup (`LIMIT_SUBGROUP_*`).
+   - `blas_build(blas, keep_build_memory = true)`: с `false` scratch сборки освобождается после
+     команд кадра — для BLAS, который не пересобирается; следующая сборка выделит его заново.
 
    Проверки: `hardware_rt.gd`, `main_rd_query.gd`, `krylov_gpu.gd`.
 
@@ -517,7 +519,8 @@ GI работает только на Vulkan с аппаратным ray query �
       тонемапа. Трассированное отражение заменяет IBL без повторного DFG и SSAO;
       пользовательский `RADIANCE` сохраняет приоритет. Затенение IBL при Surface Cache
       считается по AO, roughness и углу взгляда (аппроксимация Lagarde), без него —
-      по-прежнему. Тонкое стекло получает RGB transmittance (binding 46) и копию opaque HDR.
+      по-прежнему. Тонкое стекло получает RGB transmittance (binding 46) и копию opaque HDR;
+      `glass_primary` (R32UI) — глобальный треугольник+1 стекла, для которого посчитан пиксель.
       Отсутствие покрытия рисуется пурпурным.
     - Зарегистрированные в GI экземпляры рисуются без mesh LOD: у LOD нет соответствия
       primitive → chart.
