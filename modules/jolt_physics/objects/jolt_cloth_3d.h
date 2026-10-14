@@ -117,6 +117,8 @@ private:
 	bool targets_valid = false;
 	bool hard_reset_requested = false;
 	bool rest_shape_dirty = false;
+	// Edge rest lengths before the latest reshape: a spreading edge grows from them to its pose length.
+	LocalVector<float> previous_rest_lengths;
 
 	virtual JPH::BroadPhaseLayer _get_broad_phase_layer() const override;
 	virtual JPH::ObjectLayer _get_object_layer() const override;
@@ -126,7 +128,7 @@ private:
 	JPH::SoftBodySharedSettings *_create_shared_settings() const;
 	void _skin_to_targets(bool p_hard_reset);
 	bool _reshape_rest();
-	bool _limit_edges_to_current(JPH::SoftBodySharedSettings &p_shared) const;
+	bool _limit_edges_to_current(JPH::SoftBodySharedSettings &p_shared);
 	void _apply_gravity(float p_step);
 	void _apply_drive(float p_step);
 	void _apply_pushes();
