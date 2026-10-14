@@ -45,16 +45,27 @@
 
 namespace {
 
-// Long range attachments allow this much more than the pin distance in the pose.
-constexpr float LRA_SLACK = 1.03f;
+// Long range attachments hold every particle at most as far from its pin as in the current pose:
+// under gravity the fabric hangs at its full length and swings around the pins like a pendulum.
+constexpr float LRA_SLACK = 1.0f;
+// Bends folded in the pose by this angle or more are creases of the folds and get their own compliance.
+constexpr float CREASE_ANGLE = 0.35f;
+// The hand holding the fabric: its target follows the cursor at most this fast, pulls the held patch
+// with a damped spring and never further than the leash. Released, the fabric does not jerk.
+constexpr float GRIP_SPEED = 3.0f;
+constexpr float GRIP_STIFFNESS = 6400.0f;
+constexpr float GRIP_DAMPING = 60.0f;
+constexpr float GRIP_LEASH = 0.08f;
+// Brushing adds to the fabric's motion, but never past this speed along the brush.
+constexpr float PUSH_SPEED_LIMIT = 1.5f;
 // A particle allowed to leave its pose by less than this follows the pose exactly: next to pins it
 // barely moves anyway, and as a free particle it fights the pins and the bends and never sleeps.
 constexpr float HARD_REACH = 0.035f;
 
-// Smooth falloff of a cursor push from its center to its radius.
+// Gaussian falloff of a cursor push with distance.
 float push_falloff(float p_distance, float p_radius) {
-	const float t = 1.0f - p_distance / p_radius;
-	return t * t * (3.0f - 2.0f * t);
+	const float t = p_distance / p_radius;
+	return Math::exp(-2.0f * t * t);
 }
 
 } // namespace
@@ -108,7 +119,8 @@ void JoltCloth3D::_add_to_space() {
 	settings.mVertexRadius = vertex_radius;
 	settings.mMaxLinearVelocity = JoltProjectSettings::max_linear_velocity;
 	settings.mUpdatePosition = false;
-	settings.mAllowSleeping = true;
+	// ClothBody3D decides when the cloth sleeps: Jolt would stop a slow swing on its way back to the pose.
+	settings.mAllowSleeping = false;
 	settings.mFacesDoubleSided = true;
 
 	JPH::Body *new_jolt_body = space->add_object(*this, settings);
@@ -168,6 +180,7 @@ JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 	const JPH::SoftBodySharedSettings::ELRAType lra = has_pins ? JPH::SoftBodySharedSettings::ELRAType::EuclideanDistance : JPH::SoftBodySharedSettings::ELRAType::None;
 	const JPH::SoftBodySharedSettings::VertexAttributes attributes(setup.stretch_compliance, setup.shear_compliance, setup.bend_compliance, lra, LRA_SLACK);
 	shared->CreateConstraints(&attributes, 1, setup.dihedral_bends ? JPH::SoftBodySharedSettings::EBendType::Dihedral : JPH::SoftBodySharedSettings::EBendType::Distance);
+	_apply_crease_compliance(*shared);
 
 	if (setup.follow_targets) {
 		// One joint per particle: the joint places the particle's skinned position at its pose target.
@@ -223,14 +236,23 @@ void JoltCloth3D::_reshape_rest() {
 	}
 	shared_settings->CalculateEdgeLengths();
 	shared_settings->CalculateBendConstraintConstants();
-	// Baked poses stretch the fabric a little; long range attachments measured in another pose
-	// would pull such a pose back toward the pins.
+	_apply_crease_compliance(*shared_settings);
 	shared_settings->CalculateLRALengths(LRA_SLACK);
 }
 
+void JoltCloth3D::_apply_crease_compliance(JPH::SoftBodySharedSettings &p_shared) const {
+	if (setup.crease_compliance < 0.0f) {
+		return;
+	}
+	for (JPH::SoftBodySharedSettings::DihedralBend &bend : p_shared.mDihedralBendConstraints) {
+		bend.mCompliance = Math::abs(bend.mInitialAngle) >= CREASE_ANGLE ? setup.crease_compliance : setup.bend_compliance;
+	}
+}
+
 void JoltCloth3D::_apply_gravity(float p_step) {
-	// A pose already hangs under gravity; pulling it down again would sag it below the pose.
-	if (setup.follow_targets || gravity_scale == 0.0f) {
+	// Cloth that follows its pose hangs under gravity too: the pins and long range attachments hold
+	// it at the length of the pose, and the weak drive only removes slow drift.
+	if (gravity_scale == 0.0f) {
 		return;
 	}
 
@@ -295,30 +317,38 @@ void JoltCloth3D::_apply_pushes() {
 				continue;
 			}
 			const float distance = (origin + to_godot(vertex.mPosition)).distance_to(push.point);
-			if (distance >= push.radius) {
+			if (distance >= 2.0f * push.radius) {
 				continue;
 			}
-			// A push carries the fabric along like a hand: up to the push speed in its direction and
-			// never faster, so a cursor moving over free cloth does not keep accelerating it.
-			const real_t along = to_godot(vertex.mVelocity).dot(direction);
-			if (along < speed) {
-				vertex.mVelocity += to_jolt(direction * ((speed - along) * push_falloff(distance, push.radius)));
+			// Brushing again and again swings the fabric more, but a cursor moving over free cloth
+			// does not fling it.
+			Vector3 velocity = to_godot(vertex.mVelocity) + push.velocity * push_falloff(distance, push.radius);
+			const real_t along = velocity.dot(direction);
+			if (along > PUSH_SPEED_LIMIT) {
+				velocity -= direction * (along - PUSH_SPEED_LIMIT);
 			}
+			vertex.mVelocity = to_jolt(velocity);
 		}
 	}
 	pushes.clear();
 }
 
-void JoltCloth3D::_apply_grab() {
+void JoltCloth3D::_apply_grab(float p_step) {
 	if (grabbed_particle < 0) {
 		return;
 	}
 
+	grab_target = grab_target.move_toward(grab_requested, GRIP_SPEED * p_step);
 	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
-	JPH::SoftBodyVertex &vertex = motion->GetVertices()[grabbed_particle];
-	vertex.mInvMass = 0.0f;
-	vertex.mPosition = JPH::Vec3(to_jolt_r(grab_target) - jolt_body->GetCenterOfMassPosition());
-	vertex.mVelocity = JPH::Vec3::sZero();
+	JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
+	const Vector3 origin = to_godot(jolt_body->GetCenterOfMassPosition());
+	// An implicit damped spring stays stable at the physics step for any stiffness.
+	const float denominator = 1.0f + GRIP_DAMPING * p_step + GRIP_STIFFNESS * p_step * p_step;
+	for (uint32_t k = 0; k < grip_particles.size(); k++) {
+		JPH::SoftBodyVertex &vertex = vertices[grip_particles[k]];
+		const Vector3 gap = (grab_target + grip_offsets[k] - (origin + to_godot(vertex.mPosition))).limit_length(GRIP_LEASH);
+		vertex.mVelocity = to_jolt((to_godot(vertex.mVelocity) + gap * (GRIP_STIFFNESS * p_step)) / denominator);
+	}
 }
 
 void JoltCloth3D::_update_motion_settings() {
@@ -416,28 +446,56 @@ void JoltCloth3D::push(const Vector3 &p_point, const Vector3 &p_velocity, float 
 	wake_up();
 }
 
-void JoltCloth3D::grab(int p_particle, const Vector3 &p_world_position) {
-	ERR_FAIL_INDEX(p_particle, get_particle_count());
+int JoltCloth3D::grab(const Vector3 &p_world_position) {
 	release_grab();
-	grabbed_particle = p_particle;
-	grab_target = p_world_position;
+	LocalVector<Vector3> positions;
+	get_positions(positions);
+	int nearest = -1;
+	real_t nearest_distance = Math::INF;
+	for (uint32_t i = 0; i < positions.size(); i++) {
+		const real_t distance = positions[i].distance_squared_to(p_world_position);
+		if (particle_inverse_masses[i] > 0.0f && distance < nearest_distance) {
+			nearest_distance = distance;
+			nearest = i;
+		}
+	}
+	if (nearest < 0) {
+		return -1;
+	}
+	// The hand holds the particle with its free neighbors, so the fabric does not stretch into a tent.
+	grabbed_particle = nearest;
+	grip_particles.push_back(nearest);
+	for (uint32_t i = 0; i + 2 < setup.triangles.size(); i += 3) {
+		for (int corner = 0; corner < 3; corner++) {
+			if (setup.triangles[i + corner] != nearest) {
+				continue;
+			}
+			for (int other = 1; other < 3; other++) {
+				const uint32_t neighbor = setup.triangles[i + (corner + other) % 3];
+				if (particle_inverse_masses[neighbor] > 0.0f && !grip_particles.has(neighbor)) {
+					grip_particles.push_back(neighbor);
+				}
+			}
+		}
+	}
+	grab_target = positions[nearest];
+	grab_requested = p_world_position;
+	for (uint32_t particle : grip_particles) {
+		grip_offsets.push_back(positions[particle] - grab_target);
+	}
 	wake_up();
+	return nearest;
 }
 
 void JoltCloth3D::move_grab(const Vector3 &p_world_position) {
-	grab_target = p_world_position;
+	grab_requested = p_world_position;
 	wake_up();
 }
 
 void JoltCloth3D::release_grab() {
-	if (grabbed_particle < 0) {
-		return;
-	}
-	if (in_space()) {
-		JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
-		motion->GetVertices()[grabbed_particle].mInvMass = particle_inverse_masses[grabbed_particle];
-	}
 	grabbed_particle = -1;
+	grip_particles.clear();
+	grip_offsets.clear();
 }
 
 bool JoltCloth3D::is_active() const {
@@ -513,6 +571,6 @@ void JoltCloth3D::pre_step(float p_step) {
 	_apply_gravity(p_step);
 	_apply_drive(p_step);
 	_apply_pushes();
-	_apply_grab();
+	_apply_grab(p_step);
 	previous_targets = targets;
 }

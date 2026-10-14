@@ -59,6 +59,8 @@ public:
 		float bend_compliance = 0.0001f;
 		// Dihedral bends keep hanging folds crisp; distance bends cost several times less.
 		bool dihedral_bends = true;
+		// Compliance of bends folded in the pose by a crease angle or more; negative: as other bends.
+		float crease_compliance = -1.0f;
 		float backstop_distance = -1.0f;
 		float backstop_radius = 0.5f;
 		bool follow_targets = true;
@@ -94,8 +96,12 @@ private:
 	float max_distance_scale = 1.0f;
 	int iterations = 6;
 
+	// A hand holds a patch of particles: the grabbed one and its neighbors.
 	int grabbed_particle = -1;
+	LocalVector<uint32_t> grip_particles;
+	LocalVector<Vector3> grip_offsets;
 	Vector3 grab_target;
+	Vector3 grab_requested;
 	bool targets_valid = false;
 	bool hard_reset_requested = false;
 	bool rest_shape_dirty = false;
@@ -111,7 +117,8 @@ private:
 	void _apply_gravity(float p_step);
 	void _apply_drive(float p_step);
 	void _apply_pushes();
-	void _apply_grab();
+	void _apply_grab(float p_step);
+	void _apply_crease_compliance(JPH::SoftBodySharedSettings &p_shared) const;
 	void _update_motion_settings();
 
 public:
@@ -143,7 +150,8 @@ public:
 	void set_iterations(int p_iterations);
 
 	void push(const Vector3 &p_point, const Vector3 &p_velocity, float p_radius);
-	void grab(int p_particle, const Vector3 &p_world_position);
+	// Grabs the free particle nearest to the point with its neighbors; returns it, or -1.
+	int grab(const Vector3 &p_world_position);
 	void move_grab(const Vector3 &p_world_position);
 	void release_grab();
 	int get_grabbed_particle() const { return grabbed_particle; }

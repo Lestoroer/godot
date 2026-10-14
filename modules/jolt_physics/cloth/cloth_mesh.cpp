@@ -57,6 +57,17 @@ Vector<PackedVector3Array> read_shape_positions(const Ref<ArrayMesh> &p_mesh, in
 	return shapes;
 }
 
+// Barycentric weights of a point in a triangle on the fabric; negative outside it.
+Vector3 fabric_barycentric(const Vector2 &p_point, const Vector2 &p_a, const Vector2 &p_b, const Vector2 &p_c) {
+	const real_t area = (p_b - p_a).cross(p_c - p_a);
+	if (Math::abs(area) < 1e-12) {
+		return Vector3(-1, -1, -1);
+	}
+	const real_t a = (p_b - p_point).cross(p_c - p_point) / area;
+	const real_t b = (p_c - p_point).cross(p_a - p_point) / area;
+	return Vector3(a, b, 1.0 - a - b);
+}
+
 // Barycentric weights of the point of a triangle that is closest to p_point.
 Vector3 closest_barycentric(const Vector3 &p_point, const Vector3 &p_a, const Vector3 &p_b, const Vector3 &p_c, float &r_distance_squared) {
 	const Vector3 closest = Face3(p_a, p_b, p_c).get_closest_point_to(p_point);
@@ -274,12 +285,25 @@ Ref<ClothMesh> ClothMesh::build(const Ref<ArrayMesh> &p_render_mesh, const Ref<A
 		}
 	}
 
+	// Fabric coordinates of the particles, when the coarse mesh is a grid over the fabric.
+	const PackedVector2Array simulation_fabric = simulation_arrays[Mesh::ARRAY_TEX_UV2];
+	PackedVector2Array particle_fabric;
+	if (!simulation_fabric.is_empty()) {
+		particle_fabric.resize(particle_count);
+		for (int p = 0; p < particle_count; p++) {
+			particle_fabric.set(p, simulation_fabric[source_of_particle[p]]);
+		}
+	}
+
 	cloth->set_poses(poses);
 	cloth->set_triangles(welded_triangles);
 	cloth->set_pin_weights(pins);
 	cloth->set_max_distances(distances);
 
-	// Visible mesh: every vertex follows the three particles of the nearest simulation triangle in the rest pose.
+	// Visible mesh: every vertex follows the three particles of a simulation triangle. With fabric
+	// coordinates it is the grid cell the vertex lies in on the fabric: a vertex never sticks to a
+	// neighboring fold or another layer that happens to be close in space. Otherwise it is the
+	// nearest simulation triangle in the rest pose.
 	const PackedVector3Array rest = poses[0];
 	Ref<ArrayMesh> skinned;
 	skinned.instantiate();
@@ -291,6 +315,8 @@ Ref<ClothMesh> ClothMesh::build(const Ref<ArrayMesh> &p_render_mesh, const Ref<A
 	for (int surface = 0; surface < p_render_mesh->get_surface_count(); surface++) {
 		Array arrays = p_render_mesh->surface_get_arrays(surface);
 		const PackedVector3Array vertices = arrays[Mesh::ARRAY_VERTEX];
+		const PackedVector2Array fabric = arrays[Mesh::ARRAY_TEX_UV2];
+		const bool by_fabric = !particle_fabric.is_empty() && fabric.size() == vertices.size();
 		PackedInt32Array bones;
 		PackedFloat32Array weights;
 		bones.resize(vertices.size() * 4);
@@ -300,7 +326,20 @@ Ref<ClothMesh> ClothMesh::build(const Ref<ArrayMesh> &p_render_mesh, const Ref<A
 			float best_distance = FLT_MAX;
 			int best_triangle = 0;
 			Vector3 best_weights(1, 0, 0);
-			for (int t = 0; t + 2 < welded_triangles.size(); t += 3) {
+			if (by_fabric) {
+				// The cell holding the vertex has all weights non-negative; at the edge of the fabric
+				// the cell with the least negative weight is the closest.
+				for (int t = 0; t + 2 < welded_triangles.size(); t += 3) {
+					const Vector3 barycentric = fabric_barycentric(fabric[v], particle_fabric[welded_triangles[t]], particle_fabric[welded_triangles[t + 1]], particle_fabric[welded_triangles[t + 2]]);
+					const float outside = -MIN(barycentric.x, MIN(barycentric.y, barycentric.z));
+					if (outside < best_distance) {
+						best_distance = outside;
+						best_triangle = t;
+						best_weights = barycentric;
+					}
+				}
+			}
+			for (int t = 0; !by_fabric && t + 2 < welded_triangles.size(); t += 3) {
 				float distance = 0.0f;
 				const Vector3 barycentric = closest_barycentric(vertices[v], rest[welded_triangles[t]], rest[welded_triangles[t + 1]], rest[welded_triangles[t + 2]], distance);
 				if (distance < best_distance) {

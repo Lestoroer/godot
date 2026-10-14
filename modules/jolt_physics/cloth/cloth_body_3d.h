@@ -55,6 +55,7 @@ class ClothBody3D : public GeometryInstance3D {
 	float stretch_compliance = 0.0f;
 	float shear_compliance = 0.0001f;
 	float bend_compliance = 0.01f;
+	float crease_compliance = -1.0f;
 	bool dihedral_bends = true;
 	float linear_damping = 0.3f;
 	float friction = 0.5f;
@@ -99,6 +100,9 @@ class ClothBody3D : public GeometryInstance3D {
 	// Where the particles were at the start of the current rest check, in world space.
 	LocalVector<Vector3> rest_check_world;
 	float rest_check_time = 0.0f;
+	// How long the cloth has been still in a row, and awake since it was woken or last touched.
+	float rest_quiet_time = 0.0f;
+	float awake_time = 0.0f;
 	// The cursor or a hand touched the cloth since the last rest check.
 	bool attended = false;
 
@@ -147,6 +151,8 @@ public:
 	float get_shear_compliance() const { return shear_compliance; }
 	void set_bend_compliance(float p_compliance);
 	float get_bend_compliance() const { return bend_compliance; }
+	void set_crease_compliance(float p_compliance);
+	float get_crease_compliance() const { return crease_compliance; }
 	void set_dihedral_bends(bool p_dihedral);
 	bool is_dihedral_bends() const { return dihedral_bends; }
 	void set_linear_damping(float p_damping);

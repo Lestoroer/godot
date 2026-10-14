@@ -53,14 +53,19 @@ constexpr float REACH_RAMP_SECONDS = 1.2f;
 constexpr float REACH_RAMP_SCALE = 25.0f;
 // After falling asleep the cloth blends from where it rests into the exact pose.
 constexpr float SETTLE_SECONDS = 0.3f;
-// Cloth that trembles in place, like a cover pressed between a folded towel and the mattress, never
-// gets slow enough for Jolt to put it to sleep. Over this time its particles have to get this far
-// from where they were, or it falls asleep anyway.
-constexpr float REST_CHECK_SECONDS = 0.5f;
-constexpr real_t REST_CHECK_DISTANCE = 0.01;
-// A few particles may keep trembling, like those caught between the floor and another garment;
-// if on average the particles got less far than this, the cloth falls asleep too.
-constexpr real_t REST_CHECK_MEAN_DISTANCE = 0.003;
+// The cloth falls asleep after it stayed still for REST_QUIET_SECONDS, checked every REST_WINDOW_SECONDS.
+// Still: posed cloth moved less than REST_DRIFT_POSED and came back to its pose closer than
+// REST_POSE_DISTANCE, so a slow swing back to the pose is not cut short. Free cloth moved less than
+// REST_DRIFT_FREE, or on average less than REST_DRIFT_MEAN_FREE: a few particles caught between the
+// floor and another garment may keep trembling. Cloth that was not touched for REST_TIMEOUT_SECONDS
+// falls asleep anyway, like a cover pressed between a folded towel and the mattress.
+constexpr float REST_WINDOW_SECONDS = 0.25f;
+constexpr float REST_QUIET_SECONDS = 0.5f;
+constexpr float REST_TIMEOUT_SECONDS = 12.0f;
+constexpr real_t REST_DRIFT_POSED = 0.003;
+constexpr real_t REST_POSE_DISTANCE = 0.03;
+constexpr real_t REST_DRIFT_FREE = 0.005;
+constexpr real_t REST_DRIFT_MEAN_FREE = 0.0015;
 // A resting cloth rebuilds the shape other cloth lies on only if it came to rest this much elsewhere.
 constexpr real_t LYING_REBUILD_DISTANCE = 0.005;
 // Cloth this close above a changed resting shape is woken to settle again.
@@ -148,6 +153,7 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	setup.backstop_radius = backstop_radius;
 	setup.follow_targets = follow_pose;
 	setup.dihedral_bends = dihedral_bends;
+	setup.crease_compliance = crease_compliance;
 
 	cloth = memnew(JoltCloth3D);
 	cloth->set_instance_id(get_instance_id());
@@ -289,29 +295,49 @@ void ClothBody3D::_read_simulation() {
 }
 
 void ClothBody3D::_check_rest(uint64_t p_steps) {
+	const float elapsed = float(p_steps) * float(get_physics_process_delta_time());
+	awake_time += elapsed;
 	if (rest_check_world.size() != world_scratch.size()) {
 		rest_check_world = world_scratch;
 		rest_check_time = 0.0f;
+		rest_quiet_time = 0.0f;
 		return;
 	}
-	rest_check_time += float(p_steps) * float(get_physics_process_delta_time());
-	if (rest_check_time < REST_CHECK_SECONDS) {
+	rest_check_time += elapsed;
+	if (rest_check_time < REST_WINDOW_SECONDS) {
 		return;
 	}
-	real_t moved_most = 0.0;
-	real_t moved_total = 0.0;
+	real_t drift_most = 0.0;
+	real_t drift_total = 0.0;
 	for (uint32_t i = 0; i < world_scratch.size(); i++) {
-		const real_t moved = rest_check_world[i].distance_to(world_scratch[i]);
-		moved_most = MAX(moved_most, moved);
-		moved_total += moved;
+		const real_t drift = rest_check_world[i].distance_to(world_scratch[i]);
+		drift_most = MAX(drift_most, drift);
+		drift_total += drift;
 	}
+	real_t away = 0.0;
+	if (follow_pose) {
+		const Transform3D transform = get_global_transform();
+		for (uint32_t i = 0; i < world_scratch.size(); i++) {
+			away = MAX(away, transform.xform(pose_local[i]).distance_to(world_scratch[i]));
+		}
+	}
+	const float window = rest_check_time;
 	rest_check_world = world_scratch;
 	rest_check_time = 0.0f;
+
 	// Cloth under the cursor or in the hand stays awake for it.
 	const bool touched = attended || cloth->get_grabbed_particle() >= 0;
 	attended = false;
-	const real_t moved_mean = moved_total / real_t(MAX(world_scratch.size(), 1u));
-	if (!touched && (moved_most < REST_CHECK_DISTANCE || moved_mean < REST_CHECK_MEAN_DISTANCE)) {
+	if (touched) {
+		awake_time = 0.0f;
+		rest_quiet_time = 0.0f;
+		return;
+	}
+	const real_t drift_mean = drift_total / real_t(MAX(world_scratch.size(), 1u));
+	const bool still = follow_pose ? drift_most < REST_DRIFT_POSED && away < REST_POSE_DISTANCE
+								   : drift_most < REST_DRIFT_FREE || drift_mean < REST_DRIFT_MEAN_FREE;
+	rest_quiet_time = still ? rest_quiet_time + window : 0.0f;
+	if (rest_quiet_time >= REST_QUIET_SECONDS || awake_time >= REST_TIMEOUT_SECONDS) {
 		cloth->put_to_sleep();
 	}
 }
@@ -341,6 +367,7 @@ void ClothBody3D::_update_render() {
 	}
 	if (!was_active) {
 		rest_check_world.clear();
+		awake_time = 0.0f;
 		emit_signal(SNAME("sleeping_changed"), false);
 	}
 	was_active = true;
@@ -593,6 +620,7 @@ CLOTH_REBUILD_SETTER(particle_mass, float)
 CLOTH_REBUILD_SETTER(stretch_compliance, float)
 CLOTH_REBUILD_SETTER(shear_compliance, float)
 CLOTH_REBUILD_SETTER(bend_compliance, float)
+CLOTH_REBUILD_SETTER(crease_compliance, float)
 CLOTH_REBUILD_SETTER(backstop_distance, float)
 CLOTH_REBUILD_SETTER(backstop_radius, float)
 CLOTH_REBUILD_SETTER(dihedral_bends, bool)
@@ -622,19 +650,7 @@ int ClothBody3D::grab(const Vector3 &p_point) {
 	if (cloth == nullptr || carried) {
 		return -1;
 	}
-	cloth->get_positions(world_scratch);
-	int nearest = -1;
-	real_t nearest_distance = Math::INF;
-	for (uint32_t i = 0; i < world_scratch.size(); i++) {
-		const real_t distance = world_scratch[i].distance_squared_to(p_point);
-		if (distance < nearest_distance) {
-			nearest_distance = distance;
-			nearest = i;
-		}
-	}
-	ERR_FAIL_COND_V(nearest < 0, -1);
-	cloth->grab(nearest, p_point);
-	return nearest;
+	return cloth->grab(p_point);
 }
 
 void ClothBody3D::move_grab(const Vector3 &p_point) {
@@ -767,6 +783,8 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shear_compliance"), &ClothBody3D::get_shear_compliance);
 	ClassDB::bind_method(D_METHOD("set_bend_compliance", "compliance"), &ClothBody3D::set_bend_compliance);
 	ClassDB::bind_method(D_METHOD("get_bend_compliance"), &ClothBody3D::get_bend_compliance);
+	ClassDB::bind_method(D_METHOD("set_crease_compliance", "compliance"), &ClothBody3D::set_crease_compliance);
+	ClassDB::bind_method(D_METHOD("get_crease_compliance"), &ClothBody3D::get_crease_compliance);
 	ClassDB::bind_method(D_METHOD("set_dihedral_bends", "dihedral"), &ClothBody3D::set_dihedral_bends);
 	ClassDB::bind_method(D_METHOD("is_dihedral_bends"), &ClothBody3D::is_dihedral_bends);
 	ClassDB::bind_method(D_METHOD("set_linear_damping", "damping"), &ClothBody3D::set_linear_damping);
@@ -820,6 +838,7 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stretch_compliance", PROPERTY_HINT_RANGE, "0,0.01,0.00001,or_greater"), "set_stretch_compliance", "get_stretch_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shear_compliance", PROPERTY_HINT_RANGE, "0,0.01,0.00001,or_greater"), "set_shear_compliance", "get_shear_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bend_compliance", PROPERTY_HINT_RANGE, "0,1,0.0001,or_greater"), "set_bend_compliance", "get_bend_compliance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "crease_compliance", PROPERTY_HINT_RANGE, "-1,1000,0.01,or_greater"), "set_crease_compliance", "get_crease_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dihedral_bends"), "set_dihedral_bends", "is_dihedral_bends");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "linear_damping", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_linear_damping", "get_linear_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_friction", "get_friction");
