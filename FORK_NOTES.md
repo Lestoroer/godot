@@ -429,7 +429,11 @@ GI работает только на Vulkan с аппаратным ray query �
      UV и chart раскладки материала, знак ориентации по нормали, тайл; при втором размере —
      UV, chart и тайл раскладки освещения. Результат: `layouts` (`size`, `sample_count`,
      `mesh`, `surfaces` с `offset`, `size`, `tiles`, `charts`, `sample_count`),
-     `triangle_data`, `vertex_data` (float3 на угол).
+     `triangle_data`, `vertex_data` (float3 на угол), а при двух размерах —
+     `lighting_representatives`: для каждой ячейки раскладки освещения номер ячейки, которая
+     решается за неё. Ячейки треугольника с тайлом 1×1 объединяются в кластер по ячейке
+     освещения локального центра треугольника и одному из 26 направлений стороны; представитель —
+     член кластера, ближайший к его среднему центру. Остальные ячейки представляют себя сами.
    - `RenderingServer.mesh_surface_set_capture_uv` задаёт частному capture-мешу отдельный
      неизменяемый поток координат (в texel) до создания экземпляров.
    - `RenderingServer.instance_surface_cache_capture(instance, chart_instance, framebuffer,
