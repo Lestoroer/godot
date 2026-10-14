@@ -823,7 +823,7 @@ void RenderForwardClustered::SceneState::grow_instance_buffer(RenderListType p_r
 	if (p_req_element_count > 0) {
 		if (instance_buffer[p_render_list].get_size(0u) < p_req_element_count * sizeof(SceneState::InstanceData)) {
 			instance_buffer[p_render_list].uninit();
-			uint32_t new_size = Math::nearest_power_of_2_templated(MAX(uint64_t(INSTANCE_DATA_BUFFER_MIN_SIZE), p_req_element_count));
+			uint32_t new_size = Math::nearest_power_of_2_templated(MAX(uint64_t(instance_data_min_size(p_render_list)), p_req_element_count)); // Fork(Lestoroer): minimum per list.
 			instance_buffer[p_render_list].set_storage_size(0u, new_size * sizeof(SceneState::InstanceData));
 			curr_gpu_ptr[p_render_list] = nullptr;
 		}
@@ -3136,11 +3136,11 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	for (int capture_pass = 0; capture_pass < 2; capture_pass++) {
 		scene_data.surface_cache_coverage = capture_pass == 0;
 		uint32_t uniform_buffer_index = _setup_environment(&render_data, true, RD::get_singleton()->framebuffer_get_size(p_framebuffer), p_region.size, Color());
-	_fill_render_list(RENDER_LIST_SECONDARY, &render_data, PASS_MODE_DEPTH_MATERIAL);
-	render_list[RENDER_LIST_SECONDARY].sort_by_key();
-	_fill_instance_data(RENDER_LIST_SECONDARY, nullptr, 0, -1, true, chart);
-	RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SECONDARY, nullptr, RID(), RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default(), uniform_buffer_index);
-	RenderListParameters params(render_list[RENDER_LIST_SECONDARY].elements.ptr(), render_list[RENDER_LIST_SECONDARY].element_info.ptr(), render_list[RENDER_LIST_SECONDARY].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
+	_fill_render_list(RENDER_LIST_SURFACE_CACHE_CAPTURE, &render_data, PASS_MODE_DEPTH_MATERIAL);
+	render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].sort_by_key();
+	_fill_instance_data(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, 0, -1, true, chart);
+	RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, RID(), RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default(), uniform_buffer_index);
+	RenderListParameters params(render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].element_info.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
 	params.capture_geometry = chart;
 	params.capture_layout = p_layout;
 	Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
@@ -3562,7 +3562,7 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		if (scene_state.instance_buffer[p_render_list].get_size(0u) == 0u) {
 			// Any buffer will do since it's not used, so just create one.
 			// We can't use scene_shader.default_vec4_xform_buffer because it's not dynamic.
-			scene_state.instance_buffer[p_render_list].set_storage_size(0u, INSTANCE_DATA_BUFFER_MIN_SIZE * sizeof(SceneState::InstanceData));
+			scene_state.instance_buffer[p_render_list].set_storage_size(0u, instance_data_min_size(p_render_list) * sizeof(SceneState::InstanceData)); // Fork(Lestoroer): minimum per list.
 			scene_state.instance_buffer[p_render_list].prepare_for_upload();
 		}
 		RID instance_buffer = scene_state.instance_buffer[p_render_list]._get(0u);
