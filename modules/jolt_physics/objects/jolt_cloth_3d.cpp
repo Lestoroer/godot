@@ -56,8 +56,9 @@ constexpr float GRIP_SPEED = 3.0f;
 constexpr float GRIP_STIFFNESS = 6400.0f;
 constexpr float GRIP_DAMPING = 60.0f;
 constexpr float GRIP_LEASH = 0.08f;
-// Brushing adds to the fabric's motion, but never past this speed along the brush.
-constexpr float PUSH_SPEED_LIMIT = 1.5f;
+// Brushing adds to the fabric's motion, but never past this speed along the brush: a flick of the
+// mouse swings the curtain, it does not throw it.
+constexpr float PUSH_SPEED_LIMIT = 0.5f;
 // A particle allowed to leave its pose by less than this follows the pose exactly: next to pins it
 // barely moves anyway, and as a free particle it fights the pins and the bends and never sleeps.
 constexpr float HARD_REACH = 0.035f;

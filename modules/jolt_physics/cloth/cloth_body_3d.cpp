@@ -104,6 +104,11 @@ void ClothBody3D::_rebuild() {
 		skeleton = rendering->skeleton_create();
 	}
 	rendering->skeleton_allocate_data(skeleton, cloth_mesh->get_particle_count());
+	const PackedFloat32Array pins = cloth_mesh->get_pin_weights();
+	pinned.resize(pins.size());
+	for (int i = 0; i < pins.size(); i++) {
+		pinned[i] = pins[i] > 0.5f;
+	}
 	if (is_inside_world()) {
 		rendering->instance_attach_skeleton(get_instance(), skeleton);
 	}
@@ -210,13 +215,35 @@ void ClothBody3D::_update_motion() {
 	}
 	cloth->set_collision_layer(collision_layer);
 	cloth->set_collision_mask(collision_mask);
-	cloth->set_drive(drive_stiffness, drive_damping);
+	_update_drive(false);
 	cloth->set_gravity_scale(gravity_scale);
 	cloth->set_linear_damping(linear_damping);
 	cloth->set_friction(friction);
 	cloth->set_vertex_radius(vertex_radius);
 	cloth->set_max_distance_scale(max_distance_scale);
 	cloth->set_iterations(iterations);
+}
+
+// Right after a touch the drive is weak and the cloth swings like a pendulum. Left alone, the drive
+// grows over return_seconds after return_delay, with damping to match, and brings the cloth back to its
+// pose: folds tangled by a swing or a pull come apart. While the pose moves, the cloth follows it
+// closely, so gathering folds do not cross.
+void ClothBody3D::_update_drive(bool p_pose_moved) {
+	if (cloth == nullptr) {
+		return;
+	}
+	if (return_stiffness <= drive_stiffness) {
+		cloth->set_drive(drive_stiffness, drive_damping);
+		return;
+	}
+	if (p_pose_moved) {
+		untouched_time = 0.0f;
+		cloth->set_drive(return_stiffness, Math::sqrt(return_stiffness));
+		return;
+	}
+	const float t = CLAMP((untouched_time - return_delay) / MAX(return_seconds, 0.001f), 0.0f, 1.0f);
+	const float weight = t * t * (3.0f - 2.0f * t);
+	cloth->set_drive(Math::lerp(drive_stiffness, return_stiffness, weight), Math::lerp(drive_damping, Math::sqrt(return_stiffness), weight));
 }
 
 void ClothBody3D::_update_pose() {
@@ -279,6 +306,8 @@ void ClothBody3D::_push_targets() {
 		targets_moving = false;
 		_update_lying_collision();
 	}
+	untouched_time += float(get_physics_process_delta_time());
+	_update_drive(targets_moving);
 	step_inverse = transform.affine_inverse();
 }
 
@@ -408,7 +437,7 @@ void ClothBody3D::_draw_settling(float p_weight) {
 	// Each particle is a bone that carries the posed mesh from the pose frame to the simulated frame.
 	RenderingServer *rendering = RenderingServer::get_singleton();
 	for (uint32_t i = 0; i < render_local.size(); i++) {
-		const Basis rotation = render_frames[i] * pose_frames[i].transposed();
+		const Basis rotation = pinned[i] ? Basis() : render_frames[i] * pose_frames[i].transposed();
 		rendering->skeleton_bone_set_transform(skeleton, i, Transform3D(rotation, render_local[i] - rotation.xform(pose_local[i])));
 	}
 	rendering->instance_set_custom_aabb(get_instance(), bounds_of(render_local, RENDER_MARGIN));
@@ -644,6 +673,9 @@ CLOTH_MOTION_SETTER(gravity_scale, float)
 CLOTH_MOTION_SETTER(vertex_radius, float)
 CLOTH_MOTION_SETTER(drive_stiffness, float)
 CLOTH_MOTION_SETTER(drive_damping, float)
+CLOTH_MOTION_SETTER(return_stiffness, float)
+CLOTH_MOTION_SETTER(return_delay, float)
+CLOTH_MOTION_SETTER(return_seconds, float)
 CLOTH_MOTION_SETTER(max_distance_scale, float)
 CLOTH_MOTION_SETTER(iterations, int)
 CLOTH_MOTION_SETTER(collision_layer, uint32_t)
@@ -657,6 +689,7 @@ void ClothBody3D::push(const Vector3 &p_point, const Vector3 &p_velocity, float 
 		return;
 	}
 	attended = true;
+	untouched_time = 0.0f;
 	cloth->push(p_point, p_velocity * push_response, p_radius);
 }
 
@@ -664,16 +697,19 @@ int ClothBody3D::grab(const Vector3 &p_point) {
 	if (cloth == nullptr || carried) {
 		return -1;
 	}
+	untouched_time = 0.0f;
 	return cloth->grab(p_point);
 }
 
 void ClothBody3D::move_grab(const Vector3 &p_point) {
+	untouched_time = 0.0f;
 	if (cloth != nullptr) {
 		cloth->move_grab(p_point);
 	}
 }
 
 void ClothBody3D::release_grab() {
+	untouched_time = 0.0f;
 	if (cloth != nullptr) {
 		cloth->release_grab();
 		cloth->wake_up();
@@ -813,6 +849,12 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_drive_stiffness"), &ClothBody3D::get_drive_stiffness);
 	ClassDB::bind_method(D_METHOD("set_drive_damping", "damping"), &ClothBody3D::set_drive_damping);
 	ClassDB::bind_method(D_METHOD("get_drive_damping"), &ClothBody3D::get_drive_damping);
+	ClassDB::bind_method(D_METHOD("set_return_stiffness", "stiffness"), &ClothBody3D::set_return_stiffness);
+	ClassDB::bind_method(D_METHOD("get_return_stiffness"), &ClothBody3D::get_return_stiffness);
+	ClassDB::bind_method(D_METHOD("set_return_delay", "delay"), &ClothBody3D::set_return_delay);
+	ClassDB::bind_method(D_METHOD("get_return_delay"), &ClothBody3D::get_return_delay);
+	ClassDB::bind_method(D_METHOD("set_return_seconds", "seconds"), &ClothBody3D::set_return_seconds);
+	ClassDB::bind_method(D_METHOD("get_return_seconds"), &ClothBody3D::get_return_seconds);
 	ClassDB::bind_method(D_METHOD("set_max_distance_scale", "scale"), &ClothBody3D::set_max_distance_scale);
 	ClassDB::bind_method(D_METHOD("get_max_distance_scale"), &ClothBody3D::get_max_distance_scale);
 	ClassDB::bind_method(D_METHOD("set_backstop_distance", "distance"), &ClothBody3D::set_backstop_distance);
@@ -863,6 +905,9 @@ void ClothBody3D::_bind_methods() {
 	ADD_GROUP("Pose Drive", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drive_stiffness", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater"), "set_drive_stiffness", "get_drive_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drive_damping", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater"), "set_drive_damping", "get_drive_damping");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "return_stiffness", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater"), "set_return_stiffness", "get_return_stiffness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "return_delay", PROPERTY_HINT_RANGE, "0,10,0.05,suffix:s"), "set_return_delay", "get_return_delay");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "return_seconds", PROPERTY_HINT_RANGE, "0.05,10,0.05,suffix:s"), "set_return_seconds", "get_return_seconds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_distance_scale", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_max_distance_scale", "get_max_distance_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "push_response", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_push_response", "get_push_response");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "backstop_distance", PROPERTY_HINT_RANGE, "-1,1,0.001,suffix:m"), "set_backstop_distance", "get_backstop_distance");

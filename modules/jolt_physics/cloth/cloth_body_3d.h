@@ -63,6 +63,13 @@ class ClothBody3D : public GeometryInstance3D {
 	float vertex_radius = 0.005f;
 	float drive_stiffness = 20.0f;
 	float drive_damping = 4.0f;
+	// The drive grows to return_stiffness when the cloth is left alone, so a swing always ends in the
+	// pose; zero or less than drive_stiffness: the drive stays as it is.
+	float return_stiffness = 0.0f;
+	float return_delay = 1.5f;
+	float return_seconds = 2.0f;
+	// Seconds since the cursor, the hand or the moving pose last touched the cloth.
+	float untouched_time = 0.0f;
 	float max_distance_scale = 1.0f;
 	float backstop_distance = -1.0f;
 	float backstop_radius = 0.5f;
@@ -74,6 +81,8 @@ class ClothBody3D : public GeometryInstance3D {
 	float push_response = 1.0f;
 
 	LocalVector<Vector3> pose_local;
+	// Pinned particles move with the pose only; their bones never turn, so rings stay on the rod.
+	LocalVector<bool> pinned;
 	LocalVector<Basis> pose_frames;
 	LocalVector<Vector3> previous_local;
 	LocalVector<Vector3> current_local;
@@ -129,6 +138,7 @@ class ClothBody3D : public GeometryInstance3D {
 	void _wake_resting_on(const AABB &p_bounds);
 	void _targets_moved();
 	void _update_motion();
+	void _update_drive(bool p_pose_moved);
 
 protected:
 	void _notification(int p_what);
@@ -168,6 +178,12 @@ public:
 	float get_drive_stiffness() const { return drive_stiffness; }
 	void set_drive_damping(float p_damping);
 	float get_drive_damping() const { return drive_damping; }
+	void set_return_stiffness(float p_stiffness);
+	float get_return_stiffness() const { return return_stiffness; }
+	void set_return_delay(float p_delay);
+	float get_return_delay() const { return return_delay; }
+	void set_return_seconds(float p_seconds);
+	float get_return_seconds() const { return return_seconds; }
 	void set_max_distance_scale(float p_scale);
 	float get_max_distance_scale() const { return max_distance_scale; }
 	void set_backstop_distance(float p_distance);
