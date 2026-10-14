@@ -63,9 +63,6 @@ public:
 		bool dihedral_bends = true;
 		// Compliance of bends folded in the pose by a crease angle or more; negative: as other bends.
 		float crease_compliance = -1.0f;
-		// Fabric longer than its pose by this fraction: held at both ends, it sags loose instead of
-		// standing taut like a drum skin.
-		float slack = 0.0f;
 		float backstop_distance = -1.0f;
 		float backstop_radius = 0.5f;
 		bool follow_targets = true;
@@ -127,7 +124,6 @@ private:
 	void _apply_grab(float p_step);
 	void _apply_hold();
 	void _apply_crease_compliance(JPH::SoftBodySharedSettings &p_shared) const;
-	void _apply_slack(JPH::SoftBodySharedSettings &p_shared) const;
 	void _update_motion_settings();
 
 public:
