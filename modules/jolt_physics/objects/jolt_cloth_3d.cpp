@@ -185,9 +185,10 @@ JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 
 	// Long range attachments keep fabric from stretching under its pins.
 	const JPH::SoftBodySharedSettings::ELRAType lra = has_pins ? JPH::SoftBodySharedSettings::ELRAType::EuclideanDistance : JPH::SoftBodySharedSettings::ELRAType::None;
-	const JPH::SoftBodySharedSettings::VertexAttributes attributes(setup.stretch_compliance, setup.shear_compliance, setup.bend_compliance, lra, LRA_SLACK);
+	const JPH::SoftBodySharedSettings::VertexAttributes attributes(setup.stretch_compliance, setup.shear_compliance, setup.bend_compliance, lra, LRA_SLACK * (1.0f + setup.slack));
 	shared->CreateConstraints(&attributes, 1, setup.dihedral_bends ? JPH::SoftBodySharedSettings::EBendType::Dihedral : JPH::SoftBodySharedSettings::EBendType::Distance);
 	_apply_crease_compliance(*shared);
+	_apply_slack(*shared);
 
 	if (setup.follow_targets) {
 		// One joint per particle: the joint places the particle's skinned position at its pose target.
@@ -242,9 +243,27 @@ void JoltCloth3D::_reshape_rest() {
 		shared_settings->mInvBindMatrices[i].mInvBind = JPH::Mat44::sTranslation(-position);
 	}
 	shared_settings->CalculateEdgeLengths();
+	_apply_slack(*shared_settings);
 	shared_settings->CalculateBendConstraintConstants();
 	_apply_crease_compliance(*shared_settings);
-	shared_settings->CalculateLRALengths(LRA_SLACK);
+	shared_settings->CalculateLRALengths(LRA_SLACK * (1.0f + setup.slack));
+}
+
+void JoltCloth3D::_apply_slack(JPH::SoftBodySharedSettings &p_shared) const {
+	if (setup.slack <= 0.0f) {
+		return;
+	}
+	// The extra length grows with how much the edge runs down: a vertical edge gets all of it, a
+	// horizontal one none. The body stays at the origin, so +Y of the shared positions is up.
+	for (JPH::SoftBodySharedSettings::Edge &edge : p_shared.mEdgeConstraints) {
+		const JPH::Vec3 a = JPH::Vec3(p_shared.mVertices[edge.mVertex[0]].mPosition);
+		const JPH::Vec3 b = JPH::Vec3(p_shared.mVertices[edge.mVertex[1]].mPosition);
+		const JPH::Vec3 along = b - a;
+		const float length_squared = along.LengthSq();
+		if (length_squared > 0.0f) {
+			edge.mRestLength *= 1.0f + setup.slack * along.GetY() * along.GetY() / length_squared;
+		}
+	}
 }
 
 void JoltCloth3D::_apply_crease_compliance(JPH::SoftBodySharedSettings &p_shared) const {
