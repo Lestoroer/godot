@@ -2229,6 +2229,20 @@ static bool _surface_cache_remap_arrays(const Array &p_arrays, const Vector<int>
 	return true;
 }
 
+// Fork(Lestoroer): key of a Surface Cache lighting cluster — the lighting texel of the local
+// position and one of 26 facing directions (each axis negative, level or positive at 22.5 degrees).
+static uint64_t _surface_cache_lighting_cluster_key(const Vector3 &p_center, const Vector3 &p_normal, float p_texel_size) {
+	const float level = 0.38268343f;
+	uint64_t key = 0;
+	for (int axis = 0; axis < 3; axis++) {
+		key = key * 3 + (p_normal[axis] > level ? 2 : (p_normal[axis] < -level ? 0 : 1));
+	}
+	for (int axis = 0; axis < 3; axis++) {
+		key = (key << 19) | (uint64_t(int64_t(Math::floor(p_center[axis] / p_texel_size)) + (1 << 18)) & ((1 << 19) - 1));
+	}
+	return key;
+}
+
 // Fork(Lestoroer): the complete Surface Cache preparation of a mesh. Every texel size gets
 // its own capture chart and capture mesh; the remap shared by them is computed once. Ray
 // triangle records (SurfaceCacheTriangle in surface_cache_inc.glsl) pack the first layout
@@ -2284,6 +2298,33 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 			mesh->set_blend_shape_mode(array_mesh->get_blend_shape_mode());
 		}
 		meshes.write[layout_index] = mesh;
+	}
+
+	// Lighting cells of a triangle smaller than a lighting texel (a 1x1 tile) join a cluster with
+	// the other such cells of the same lighting texel and facing; the transport solves only the
+	// representative — the member nearest the cluster's mean center (the lower cell on a tie).
+	// Larger triangles represent themselves. Keys are local, so a rigid move keeps the clusters.
+	struct ClusterMember {
+		uint64_t key = 0;
+		int cell = 0;
+		Vector3 center;
+	};
+	struct ClusterCenter {
+		Vector3 sum;
+		int count = 0;
+		int representative = -1;
+		float distance = 0.0f;
+	};
+	PackedInt32Array lighting_representatives;
+	int32_t *representative = nullptr;
+	LocalVector<ClusterMember> cluster_members;
+	HashMap<uint64_t, ClusterCenter> lighting_clusters;
+	if (layout_count == 2) {
+		lighting_representatives.resize(layouts[1].sample_count);
+		representative = lighting_representatives.ptrw();
+		for (int cell = 0; cell < lighting_representatives.size(); cell++) {
+			representative[cell] = cell;
+		}
 	}
 
 	Array triangle_data;
@@ -2401,10 +2442,36 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 				for (int word = 0; word < 4; word++) {
 					encode_uint32(uint32_t(lighting_tiles[corner / 3 * 4 + word]), record + 128 + word * 4);
 				}
+				// Side 0 faces the semantic front, side 1 the back; a 1x1 tile has one cell per side.
+				const int *tile = lighting_tiles.ptr() + corner / 3 * 4;
+				const Vector3 front = (vertex[1] - vertex[0]).cross(vertex[2] - vertex[0]) * orientation;
+				if (tile[2] == (1 | (1 << 16)) && lighting_charts[indices[corner]] != 0 && front.length_squared() > 0.0f) {
+					const Vector3 center = (vertex[0] + vertex[1] + vertex[2]) / 3.0f;
+					const Vector3 normal = front.normalized();
+					for (int side = 0; side < 2; side++) {
+						const uint64_t key = _surface_cache_lighting_cluster_key(center, side == 0 ? normal : -normal, p_texel_sizes[1]);
+						ClusterCenter &cluster = lighting_clusters[key];
+						cluster.sum += center;
+						cluster.count++;
+						cluster_members.push_back({ key, tile[3] + side, center });
+					}
+				}
 			}
 		}
 		triangle_data.push_back(packed);
 		vertex_data.push_back(ray_vertices);
+	}
+
+	for (const ClusterMember &member : cluster_members) {
+		ClusterCenter &cluster = lighting_clusters[member.key];
+		const float distance = member.center.distance_squared_to(cluster.sum / float(cluster.count));
+		if (cluster.representative < 0 || distance < cluster.distance) {
+			cluster.representative = member.cell;
+			cluster.distance = distance;
+		}
+	}
+	for (const ClusterMember &member : cluster_members) {
+		representative[member.cell] = lighting_clusters[member.key].representative;
 	}
 
 	Array result_layouts;
@@ -2430,6 +2497,9 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 	result["layouts"] = result_layouts;
 	result["triangle_data"] = triangle_data;
 	result["vertex_data"] = vertex_data;
+	if (layout_count == 2) {
+		result["lighting_representatives"] = lighting_representatives;
+	}
 	return result;
 }
 
