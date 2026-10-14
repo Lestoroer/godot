@@ -247,6 +247,20 @@ void JoltCloth3D::_reshape_rest() {
 	shared_settings->CalculateBendConstraintConstants();
 	_apply_crease_compliance(*shared_settings);
 	shared_settings->CalculateLRALengths(LRA_SLACK * (1.0f + setup.slack));
+	_keep_attachments_from_pulling();
+}
+
+// When the pose brings fabric closer to its pin, like a curtain released from its cuff that falls under its
+// rings, the long range attachment would shorten faster than the fabric follows and jerk it toward the pin
+// every step: the fabric shivers in ripples. An attachment shortens no further than its particle is from the
+// pin now; it still keeps the fabric from stretching, and at rest it is the pose distance again.
+void JoltCloth3D::_keep_attachments_from_pulling() {
+	const JPH::SoftBodyMotionProperties *motion = static_cast<const JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	const JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
+	for (JPH::SoftBodySharedSettings::LRA &attachment : shared_settings->mLRAConstraints) {
+		const float current = (vertices[attachment.mVertex[0]].mPosition - vertices[attachment.mVertex[1]].mPosition).Length();
+		attachment.mMaxDistance = MAX(attachment.mMaxDistance, current);
+	}
 }
 
 void JoltCloth3D::_apply_slack(JPH::SoftBodySharedSettings &p_shared) const {

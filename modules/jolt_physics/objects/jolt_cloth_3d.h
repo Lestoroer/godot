@@ -126,6 +126,7 @@ private:
 	JPH::SoftBodySharedSettings *_create_shared_settings() const;
 	void _skin_to_targets(bool p_hard_reset);
 	void _reshape_rest();
+	void _keep_attachments_from_pulling();
 	void _apply_gravity(float p_step);
 	void _apply_drive(float p_step);
 	void _apply_pushes();
