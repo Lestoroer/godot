@@ -1751,7 +1751,7 @@ void RenderForwardClustered::_process_sss(Ref<RenderSceneBuffersRD> p_render_buf
 }
 
 void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Color &p_default_bg_color) {
-	p_render_data->scene_data->surface_cache_enabled = surface_cache_buffers.size() == 4; // Fork(Lestoroer)
+	p_render_data->scene_data->surface_cache_enabled = surface_cache_buffers.size() == 3; // Fork(Lestoroer)
 	scene_state.used_uniform_buffer_count = 0;
 
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
@@ -1777,7 +1777,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	// get info about our rendering effects
 	bool ce_needs_motion_vectors = _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_NEEDS_MOTION_VECTORS);
-	bool surface_cache_gather = !is_reflection_probe && surface_cache_buffers.size() == 4 && surface_cache_view_callback.is_valid(); // Fork(Lestoroer)
+	bool surface_cache_gather = !is_reflection_probe && surface_cache_buffers.size() == 3 && surface_cache_view_callback.is_valid(); // Fork(Lestoroer)
 	bool ce_needs_normal_roughness = surface_cache_gather || _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_NEEDS_ROUGHNESS);
 	bool ce_needs_separate_specular = _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_NEEDS_SEPARATE_SPECULAR);
 
@@ -3894,11 +3894,13 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 	}
 
 	// Fork(Lestoroer): Surface Cache bindings 37-46; defaults keep the layout valid without GI.
-	for (int i = 0; i < 4; i++) {
+	// Buffers: surfaces, triangles and lighting-cell irradiance.
+	static const int surface_cache_buffer_bindings[3] = { 37, 38, 40 };
+	for (int i = 0; i < 3; i++) {
 		RD::Uniform u;
-		u.binding = 37 + i;
+		u.binding = surface_cache_buffer_bindings[i];
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-		u.append_id((p_render_data || p_surface_cache_geometry) && surface_cache_buffers.size() == 4 ? surface_cache_buffers[i] : scene_shader.default_vec4_xform_buffer);
+		u.append_id((p_render_data || p_surface_cache_geometry) && surface_cache_buffers.size() == 3 ? surface_cache_buffers[i] : scene_shader.default_vec4_xform_buffer);
 		uniforms.push_back(u);
 	}
 	{ // Fork(Lestoroer): viewport-owned diffuse final gather, produced after depth.
