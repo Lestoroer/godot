@@ -62,8 +62,8 @@ constexpr real_t POSE_SPEED_LIMIT = 3.0;
 // something the pose goes into; a slow swing back to the pose is not cut short. Free cloth moved less than
 // REST_DRIFT_FREE, or on average less than REST_DRIFT_MEAN_FREE: a few particles caught between the
 // floor and another garment may keep trembling. Posed cloth that moved less than REST_DRIFT_POSED for
-// REST_STUCK_SECONDS rests away from its pose, on something the pose goes into or sagging on its slack:
-// a visible swing moves farther in that time. Cloth that was not touched for REST_TIMEOUT_SECONDS falls asleep anyway, like a cover
+// REST_STUCK_SECONDS rests away from its pose, on something the pose goes into: a visible swing moves
+// farther in that time. Cloth that was not touched for REST_TIMEOUT_SECONDS falls asleep anyway, like a cover
 // pressed between a folded towel and the mattress.
 constexpr float REST_WINDOW_SECONDS = 0.25f;
 constexpr float REST_QUIET_SECONDS = 0.5f;
@@ -174,7 +174,6 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	setup.follow_targets = follow_pose;
 	setup.dihedral_bends = dihedral_bends;
 	setup.crease_compliance = crease_compliance;
-	setup.slack = slack;
 
 	cloth = memnew(JoltCloth3D);
 	cloth->set_instance_id(get_instance_id());
@@ -698,7 +697,6 @@ CLOTH_REBUILD_SETTER(stretch_compliance, float)
 CLOTH_REBUILD_SETTER(shear_compliance, float)
 CLOTH_REBUILD_SETTER(bend_compliance, float)
 CLOTH_REBUILD_SETTER(crease_compliance, float)
-CLOTH_REBUILD_SETTER(slack, float)
 
 void ClothBody3D::set_hold(float p_hold) {
 	hold = CLAMP(p_hold, 0.0f, 1.0f);
@@ -880,8 +878,6 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bend_compliance"), &ClothBody3D::get_bend_compliance);
 	ClassDB::bind_method(D_METHOD("set_crease_compliance", "compliance"), &ClothBody3D::set_crease_compliance);
 	ClassDB::bind_method(D_METHOD("get_crease_compliance"), &ClothBody3D::get_crease_compliance);
-	ClassDB::bind_method(D_METHOD("set_slack", "slack"), &ClothBody3D::set_slack);
-	ClassDB::bind_method(D_METHOD("get_slack"), &ClothBody3D::get_slack);
 	ClassDB::bind_method(D_METHOD("set_hold", "hold"), &ClothBody3D::set_hold);
 	ClassDB::bind_method(D_METHOD("get_hold"), &ClothBody3D::get_hold);
 	ClassDB::bind_method(D_METHOD("set_dihedral_bends", "dihedral"), &ClothBody3D::set_dihedral_bends);
@@ -946,7 +942,6 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shear_compliance", PROPERTY_HINT_RANGE, "0,0.01,0.00001,or_greater"), "set_shear_compliance", "get_shear_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bend_compliance", PROPERTY_HINT_RANGE, "0,1,0.0001,or_greater"), "set_bend_compliance", "get_bend_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "crease_compliance", PROPERTY_HINT_RANGE, "-1,1000,0.01,or_greater"), "set_crease_compliance", "get_crease_compliance");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slack", PROPERTY_HINT_RANGE, "0,0.2,0.005"), "set_slack", "get_slack");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hold", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hold", "get_hold");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dihedral_bends"), "set_dihedral_bends", "is_dihedral_bends");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "linear_damping", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_linear_damping", "get_linear_damping");
