@@ -2234,10 +2234,15 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 		RENDER_TIMESTAMP("Process Pre Opaque Compositor Effects");
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_OPAQUE, p_render_data);
-		// Fork(Lestoroer): Surface Cache view gather runs after depth, before opaque.
+		// Fork(Lestoroer): Surface Cache view gather runs after depth, before opaque. The callback may
+		// return the name of the surface_cache texture that holds this viewport's gather.
+		surface_cache_gather_texture = SNAME("gather");
 		if (surface_cache_gather) {
 			Array args = { p_render_data };
-			surface_cache_view_callback.callv(args);
+			const Variant gather_texture = surface_cache_view_callback.callv(args);
+			if (gather_texture.get_type() == Variant::STRING_NAME || gather_texture.get_type() == Variant::STRING) {
+				surface_cache_gather_texture = gather_texture;
+			}
 		}
 	}
 
@@ -3907,7 +3912,7 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		RD::Uniform u;
 		u.binding = 41;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		RID gather = rb.is_valid() && rb->has_texture("surface_cache", "gather") ? rb->get_texture("surface_cache", "gather") : RID();
+		RID gather = rb.is_valid() && rb->has_texture("surface_cache", surface_cache_gather_texture) ? rb->get_texture("surface_cache", surface_cache_gather_texture) : RID();
 		u.append_id(gather.is_valid() ? gather : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
 		uniforms.push_back(u);
 	}

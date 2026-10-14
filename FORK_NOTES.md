@@ -515,6 +515,8 @@ GI работает только на Vulkan с аппаратным ray query �
       viewport, включая зеркала, независимо от его Compositor. Viewport-текстуры
       `surface_cache/gather`, `surface_cache/reflection`, `glass`, `glass_primary`
       применяются к фрагменту только при совпадении surface/primitive с primary visibility.
+      Обратный вызов может вернуть имя текстуры контекста `surface_cache`, в которой лежит сбор
+      этого вида; без ответа — `gather`.
     - Irradiance заменяет ambient после пользовательского `IRRADIANCE`, до AO, albedo и
       тонемапа. Трассированное отражение заменяет IBL без повторного DFG и SSAO;
       пользовательский `RADIANCE` сохраняет приоритет. Затенение IBL при Surface Cache
