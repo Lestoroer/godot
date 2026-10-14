@@ -496,9 +496,11 @@ GI работает только на Vulkan с аппаратным ray query �
     `renderer_rd/forward_mobile/scene_shader_forward_mobile.cpp`,
     `renderer_rd/shaders/forward_mobile/scene_forward_mobile.glsl`,
     `drivers/gles3/shaders/scene.glsl`, `drivers/gles3/storage/material_storage.cpp` |
-    - `scenario_set_surface_cache_buffers` задаёт четыре storage buffer: таблицу поверхностей
+    - `scenario_set_surface_cache_buffers` задаёт три storage buffer: таблицу поверхностей
       с раздельными адресами материала и света, мировые треугольники с обеими
-      параметризациями, материальные texel, irradiance. Descriptors объявлены во всех
+      параметризациями и irradiance ячеек света; её alpha — годность ячейки: у каждого
+      треугольника свой тайл, поэтому адрес сам задаёт карту и поверхность, а раскладку
+      ячеек света движок не читает. Descriptors (binding 37, 38, 40) объявлены во всех
       вариантах Forward+, включая depth, shadow и unshaded, ради общего layout uniform set.
     - При активном GI depth/normal prepass пишет primary visibility RGBA32UI: surface,
       primitive и barycentrics покрытой точки (+8 байт на пиксель и на MSAA sample).

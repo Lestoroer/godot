@@ -1,10 +1,10 @@
 // Fork(Lestoroer): instance/surface/primitive address, independent of the camera.
 struct SurfaceCacheTriangle { vec4 a; vec4 b; vec4 c; vec4 uv_ab; vec4 uv_c; vec4 light_uv_ab; vec4 light_uv_c; uvec4 material_tile; uvec4 lighting_tile; };
-struct SurfaceCacheMaterial { vec4 position; vec4 normal; vec4 reflectance; vec4 emission; uvec4 identity; vec4 specular; vec4 transmission; };
 struct SurfaceCacheMapping { uvec4 material; uvec4 lighting; };
 layout(set=1,binding=37,std430) readonly buffer SurfaceCacheSurfaces { SurfaceCacheMapping data[]; } surface_cache_surfaces;
 layout(set=1,binding=38,std430) readonly buffer SurfaceCacheTriangles { SurfaceCacheTriangle data[]; } surface_cache_triangles;
-layout(set=1,binding=39,std430) readonly buffer SurfaceCacheMaterials { SurfaceCacheMaterial data[]; } surface_cache_materials;
+// Irradiance of a lighting cell; alpha marks a captured (owned) cell. Every triangle owns its tile,
+// so the address alone identifies the chart and surface.
 layout(set=1,binding=40,std430) readonly buffer SurfaceCacheIrradiance { vec4 data[]; } surface_cache_light;
 
 layout(set=1,binding=41) uniform texture2D surface_cache_gather;
@@ -24,7 +24,6 @@ vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 
 	vec2 barycentric=vec2(cross(ap,ac)[axis],cross(ab,ap)[axis])/geometric[axis];
 	vec2 uv=triangle.light_uv_ab.xy*(1.0-barycentric.x-barycentric.y)+triangle.light_uv_ab.zw*barycentric.x+triangle.light_uv_c.xy*barycentric.y;
 	uint side=dot(normal,cross(ab,ac)*triangle.a.w)<0.0?1u:0u;
-	uint chart=floatBitsToUint(triangle.light_uv_c.z);
 	ivec2 size=ivec2(mapping.zw);
 	vec2 pixel=uv*vec2(size)-0.5;
 	ivec2 base=ivec2(floor(pixel));
@@ -39,7 +38,7 @@ vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 
 		ivec2 local=point-ivec2(tile.xy);
 		if (any(lessThan(local,ivec2(0))) || any(greaterThanEqual(local,tile_size))) continue;
 		uint address=offset+uint(local.y*tile_size.x+local.x);
-		if (surface_cache_materials.data[address].identity.x!=chart || surface_cache_materials.data[address].identity.y!=surface || surface_cache_materials.data[address].identity.w==0u) continue;
+		if (surface_cache_light.data[address].w<=0.0) continue;
 		float weight=(x==0?1.0-fraction.x:fraction.x)*(y==0?1.0-fraction.y:fraction.y);
 		irradiance+=surface_cache_light.data[address].rgb*weight;
 		weight_sum+=weight;
@@ -53,7 +52,7 @@ vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 
 		ivec2 local=point-ivec2(tile.xy);
 		if (any(lessThan(local,ivec2(0))) || any(greaterThanEqual(local,tile_size))) continue;
 		uint address=offset+uint(local.y*tile_size.x+local.x);
-		if (surface_cache_materials.data[address].identity.x!=chart || surface_cache_materials.data[address].identity.y!=surface || surface_cache_materials.data[address].identity.w==0u) continue;
+		if (surface_cache_light.data[address].w<=0.0) continue;
 		float distance=dot(vec2(point)-pixel,vec2(point)-pixel);
 		if (distance<nearest) { nearest=distance; irradiance=surface_cache_light.data[address].rgb; found=true; }
 	}
