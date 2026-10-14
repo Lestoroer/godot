@@ -2359,13 +2359,17 @@ static bool triangle_cell_covered(const Vector2 &a, const Vector2 &b, const Vect
 } // namespace SurfaceCacheCoverage
 
 // Fork(Lestoroer): key of a Surface Cache lighting cluster — the lighting texel of the local
-// position and one of 26 facing directions (each axis negative, level or positive at 22.5 degrees).
-static uint64_t _surface_cache_lighting_cluster_key(const Vector3 &p_center, const Vector3 &p_normal, float p_texel_size) {
+// position, the triangle side and one of 26 facing directions (each axis negative, level or
+// positive at 22.5 degrees). Front and back sides never share a cluster: a back side facing the
+// same way as a nearby front side is usually the inside of a thin wall, and its light is not the
+// light of the visible surface.
+static uint64_t _surface_cache_lighting_cluster_key(const Vector3 &p_center, const Vector3 &p_normal, int p_side, float p_texel_size) {
 	const float level = 0.38268343f;
 	uint64_t key = 0;
 	for (int axis = 0; axis < 3; axis++) {
 		key = key * 3 + (p_normal[axis] > level ? 2 : (p_normal[axis] < -level ? 0 : 1));
 	}
+	key = key * 2 + p_side;
 	for (int axis = 0; axis < 3; axis++) {
 		key = (key << 19) | (uint64_t(int64_t(Math::floor(p_center[axis] / p_texel_size)) + (1 << 18)) & ((1 << 19) - 1));
 	}
@@ -2426,7 +2430,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 	}
 
 	// Lighting cells of a triangle smaller than a lighting texel (a 1x1 tile) join a cluster with
-	// the other such cells of the same lighting texel and facing; the transport solves only the
+	// the other such cells of the same lighting texel, side and facing; the transport solves only the
 	// representative — the member nearest the cluster's mean center (the lower cell on a tie).
 	// Larger triangles represent themselves. Keys are local, so a rigid move keeps the clusters.
 	struct ClusterMember {
@@ -2597,7 +2601,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 					const Vector3 center = (vertex[0] + vertex[1] + vertex[2]) / 3.0f;
 					const Vector3 normal = front.normalized();
 					for (int side = 0; side < 2; side++) {
-						const uint64_t key = _surface_cache_lighting_cluster_key(center, side == 0 ? normal : -normal, p_texel_sizes[1]);
+						const uint64_t key = _surface_cache_lighting_cluster_key(center, side == 0 ? normal : -normal, side, p_texel_sizes[1]);
 						ClusterCenter &cluster = lighting_clusters[key];
 						cluster.sum += center;
 						cluster.count++;
