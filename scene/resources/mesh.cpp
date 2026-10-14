@@ -2229,6 +2229,135 @@ static bool _surface_cache_remap_arrays(const Array &p_arrays, const Vector<int>
 	return true;
 }
 
+// Fork(Lestoroer): the capture's strict SAT (surface_cache_capture_inc.glsl) with the same
+// error-free float arithmetic. Its signs are exact, so a cell it rejects is never captured; the
+// capture only narrows the result further.
+namespace SurfaceCacheCoverage {
+static void two_diff(float a, float b, float &r_x, float &r_y) {
+	const float difference = a - b;
+	const float b_virtual = a - difference;
+	const float a_virtual = difference + b_virtual;
+	const float b_roundoff = b_virtual - b;
+	const float a_roundoff = a - a_virtual;
+	r_x = difference;
+	r_y = a_roundoff + b_roundoff;
+}
+
+static void two_sum(float a, float b, float &r_x, float &r_y) {
+	const float sum = a + b;
+	const float b_virtual = sum - a;
+	const float a_virtual = sum - b_virtual;
+	const float b_roundoff = b - b_virtual;
+	const float a_roundoff = a - a_virtual;
+	r_x = sum;
+	r_y = a_roundoff + b_roundoff;
+}
+
+static void grow_expansion(float *r_expansion, int &r_count, float p_value) {
+	float grown[16] = {};
+	int grown_count = 0;
+	float accumulator = p_value;
+	for (int i = 0; i < r_count; i++) {
+		float sum, error;
+		two_sum(accumulator, r_expansion[i], sum, error);
+		if (error != 0.0f) {
+			grown[grown_count++] = error;
+		}
+		accumulator = sum;
+	}
+	if (accumulator != 0.0f || grown_count == 0) {
+		grown[grown_count++] = accumulator;
+	}
+	for (int i = 0; i < 16; i++) {
+		r_expansion[i] = i < grown_count ? grown[i] : 0.0f;
+	}
+	r_count = grown_count;
+}
+
+static void add_product(float *r_expansion, int &r_count, float a, float b, float p_sign) {
+	const float product = a * b;
+	const float error = std::fma(a, b, -product);
+	grow_expansion(r_expansion, r_count, p_sign * error);
+	grow_expansion(r_expansion, r_count, p_sign * product);
+}
+
+static int cross_differences_sign(float dx_hi, float dx_lo, float dy_hi, float dy_lo, float px_hi, float px_lo, float py_hi, float py_lo) {
+	const float left = dx_hi * py_hi;
+	const float right = dy_hi * px_hi;
+	const float determinant = left - right;
+	const float tails = std::abs(dx_lo * py_hi) + std::abs(dx_hi * py_lo) + std::abs(dx_lo * py_lo) + std::abs(dy_lo * px_hi) + std::abs(dy_hi * px_lo) + std::abs(dy_lo * px_lo);
+	const float error_bound = 5.0e-7f * (std::abs(left) + std::abs(right) + tails) + tails;
+	if (std::abs(determinant) > error_bound) {
+		return determinant > 0.0f ? 1 : -1;
+	}
+	float expansion[16] = {};
+	int count = 0;
+	add_product(expansion, count, dx_hi, py_hi, 1.0f);
+	add_product(expansion, count, dx_hi, py_lo, 1.0f);
+	add_product(expansion, count, dx_lo, py_hi, 1.0f);
+	add_product(expansion, count, dx_lo, py_lo, 1.0f);
+	add_product(expansion, count, dy_hi, px_hi, -1.0f);
+	add_product(expansion, count, dy_hi, px_lo, -1.0f);
+	add_product(expansion, count, dy_lo, px_hi, -1.0f);
+	add_product(expansion, count, dy_lo, px_lo, -1.0f);
+	for (int i = count - 1; i >= 0; i--) {
+		if (expansion[i] != 0.0f) {
+			return expansion[i] > 0.0f ? 1 : -1;
+		}
+	}
+	return 0;
+}
+
+static int orient_difference_sign(const Vector2 &p_edge_a, const Vector2 &p_edge_b, const Vector2 &p_point, const Vector2 &p_origin) {
+	float dx_hi, dx_lo, dy_hi, dy_lo, px_hi, px_lo, py_hi, py_lo;
+	two_diff(p_edge_b.x, p_edge_a.x, dx_hi, dx_lo);
+	two_diff(p_edge_b.y, p_edge_a.y, dy_hi, dy_lo);
+	two_diff(p_point.x, p_origin.x, px_hi, px_lo);
+	two_diff(p_point.y, p_origin.y, py_hi, py_lo);
+	return cross_differences_sign(dx_hi, dx_lo, dy_hi, dy_lo, px_hi, px_lo, py_hi, py_lo);
+}
+
+static int orient_exact_sign(const Vector2 &a, const Vector2 &b, const Vector2 &c) {
+	return orient_difference_sign(a, b, c, a);
+}
+
+static bool triangle_cell_covered(const Vector2 &a, const Vector2 &b, const Vector2 &c, const Vector2 &p_cell_min) {
+	const Vector2 cell_max = p_cell_min + Vector2(1.0f, 1.0f);
+	if (MAX(a.x, MAX(b.x, c.x)) <= p_cell_min.x || MIN(a.x, MIN(b.x, c.x)) >= cell_max.x || MAX(a.y, MAX(b.y, c.y)) <= p_cell_min.y || MIN(a.y, MIN(b.y, c.y)) >= cell_max.y) {
+		return false;
+	}
+	const int winding = orient_exact_sign(a, b, c);
+	if (winding == 0) {
+		return false;
+	}
+	const Vector2 corners[3] = { a, b, c };
+	for (int edge_index = 0; edge_index < 3; edge_index++) {
+		const Vector2 edge_a = corners[edge_index];
+		const Vector2 edge_b = corners[(edge_index + 1) % 3];
+		const Vector2 opposite = corners[(edge_index + 2) % 3];
+		const Vector2 edge = edge_b - edge_a;
+		Vector2 support_max = p_cell_min, support_min = p_cell_min;
+		if (-edge.y * float(winding) > 0.0f) {
+			support_max.x = cell_max.x;
+		} else {
+			support_min.x = cell_max.x;
+		}
+		if (edge.x * float(winding) > 0.0f) {
+			support_max.y = cell_max.y;
+		} else {
+			support_min.y = cell_max.y;
+		}
+		if (orient_exact_sign(edge_a, edge_b, support_max) * winding <= 0) {
+			return false;
+		}
+		if (orient_difference_sign(edge_a, edge_b, support_min, opposite) * winding >= 0) {
+			return false;
+		}
+	}
+	return true;
+}
+} // namespace SurfaceCacheCoverage
+
 // Fork(Lestoroer): key of a Surface Cache lighting cluster — the lighting texel of the local
 // position and one of 26 facing directions (each axis negative, level or positive at 22.5 degrees).
 static uint64_t _surface_cache_lighting_cluster_key(const Vector3 &p_center, const Vector3 &p_normal, float p_texel_size) {
@@ -2327,6 +2456,13 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 		}
 	}
 
+	// Material cells the capture can cover (bit per cell of the material layout, both sides) and
+	// the covered count before every 32-cell word: storage is allocated only for covered cells.
+	PackedInt32Array material_coverage;
+	material_coverage.resize((layouts[0].sample_count + 31) / 32);
+	material_coverage.fill(0);
+	int32_t *coverage = material_coverage.ptrw();
+
 	Array triangle_data;
 	Array vertex_data;
 	for (int surface = 0; surface < surface_count; surface++) {
@@ -2364,6 +2500,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 		// Chart coordinates per corner: capture pixels for the GPU capture, atlas UV for rays.
 		Vector<Vector<Vector2>> primitive_uv;
 		primitive_uv.resize(layout_count);
+		Vector<Vector2> material_pixels;
 		for (int layout_index = 0; layout_index < layout_count; layout_index++) {
 			const Dictionary chart = layouts[layout_index].surfaces[surface];
 			const Vector<int> chart_indices = chart["indices"];
@@ -2385,6 +2522,9 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 			mesh->surface_set_material(surface, surface_get_material(surface));
 			RS::get_singleton()->mesh_surface_set_capture_uv(mesh->get_rid(), surface, capture_pixels);
 			primitive_uv.write[layout_index] = corner_uv;
+			if (layout_index == 0) {
+				material_pixels = capture_pixels;
+			}
 		}
 
 		const Vector<int> material_charts = first_chart["charts"];
@@ -2407,6 +2547,19 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 			uint8_t *record = write + corner / 3 * TRIANGLE_BYTES;
 			for (int word = 0; word < 4; word++) {
 				encode_uint32(uint32_t(material_tiles[corner / 3 * 4 + word]), record + 112 + word * 4);
+			}
+			{
+				const int *tile = material_tiles.ptr() + corner / 3 * 4;
+				const int width = tile[2] & 0xFFFF, area = width * (tile[2] >> 16);
+				for (int cell = 0; cell < area; cell++) {
+					const Vector2 cell_min(tile[0] + cell % width, tile[1] + cell / width);
+					if (SurfaceCacheCoverage::triangle_cell_covered(material_pixels[corner], material_pixels[corner + 1], material_pixels[corner + 2], cell_min)) {
+						for (int side = 0; side < 2; side++) {
+							const int address = tile[3] + side * area + cell;
+							coverage[address >> 5] |= int32_t(1u << (address & 31));
+						}
+					}
+				}
 			}
 			Vector3 vertex[3];
 			for (int c = 0; c < 3; c++) {
@@ -2509,8 +2662,20 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 		layout["surfaces"] = surfaces;
 		result_layouts.push_back(layout);
 	}
+	PackedInt32Array material_coverage_ranks;
+	material_coverage_ranks.resize(material_coverage.size());
+	int covered = 0;
+	for (int word = 0; word < material_coverage.size(); word++) {
+		material_coverage_ranks.write[word] = covered;
+		for (uint32_t bits = uint32_t(material_coverage[word]); bits != 0; bits &= bits - 1) {
+			covered++;
+		}
+	}
+
 	Dictionary result;
 	result["layouts"] = result_layouts;
+	result["material_coverage"] = material_coverage;
+	result["material_coverage_ranks"] = material_coverage_ranks;
 	result["triangle_data"] = triangle_data;
 	result["vertex_data"] = vertex_data;
 	if (layout_count == 2) {
