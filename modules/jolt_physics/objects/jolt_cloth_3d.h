@@ -125,7 +125,8 @@ private:
 	bool _is_kinematic(uint32_t p_particle) const;
 	JPH::SoftBodySharedSettings *_create_shared_settings() const;
 	void _skin_to_targets(bool p_hard_reset);
-	void _reshape_rest();
+	bool _reshape_rest();
+	bool _limit_edges_to_current(JPH::SoftBodySharedSettings &p_shared) const;
 	void _apply_gravity(float p_step);
 	void _apply_drive(float p_step);
 	void _apply_pushes();
