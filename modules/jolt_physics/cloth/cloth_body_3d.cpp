@@ -160,6 +160,11 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	for (float distance : distances) {
 		setup.max_distances.push_back(distance);
 	}
+	if (!cloth_mesh->get_pose_holds().is_empty()) {
+		for (float weight : cloth_mesh->get_hold_weights()) {
+			setup.hold_weights.push_back(weight);
+		}
+	}
 	setup.particle_mass = particle_mass;
 	setup.stretch_compliance = stretch_compliance;
 	setup.shear_compliance = shear_compliance;
@@ -174,6 +179,7 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	cloth->set_instance_id(get_instance_id());
 	_update_motion();
 	cloth->configure(setup);
+	cloth->set_hold(cloth_mesh->sample_hold(pose_position));
 	cloth->set_release_stamp(JoltCloth3D::next_stamp());
 	cloth->set_space(space);
 	if (p_start_world != nullptr && follow_pose) {
@@ -276,6 +282,7 @@ void ClothBody3D::_update_pose() {
 	targets_dirty = true;
 	pose_reshaped = true;
 	if (cloth != nullptr) {
+		cloth->set_hold(cloth_mesh->sample_hold(pose_position));
 		_targets_moved();
 	} else {
 		_draw_pose();

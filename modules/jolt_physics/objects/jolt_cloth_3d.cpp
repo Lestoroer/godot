@@ -59,6 +59,10 @@ constexpr float GRIP_LEASH = 0.08f;
 // Brushing adds to the fabric's motion, but never past this speed along the brush: a flick of the
 // mouse swings the curtain, it does not throw it.
 constexpr float PUSH_SPEED_LIMIT = 0.8f;
+// A held particle leaves its target by at most this, like fabric in the cuff of a tied curtain. While
+// a hold eases in or out, the allowed distance goes from a meter to this.
+constexpr float HOLD_REACH = 0.01f;
+constexpr float HOLD_EASE_REACH = 1.0f;
 // A particle allowed to leave its pose by less than this follows the pose exactly: next to pins it
 // barely moves anyway, and as a free particle it fights the pins and the bends and never sleeps.
 constexpr float HARD_REACH = 0.035f;
@@ -107,6 +111,7 @@ void JoltCloth3D::_add_to_space() {
 
 	// The body stays at the origin, so particle positions are world positions.
 	shared_settings = _create_shared_settings();
+	hold_dirty = true;
 	JPH::SoftBodyCreationSettings settings(shared_settings.GetPtr(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), _get_object_layer());
 	settings.mUserData = reinterpret_cast<JPH::uint64>(this);
 	// Jolt asks the group filter whether the cloth touches a body; without it the cloth would also
@@ -335,6 +340,21 @@ void JoltCloth3D::_apply_pushes() {
 	pushes.clear();
 }
 
+void JoltCloth3D::_apply_hold() {
+	if (!setup.follow_targets || setup.hold_weights.is_empty()) {
+		return;
+	}
+	for (JPH::SoftBodySharedSettings::Skinned &skinned : shared_settings->mSkinnedConstraints) {
+		const uint32_t particle = skinned.mVertex;
+		if (_is_kinematic(particle)) {
+			continue;
+		}
+		const float free = setup.max_distances[particle] < 0.0f ? FLT_MAX : setup.max_distances[particle];
+		const float held = hold * setup.hold_weights[particle];
+		skinned.mMaxDistance = held > 0.0f ? Math::lerp(MIN(free, HOLD_EASE_REACH), HOLD_REACH, held) : free;
+	}
+}
+
 void JoltCloth3D::_apply_grab(float p_step) {
 	if (grabbed_particle < 0) {
 		return;
@@ -376,6 +396,7 @@ void JoltCloth3D::configure(const Setup &p_setup) {
 	const uint32_t particle_count = p_setup.positions.size();
 	ERR_FAIL_COND_MSG(p_setup.pin_weights.size() != particle_count || p_setup.max_distances.size() != particle_count, "Cloth particle attributes must match the particle count.");
 	ERR_FAIL_COND_MSG(!p_setup.start_positions.is_empty() && p_setup.start_positions.size() != particle_count, "Cloth start positions must match the particle count.");
+	ERR_FAIL_COND_MSG(!p_setup.hold_weights.is_empty() && p_setup.hold_weights.size() != particle_count, "Cloth hold weights must match the particle count.");
 	ERR_FAIL_COND_MSG(p_setup.triangles.size() % 3 != 0, "Cloth triangles must come in groups of three indices.");
 
 	setup = p_setup;
@@ -430,6 +451,14 @@ void JoltCloth3D::set_friction(float p_friction) {
 void JoltCloth3D::set_vertex_radius(float p_radius) {
 	vertex_radius = MAX(p_radius, 0.0f);
 	_update_motion_settings();
+}
+
+void JoltCloth3D::set_hold(float p_hold) {
+	const float clamped = CLAMP(p_hold, 0.0f, 1.0f);
+	if (clamped != hold) {
+		hold = clamped;
+		hold_dirty = true;
+	}
 }
 
 void JoltCloth3D::set_max_distance_scale(float p_scale) {
@@ -562,6 +591,10 @@ bool JoltCloth3D::can_interact_with(const JoltArea3D &p_other) const {
 void JoltCloth3D::pre_step(float p_step) {
 	JoltObject3D::pre_step(p_step);
 
+	if (hold_dirty) {
+		_apply_hold();
+		hold_dirty = false;
+	}
 	if (rest_shape_dirty && setup.follow_targets) {
 		_reshape_rest();
 	}

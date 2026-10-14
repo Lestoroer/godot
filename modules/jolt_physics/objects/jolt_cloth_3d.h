@@ -53,6 +53,8 @@ public:
 		LocalVector<float> pin_weights;
 		// Distance a particle may leave its target, in meters; negative means unlimited.
 		LocalVector<float> max_distances;
+		// How firmly a hold keeps each particle at its target, from 0 to 1; empty: nothing is held.
+		LocalVector<float> hold_weights;
 		float particle_mass = 0.01f;
 		float stretch_compliance = 0.0f;
 		float shear_compliance = 0.0f;
@@ -94,6 +96,8 @@ private:
 	float friction = 0.4f;
 	float vertex_radius = 0.005f;
 	float max_distance_scale = 1.0f;
+	float hold = 0.0f;
+	bool hold_dirty = false;
 	int iterations = 6;
 
 	// A hand holds a patch of particles: the grabbed one and its neighbors.
@@ -118,6 +122,7 @@ private:
 	void _apply_drive(float p_step);
 	void _apply_pushes();
 	void _apply_grab(float p_step);
+	void _apply_hold();
 	void _apply_crease_compliance(JPH::SoftBodySharedSettings &p_shared) const;
 	void _update_motion_settings();
 
@@ -147,6 +152,8 @@ public:
 	void set_friction(float p_friction);
 	void set_vertex_radius(float p_radius);
 	void set_max_distance_scale(float p_scale);
+	// How firmly the hold acts now, from 0 to 1.
+	void set_hold(float p_hold);
 	void set_iterations(int p_iterations);
 
 	void push(const Vector3 &p_point, const Vector3 &p_velocity, float p_radius);

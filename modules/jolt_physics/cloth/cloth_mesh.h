@@ -43,6 +43,10 @@ class ClothMesh : public Resource {
 	PackedInt32Array triangles;
 	PackedFloat32Array pin_weights;
 	PackedFloat32Array max_distances;
+	// How firmly a hold keeps each particle at its pose, from 0 to 1, and how firmly each pose holds:
+	// the cuff of a tied curtain keeps the fabric in it, a released curtain hangs free.
+	PackedFloat32Array hold_weights;
+	PackedFloat32Array pose_holds;
 	TypedArray<PackedVector3Array> poses;
 	Ref<ArrayMesh> render_mesh;
 
@@ -53,6 +57,8 @@ class ClothMesh : public Resource {
 	mutable bool frames_ready = false;
 
 	void _prepare_frames() const;
+	// The two poses around a pose position and the weight of the second one.
+	void _pose_span(float p_position, int &r_from, int &r_to, float &r_weight) const;
 
 protected:
 	static void _bind_methods();
@@ -69,6 +75,13 @@ public:
 	void set_max_distances(const PackedFloat32Array &p_distances) { max_distances = p_distances; }
 	PackedFloat32Array get_max_distances() const { return max_distances; }
 
+	void set_hold_weights(const PackedFloat32Array &p_weights) { hold_weights = p_weights; }
+	PackedFloat32Array get_hold_weights() const { return hold_weights; }
+	void set_pose_holds(const PackedFloat32Array &p_holds) { pose_holds = p_holds; }
+	PackedFloat32Array get_pose_holds() const { return pose_holds; }
+	// How firmly the poses hold at a pose position; zero when no pose holds.
+	float sample_hold(float p_position) const;
+
 	void set_poses(const TypedArray<PackedVector3Array> &p_poses);
 	TypedArray<PackedVector3Array> get_poses() const { return poses; }
 	int get_pose_count() const { return poses.size(); }
@@ -84,7 +97,8 @@ public:
 	void calculate_frames(const LocalVector<Vector3> &p_positions, LocalVector<Basis> &r_frames) const;
 
 	// Builds a cloth from a visible mesh and a coarse simulation mesh in the same space.
-	// The simulation mesh carries pins in the red vertex color and the allowed distance from the pose,
-	// as a fraction of p_max_distance, in the green vertex color. Both meshes carry the same blend shapes.
+	// The simulation mesh carries pins in the red vertex color, the allowed distance from the pose,
+	// as a fraction of p_max_distance, in the green vertex color and the hold weight in the blue one.
+	// Both meshes carry the same blend shapes.
 	static Ref<ClothMesh> build(const Ref<ArrayMesh> &p_render_mesh, const Ref<ArrayMesh> &p_simulation_mesh, float p_max_distance);
 };
