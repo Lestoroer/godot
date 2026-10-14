@@ -119,8 +119,9 @@ void JoltCloth3D::_add_to_space() {
 	settings.mVertexRadius = vertex_radius;
 	settings.mMaxLinearVelocity = JoltProjectSettings::max_linear_velocity;
 	settings.mUpdatePosition = false;
-	// ClothBody3D decides when the cloth sleeps: Jolt would stop a slow swing on its way back to the pose.
-	settings.mAllowSleeping = false;
+	// ClothBody3D decides when posed cloth sleeps: Jolt would stop a slow swing on its way back to
+	// the pose. Free cloth also sleeps by Jolt once it is slow.
+	settings.mAllowSleeping = !setup.follow_targets;
 	settings.mFacesDoubleSided = true;
 
 	JPH::Body *new_jolt_body = space->add_object(*this, settings);
