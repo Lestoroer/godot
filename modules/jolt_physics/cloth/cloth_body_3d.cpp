@@ -174,6 +174,7 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	setup.follow_targets = follow_pose;
 	setup.dihedral_bends = dihedral_bends;
 	setup.crease_compliance = crease_compliance;
+	setup.slack = slack;
 
 	cloth = memnew(JoltCloth3D);
 	cloth->set_instance_id(get_instance_id());
@@ -696,6 +697,7 @@ CLOTH_REBUILD_SETTER(stretch_compliance, float)
 CLOTH_REBUILD_SETTER(shear_compliance, float)
 CLOTH_REBUILD_SETTER(bend_compliance, float)
 CLOTH_REBUILD_SETTER(crease_compliance, float)
+CLOTH_REBUILD_SETTER(slack, float)
 CLOTH_REBUILD_SETTER(backstop_distance, float)
 CLOTH_REBUILD_SETTER(backstop_radius, float)
 CLOTH_REBUILD_SETTER(dihedral_bends, bool)
@@ -869,6 +871,8 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bend_compliance"), &ClothBody3D::get_bend_compliance);
 	ClassDB::bind_method(D_METHOD("set_crease_compliance", "compliance"), &ClothBody3D::set_crease_compliance);
 	ClassDB::bind_method(D_METHOD("get_crease_compliance"), &ClothBody3D::get_crease_compliance);
+	ClassDB::bind_method(D_METHOD("set_slack", "slack"), &ClothBody3D::set_slack);
+	ClassDB::bind_method(D_METHOD("get_slack"), &ClothBody3D::get_slack);
 	ClassDB::bind_method(D_METHOD("set_dihedral_bends", "dihedral"), &ClothBody3D::set_dihedral_bends);
 	ClassDB::bind_method(D_METHOD("is_dihedral_bends"), &ClothBody3D::is_dihedral_bends);
 	ClassDB::bind_method(D_METHOD("set_linear_damping", "damping"), &ClothBody3D::set_linear_damping);
@@ -929,6 +933,7 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shear_compliance", PROPERTY_HINT_RANGE, "0,0.01,0.00001,or_greater"), "set_shear_compliance", "get_shear_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bend_compliance", PROPERTY_HINT_RANGE, "0,1,0.0001,or_greater"), "set_bend_compliance", "get_bend_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "crease_compliance", PROPERTY_HINT_RANGE, "-1,1000,0.01,or_greater"), "set_crease_compliance", "get_crease_compliance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slack", PROPERTY_HINT_RANGE, "0,0.2,0.005"), "set_slack", "get_slack");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dihedral_bends"), "set_dihedral_bends", "is_dihedral_bends");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "linear_damping", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_linear_damping", "get_linear_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_friction", "get_friction");
