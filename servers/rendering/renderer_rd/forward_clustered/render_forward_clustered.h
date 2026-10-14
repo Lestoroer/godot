@@ -814,6 +814,8 @@ protected:
 	// Fork(Lestoroer): Surface Cache GI context, set by RendererSceneCull.
 	Vector<RID> surface_cache_buffers;
 	Callable surface_cache_view_callback;
+	// Fork(Lestoroer): surface_cache texture with this viewport's diffuse gather, named by the view callback.
+	StringName surface_cache_gather_texture = SNAME("gather");
 	void surface_cache_set_context(const Vector<RID> &p_buffers, const Callable &p_view_callback) override { surface_cache_buffers = p_buffers; surface_cache_view_callback = p_view_callback; }
 	void surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side) override; // Fork(Lestoroer)
 	virtual void _render_uv2(const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) override;
