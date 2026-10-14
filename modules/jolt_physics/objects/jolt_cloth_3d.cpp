@@ -63,9 +63,6 @@ constexpr float PUSH_SPEED_LIMIT = 0.8f;
 // a hold eases in or out, the allowed distance goes from a meter to this.
 constexpr float HOLD_REACH = 0.01f;
 constexpr float HOLD_EASE_REACH = 1.0f;
-// Fabric does not push itself apart: an edge compressed by more than this fraction rests at its current
-// length until the fabric spreads to its pose.
-constexpr float REST_COMPRESSION_FREE = 0.02f;
 // A particle allowed to leave its pose by less than this follows the pose exactly: next to pins it
 // barely moves anyway, and as a free particle it fights the pins and the bends and never sleeps.
 constexpr float HARD_REACH = 0.035f;
@@ -237,9 +234,8 @@ void JoltCloth3D::_skin_to_targets(bool p_hard_reset) {
 	motion->SkinVertices(jolt_body->GetCenterOfMassTransform(), joint_matrices.data(), particle_count, p_hard_reset, space->get_temp_allocator());
 }
 
-// Edges and bends rest in the current pose, so a gathered curtain does not push its folds apart. Returns
-// whether some fabric still has to spread to its pose.
-bool JoltCloth3D::_reshape_rest() {
+void JoltCloth3D::_reshape_rest() {
+	// Edges and bends rest in the current pose, so a gathered curtain does not push its folds apart.
 	for (uint32_t i = 0; i < targets.size(); i++) {
 		const JPH::Vec3 position = to_jolt(targets[i]);
 		position.StoreFloat3(&shared_settings->mVertices[i].mPosition);
@@ -248,28 +244,9 @@ bool JoltCloth3D::_reshape_rest() {
 	}
 	shared_settings->CalculateEdgeLengths();
 	_apply_slack(*shared_settings);
-	const bool spreading = _limit_edges_to_current(*shared_settings);
 	shared_settings->CalculateBendConstraintConstants();
 	_apply_crease_compliance(*shared_settings);
 	shared_settings->CalculateLRALengths(LRA_SLACK * (1.0f + setup.slack));
-	return spreading;
-}
-
-// When the pose spreads gathered fabric, like a curtain released from its cuff, its edges would rest longer
-// than they are and push their neighbours apart: the fabric buckles into ripples. Such an edge rests at its
-// current length instead; the drive spreads the fabric, and the edge grows to its pose length as it follows.
-bool JoltCloth3D::_limit_edges_to_current(JPH::SoftBodySharedSettings &p_shared) const {
-	const JPH::SoftBodyMotionProperties *motion = static_cast<const JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
-	const JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
-	bool limited = false;
-	for (JPH::SoftBodySharedSettings::Edge &edge : p_shared.mEdgeConstraints) {
-		const float current = (vertices[edge.mVertex[0]].mPosition - vertices[edge.mVertex[1]].mPosition).Length();
-		if (current < edge.mRestLength * (1.0f - REST_COMPRESSION_FREE)) {
-			edge.mRestLength = current;
-			limited = true;
-		}
-	}
-	return limited;
 }
 
 void JoltCloth3D::_apply_slack(JPH::SoftBodySharedSettings &p_shared) const {
@@ -680,7 +657,10 @@ void JoltCloth3D::pre_step(float p_step) {
 		_apply_hold();
 		hold_dirty = false;
 	}
-	rest_shape_dirty = rest_shape_dirty && setup.follow_targets && _reshape_rest();
+	if (rest_shape_dirty && setup.follow_targets) {
+		_reshape_rest();
+	}
+	rest_shape_dirty = false;
 	if (targets_valid) {
 		_skin_to_targets(hard_reset_requested);
 		hard_reset_requested = false;
