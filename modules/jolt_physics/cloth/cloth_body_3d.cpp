@@ -58,10 +58,13 @@ constexpr float SETTLE_SECONDS = 0.3f;
 // REST_POSE_DISTANCE, or on average closer than REST_POSE_MEAN_DISTANCE where a few particles rest on
 // something the pose goes into; a slow swing back to the pose is not cut short. Free cloth moved less than
 // REST_DRIFT_FREE, or on average less than REST_DRIFT_MEAN_FREE: a few particles caught between the
-// floor and another garment may keep trembling. Cloth that was not touched for REST_TIMEOUT_SECONDS
-// falls asleep anyway, like a cover pressed between a folded towel and the mattress.
+// floor and another garment may keep trembling. Posed cloth that moved less than REST_DRIFT_POSED for
+// REST_STUCK_SECONDS rests away from its pose, on something the pose goes into: a swing moves farther
+// in that time. Cloth that was not touched for REST_TIMEOUT_SECONDS falls asleep anyway, like a cover
+// pressed between a folded towel and the mattress.
 constexpr float REST_WINDOW_SECONDS = 0.25f;
 constexpr float REST_QUIET_SECONDS = 0.5f;
+constexpr float REST_STUCK_SECONDS = 1.5f;
 constexpr float REST_TIMEOUT_SECONDS = 12.0f;
 constexpr real_t REST_DRIFT_POSED = 0.003;
 constexpr real_t REST_POSE_DISTANCE = 0.03;
@@ -303,6 +306,7 @@ void ClothBody3D::_check_rest(uint64_t p_steps) {
 		rest_check_world = world_scratch;
 		rest_check_time = 0.0f;
 		rest_quiet_time = 0.0f;
+		rest_stuck_time = 0.0f;
 		return;
 	}
 	rest_check_time += elapsed;
@@ -336,6 +340,7 @@ void ClothBody3D::_check_rest(uint64_t p_steps) {
 	if (touched) {
 		awake_time = 0.0f;
 		rest_quiet_time = 0.0f;
+		rest_stuck_time = 0.0f;
 		return;
 	}
 	const real_t count = real_t(MAX(world_scratch.size(), 1u));
@@ -343,7 +348,10 @@ void ClothBody3D::_check_rest(uint64_t p_steps) {
 	const bool still = follow_pose ? drift_most < REST_DRIFT_POSED && returned
 								   : drift_most < REST_DRIFT_FREE || drift_total / count < REST_DRIFT_MEAN_FREE;
 	rest_quiet_time = still ? rest_quiet_time + window : 0.0f;
-	if (rest_quiet_time >= REST_QUIET_SECONDS || awake_time >= REST_TIMEOUT_SECONDS) {
+	rest_stuck_time = follow_pose && drift_most < REST_DRIFT_POSED ? rest_stuck_time + window : 0.0f;
+	if (rest_quiet_time >= REST_QUIET_SECONDS || rest_stuck_time >= REST_STUCK_SECONDS || awake_time >= REST_TIMEOUT_SECONDS) {
+		rest_quiet_time = 0.0f;
+		rest_stuck_time = 0.0f;
 		cloth->put_to_sleep();
 	}
 }
