@@ -81,6 +81,8 @@ class ClothBody3D : public GeometryInstance3D {
 	float push_response = 1.0f;
 
 	LocalVector<Vector3> pose_local;
+	// Where the pose pulls the particles: the pose itself, reached at most POSE_SPEED_LIMIT per second.
+	LocalVector<Vector3> target_local;
 	// Pinned particles move with the pose only; their bones never turn, so rings stay on the rod.
 	LocalVector<bool> pinned;
 	LocalVector<Basis> pose_frames;
@@ -128,6 +130,7 @@ class ClothBody3D : public GeometryInstance3D {
 	void _free_physics();
 	void _update_pose();
 	void _push_targets();
+	bool _move_target_toward_pose();
 	void _read_simulation();
 	void _check_rest(uint64_t p_steps);
 	void _update_render();

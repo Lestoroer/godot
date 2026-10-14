@@ -53,6 +53,9 @@ constexpr float REACH_RAMP_SECONDS = 1.2f;
 constexpr float REACH_RAMP_SCALE = 25.0f;
 // After falling asleep the cloth blends from where it rests into the exact pose.
 constexpr float SETTLE_SECONDS = 0.3f;
+// The pose pulls the particles no faster than this. After a frame pause the pose of an opening curtain
+// jumps by a whole frame of travel; pins moved that far in one step would fling the fabric next to them.
+constexpr real_t POSE_SPEED_LIMIT = 3.0;
 // The cloth falls asleep after it stayed still for REST_QUIET_SECONDS, checked every REST_WINDOW_SECONDS.
 // Still: posed cloth moved less than REST_DRIFT_POSED and came back to its pose closer than
 // REST_POSE_DISTANCE, or on average closer than REST_POSE_MEAN_DISTANCE where a few particles rest on
@@ -114,6 +117,7 @@ void ClothBody3D::_rebuild() {
 	}
 
 	_update_pose();
+	target_local = pose_local;
 	previous_local = pose_local;
 	current_local = pose_local;
 	render_local = pose_local;
@@ -140,6 +144,7 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	for (uint32_t i = 0; i < pose_local.size(); i++) {
 		setup.positions[i] = transform.xform(pose_local[i]);
 	}
+	target_local = pose_local;
 	if (p_start_world != nullptr) {
 		setup.start_positions = *p_start_world;
 	}
@@ -291,14 +296,15 @@ void ClothBody3D::_push_targets() {
 	const Transform3D transform = get_global_transform();
 	// Reparenting recomputes the transform with rounding; that is no motion.
 	if (follow_pose && (targets_dirty || !transform.is_equal_approx(target_transform))) {
-		world_scratch.resize(pose_local.size());
-		for (uint32_t i = 0; i < pose_local.size(); i++) {
-			world_scratch[i] = transform.xform(pose_local[i]);
+		const bool pose_reached = _move_target_toward_pose();
+		world_scratch.resize(target_local.size());
+		for (uint32_t i = 0; i < target_local.size(); i++) {
+			world_scratch[i] = transform.xform(target_local[i]);
 		}
 		cloth->set_targets(world_scratch, pose_reshaped);
 		target_transform = transform;
-		targets_dirty = false;
-		pose_reshaped = false;
+		targets_dirty = !pose_reached;
+		pose_reshaped = !pose_reached;
 		targets_moving = true;
 		_targets_moved();
 	} else if (targets_moving) {
@@ -309,6 +315,25 @@ void ClothBody3D::_push_targets() {
 	untouched_time += float(get_physics_process_delta_time());
 	_update_drive(targets_moving);
 	step_inverse = transform.affine_inverse();
+}
+
+// Moves the target shape toward the pose by at most a step of POSE_SPEED_LIMIT; true when it got there.
+// The whole shape moves by one fraction, so its folds keep their form while it catches up.
+bool ClothBody3D::_move_target_toward_pose() {
+	real_t farthest = 0.0;
+	for (uint32_t i = 0; i < pose_local.size(); i++) {
+		farthest = MAX(farthest, target_local[i].distance_squared_to(pose_local[i]));
+	}
+	const real_t limit = POSE_SPEED_LIMIT * get_physics_process_delta_time();
+	if (farthest <= limit * limit) {
+		target_local = pose_local;
+		return true;
+	}
+	const real_t fraction = limit / Math::sqrt(farthest);
+	for (uint32_t i = 0; i < pose_local.size(); i++) {
+		target_local[i] = target_local[i].lerp(pose_local[i], fraction);
+	}
+	return false;
 }
 
 void ClothBody3D::_read_simulation() {
@@ -757,6 +782,7 @@ void ClothBody3D::set_carried(bool p_carried) {
 	cloth->set_targets(world_scratch, true);
 	cloth->reset_to_targets();
 	cloth->set_release_stamp(JoltCloth3D::next_stamp());
+	target_local = pose_local;
 	previous_local = shape;
 	current_local = shape;
 	target_transform = transform;
@@ -779,6 +805,7 @@ void ClothBody3D::reset_to_pose() {
 	_free_lying_collision(true);
 	cloth->set_targets(world_scratch, true);
 	cloth->reset_to_targets();
+	target_local = pose_local;
 	previous_local = pose_local;
 	current_local = pose_local;
 	target_transform = transform;
