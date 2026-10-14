@@ -159,6 +159,9 @@ public:
 	void reset_to_targets();
 	// Puts the particles of a sleeping cloth exactly at its targets, at rest, without waking it.
 	void rest_in_targets();
+	// Whether something the cloth touches stands between a particle farther than p_distance from its target
+	// and that target.
+	bool is_kept_from_targets(float p_distance) const;
 
 	void set_drive(float p_stiffness, float p_damping);
 	void set_gravity_scale(float p_scale);

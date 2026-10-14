@@ -112,6 +112,7 @@ class ClothBody3D : public GeometryInstance3D {
 	float reach_ramp = 0.0f;
 	// Seconds left of the blend from the simulated shape into the exact pose after falling asleep.
 	float settle_left = 0.0f;
+	float settle_seconds = 0.0f;
 	bool was_active = false;
 	bool drawn_in_pose = true;
 	// Where the particles were at the start of the current rest check, in world space.
@@ -120,8 +121,10 @@ class ClothBody3D : public GeometryInstance3D {
 	// How long the cloth has been still in a row, and awake since it was woken or last touched.
 	float rest_quiet_time = 0.0f;
 	float rest_stuck_time = 0.0f;
-	// The cloth fell asleep back in its pose, not resting on something away from it.
-	bool rested_in_pose = false;
+	// The cloth fell asleep to settle into its pose: it came back, or nothing keeps it away.
+	bool settles_into_pose = false;
+	// How far the farthest particle was from the pose when the cloth fell asleep.
+	real_t asleep_away = 0.0;
 	float awake_time = 0.0f;
 	// The cursor or a hand touched the cloth since the last rest check.
 	bool attended = false;

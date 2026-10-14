@@ -459,10 +459,11 @@ void JoltCloth3D::_apply_grab(float p_step) {
 	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
 	JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
 	const Vector3 origin = to_godot(jolt_body->GetCenterOfMassPosition());
-	// A few rounds bring the target within reach of every anchor at once.
+	// A few rounds bring the target within reach of every anchor at once. Anchors are where they stay, at
+	// their targets: an anchor the hand pulls along would not hold the hand back.
 	for (int round = 0; round < 3; round++) {
 		for (uint32_t k = 0; k < grip_anchors.size(); k++) {
-			const Vector3 anchor = origin + to_godot(vertices[grip_anchors[k]].mPosition);
+			const Vector3 anchor = targets[grip_anchors[k]];
 			const Vector3 offset = grab_target - anchor;
 			if (offset.length() > grip_reaches[k]) {
 				grab_target = anchor + offset.normalized() * grip_reaches[k];
@@ -545,6 +546,26 @@ void JoltCloth3D::rest_in_targets() {
 		vertices[i].mPreviousPosition = vertices[i].mPosition;
 		vertices[i].mVelocity = JPH::Vec3::sZero();
 	}
+}
+
+// A cover on a pillow its pose goes into is kept from its pose: the way of its particles to their targets
+// leads into what they touch. Fabric twisted around itself or caught by friction is not kept.
+bool JoltCloth3D::is_kept_from_targets(float p_distance) const {
+	if (!in_space()) {
+		return false;
+	}
+	const JPH::SoftBodyMotionProperties *motion = static_cast<const JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	const JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
+	const JPH::RVec3 origin = jolt_body->GetCenterOfMassPosition();
+	for (uint32_t i = 0; i < vertices.size(); i++) {
+		const JPH::SoftBodyVertex &vertex = vertices[i];
+		const JPH::Vec3 to_target = JPH::Vec3(to_jolt_r(targets[i]) - origin) - vertex.mPosition;
+		const float distance = to_target.Length();
+		if (vertex.mHasContact && distance > p_distance && vertex.mCollisionPlane.GetNormal().Dot(to_target) < -0.5f * distance) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void JoltCloth3D::set_drive(float p_stiffness, float p_damping) {
@@ -689,7 +710,8 @@ void JoltCloth3D::_find_grip_anchors() {
 		if (nearest < 0) {
 			return;
 		}
-		if (hold * setup.hold_weights[nearest] >= 0.5f) {
+		// Only fabric the holder holds fully stays put; partly held fabric may go far.
+		if (hold * setup.hold_weights[nearest] >= 0.99f) {
 			grip_anchors.push_back(nearest);
 			grip_reaches.push_back(along[nearest]);
 			return;

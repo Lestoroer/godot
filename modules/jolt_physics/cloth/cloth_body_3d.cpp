@@ -53,6 +53,9 @@ constexpr float REACH_RAMP_SECONDS = 1.2f;
 constexpr float REACH_RAMP_SCALE = 25.0f;
 // After falling asleep the cloth blends from where it rests into the exact pose.
 constexpr float SETTLE_SECONDS = 0.3f;
+// Fabric that settles from farther away, like a twisted curtain untwisting into its pose, moves no faster
+// than this.
+constexpr real_t SETTLE_SPEED = 0.5;
 // The pose pulls the particles no faster than this. After a frame pause the pose of an opening curtain
 // jumps by a whole frame of travel; pins moved that far in one step would fling the fabric next to them.
 constexpr real_t POSE_SPEED_LIMIT = 3.0;
@@ -417,7 +420,10 @@ void ClothBody3D::_check_rest(uint64_t p_steps) {
 	const bool returning_fully = return_stiffness <= drive_stiffness || untouched_time >= return_delay + return_seconds;
 	rest_stuck_time = follow_pose && returning_fully && drift_most < REST_DRIFT_POSED ? rest_stuck_time + window : 0.0f;
 	if (rest_quiet_time >= REST_QUIET_SECONDS || rest_stuck_time >= REST_STUCK_SECONDS || awake_time >= REST_TIMEOUT_SECONDS) {
-		rested_in_pose = returned;
+		// Posed cloth rests away from its pose only where something it touches keeps it away; fabric twisted
+		// around itself would stay twisted, so it settles into the pose.
+		settles_into_pose = follow_pose && (returned || !cloth->is_kept_from_targets(REST_POSE_DISTANCE));
+		asleep_away = away_most;
 		rest_quiet_time = 0.0f;
 		rest_stuck_time = 0.0f;
 		cloth->put_to_sleep();
@@ -434,7 +440,7 @@ void ClothBody3D::_update_render() {
 		if (settle_left > 0.0f) {
 			settle_left = MAX(settle_left - float(get_process_delta_time()), 0.0f);
 			if (settle_left > 0.0f) {
-				_draw_settling(1.0f - settle_left / SETTLE_SECONDS);
+				_draw_settling(1.0f - settle_left / settle_seconds);
 			} else {
 				_draw_pose();
 			}
@@ -500,11 +506,11 @@ void ClothBody3D::_draw_pose() {
 
 void ClothBody3D::_fell_asleep() {
 	was_active = false;
-	if (follow_pose && rested_in_pose) {
-		// Asleep in its pose, the cloth blends into the exact pose so folds stay clean, and its particles
-		// rest there too: the next touch moves the shape that is drawn. Cloth asleep away from its pose is
-		// drawn where it lies.
-		settle_left = SETTLE_SECONDS;
+	if (settles_into_pose) {
+		// The cloth blends into the exact pose so folds stay clean, and its particles rest there too: the
+		// next touch moves the shape that is drawn. Cloth kept away from its pose is drawn where it lies.
+		settle_seconds = MAX(SETTLE_SECONDS, float(asleep_away / SETTLE_SPEED));
+		settle_left = settle_seconds;
 		cloth->rest_in_targets();
 	}
 	_update_lying_collision();
