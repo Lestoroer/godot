@@ -72,7 +72,8 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 		MAX_VOXEL_GI_INSTANCESS = 8,
 		MAX_LIGHTMAPS = 8,
 		MAX_VOXEL_GI_INSTANCESS_PER_INSTANCE = 2,
-		INSTANCE_DATA_BUFFER_MIN_SIZE = 4096
+		INSTANCE_DATA_BUFFER_MIN_SIZE = 4096,
+		SURFACE_CACHE_CAPTURE_INSTANCE_DATA_MIN_SIZE = 16 // Fork(Lestoroer)
 	};
 
 	enum RenderListType {
@@ -80,8 +81,16 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 		RENDER_LIST_MOTION, //used for opaque objects with motion
 		RENDER_LIST_ALPHA, //used for transparent objects
 		RENDER_LIST_SECONDARY, //used for shadows and other objects
+		// Fork(Lestoroer): one Surface Cache capture draws the few surfaces of one instance; the
+		// shared lists would keep a 4096-element instance buffer for each capture pass of a frame.
+		RENDER_LIST_SURFACE_CACHE_CAPTURE,
 		RENDER_LIST_MAX
 	};
+
+	// Fork(Lestoroer)
+	static constexpr uint32_t instance_data_min_size(RenderListType p_render_list) {
+		return p_render_list == RENDER_LIST_SURFACE_CACHE_CAPTURE ? SURFACE_CACHE_CAPTURE_INSTANCE_DATA_MIN_SIZE : INSTANCE_DATA_BUFFER_MIN_SIZE;
+	}
 
 	/* Scene Shader */
 
@@ -411,7 +420,7 @@ private:
 		uint32_t max_lightmaps;
 		RID lightmap_buffer;
 
-		MultiUmaBuffer<1u> instance_buffer[RENDER_LIST_MAX] = { MultiUmaBuffer<1u>("RENDER_LIST_OPAQUE"), MultiUmaBuffer<1u>("RENDER_LIST_MOTION"), MultiUmaBuffer<1u>("RENDER_LIST_ALPHA"), MultiUmaBuffer<1u>("RENDER_LIST_SECONDARY") };
+		MultiUmaBuffer<1u> instance_buffer[RENDER_LIST_MAX] = { MultiUmaBuffer<1u>("RENDER_LIST_OPAQUE"), MultiUmaBuffer<1u>("RENDER_LIST_MOTION"), MultiUmaBuffer<1u>("RENDER_LIST_ALPHA"), MultiUmaBuffer<1u>("RENDER_LIST_SECONDARY"), MultiUmaBuffer<1u>("RENDER_LIST_SURFACE_CACHE_CAPTURE") }; // Fork(Lestoroer): capture list added.
 		InstanceData *curr_gpu_ptr[RENDER_LIST_MAX] = {};
 
 		LightmapCaptureData *lightmap_captures = nullptr;
