@@ -238,7 +238,8 @@ void ClothBody3D::_update_motion() {
 // Right after a touch the drive is weak and the cloth swings like a pendulum. Left alone, the drive
 // grows over return_seconds after return_delay, with damping to match, and brings the cloth back to its
 // pose: folds tangled by a swing or a pull come apart. While the pose moves, the cloth follows it
-// closely, so gathering folds do not cross.
+// closely and critically damped, so gathering folds do not cross. The pose is no touch: when it stops,
+// the cloth settles into it with the full return at once instead of swinging on.
 void ClothBody3D::_update_drive(bool p_pose_moved) {
 	if (cloth == nullptr) {
 		return;
@@ -248,9 +249,9 @@ void ClothBody3D::_update_drive(bool p_pose_moved) {
 		return;
 	}
 	if (p_pose_moved) {
-		untouched_time = 0.0f;
+		untouched_time = MAX(untouched_time, return_delay + return_seconds);
 		const float stiffness = travel_stiffness < 0.0f ? return_stiffness : travel_stiffness;
-		cloth->set_drive(stiffness, Math::sqrt(stiffness));
+		cloth->set_drive(stiffness, 2.0f * Math::sqrt(stiffness));
 		return;
 	}
 	const float t = CLAMP((untouched_time - return_delay) / MAX(return_seconds, 0.001f), 0.0f, 1.0f);
@@ -320,7 +321,8 @@ void ClothBody3D::_push_targets() {
 		targets_moving = false;
 		_update_lying_collision();
 	}
-	untouched_time += float(get_physics_process_delta_time());
+	// A hand holding the cloth touches it all the time: the return does not pull against the hand.
+	untouched_time = cloth->get_grabbed_particle() >= 0 ? 0.0f : untouched_time + float(get_physics_process_delta_time());
 	_update_drive(targets_moving);
 	step_inverse = transform.affine_inverse();
 }

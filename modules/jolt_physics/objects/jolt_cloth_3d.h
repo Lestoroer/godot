@@ -98,6 +98,8 @@ private:
 	float max_distance_scale = 1.0f;
 	float hold = 0.0f;
 	bool hold_dirty = false;
+	// Held fabric is still coming to its holder.
+	bool hold_closing = false;
 	int iterations = 6;
 
 	// A hand holds a patch of particles: the grabbed one and its neighbors.
@@ -120,6 +122,7 @@ private:
 
 	bool _is_kinematic(uint32_t p_particle) const;
 	JPH::SoftBodySharedSettings *_create_shared_settings() const;
+	void _shear_cell_diagonals(JPH::SoftBodySharedSettings &p_shared) const;
 	void _skin_to_targets(bool p_hard_reset);
 	void _reshape_rest();
 	void _keep_attachments_from_pulling();
@@ -128,7 +131,8 @@ private:
 	void _apply_pushes();
 	void _apply_grab(float p_step);
 	void _find_grip_anchors();
-	void _apply_hold();
+	void _forget_grip();
+	void _apply_hold(float p_step);
 	void _apply_crease_compliance(JPH::SoftBodySharedSettings &p_shared) const;
 	void _update_motion_settings();
 
