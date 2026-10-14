@@ -2473,6 +2473,22 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 	for (const ClusterMember &member : cluster_members) {
 		representative[member.cell] = lighting_clusters[member.key].representative;
 	}
+	// Transport nodes: one per representative, numbered in cell order.
+	PackedInt32Array lighting_nodes;
+	PackedInt32Array lighting_node_cells;
+	if (layout_count == 2) {
+		lighting_nodes.resize(lighting_representatives.size());
+		int32_t *node = lighting_nodes.ptrw();
+		for (int cell = 0; cell < lighting_nodes.size(); cell++) {
+			if (representative[cell] == cell) {
+				node[cell] = lighting_node_cells.size();
+				lighting_node_cells.push_back(cell);
+			}
+		}
+		for (int cell = 0; cell < lighting_nodes.size(); cell++) {
+			node[cell] = node[representative[cell]];
+		}
+	}
 
 	Array result_layouts;
 	for (int layout_index = 0; layout_index < layout_count; layout_index++) {
@@ -2498,7 +2514,8 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 	result["triangle_data"] = triangle_data;
 	result["vertex_data"] = vertex_data;
 	if (layout_count == 2) {
-		result["lighting_representatives"] = lighting_representatives;
+		result["lighting_nodes"] = lighting_nodes;
+		result["lighting_node_cells"] = lighting_node_cells;
 	}
 	return result;
 }
