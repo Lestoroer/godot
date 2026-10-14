@@ -67,6 +67,9 @@ class ClothBody3D : public GeometryInstance3D {
 	// The drive grows to return_stiffness when the cloth is left alone, so a swing always ends in the
 	// pose; zero or less than drive_stiffness: the drive stays as it is.
 	float return_stiffness = 0.0f;
+	// Drive while the pose moves; negative: return_stiffness. Weak, it lets released fabric fall under
+	// its own weight instead of following the blend of poses.
+	float travel_stiffness = -1.0f;
 	float return_delay = 1.5f;
 	float return_seconds = 2.0f;
 	// Seconds since the cursor, the hand or the moving pose last touched the cloth.
@@ -80,6 +83,8 @@ class ClothBody3D : public GeometryInstance3D {
 	uint32_t lying_collision_layer = 0;
 	float drop_height = 0.0f;
 	float push_response = 1.0f;
+	// How firmly the holder keeps the held fabric, from 0 to 1: the closed cuff of a tied curtain.
+	float hold = 0.0f;
 
 	LocalVector<Vector3> pose_local;
 	// Where the pose pulls the particles: the pose itself, reached at most POSE_SPEED_LIMIT per second.
@@ -170,6 +175,8 @@ public:
 	float get_crease_compliance() const { return crease_compliance; }
 	void set_slack(float p_slack);
 	float get_slack() const { return slack; }
+	void set_hold(float p_hold);
+	float get_hold() const { return hold; }
 	void set_dihedral_bends(bool p_dihedral);
 	bool is_dihedral_bends() const { return dihedral_bends; }
 	void set_linear_damping(float p_damping);
@@ -186,6 +193,8 @@ public:
 	float get_drive_damping() const { return drive_damping; }
 	void set_return_stiffness(float p_stiffness);
 	float get_return_stiffness() const { return return_stiffness; }
+	void set_travel_stiffness(float p_stiffness);
+	float get_travel_stiffness() const { return travel_stiffness; }
 	void set_return_delay(float p_delay);
 	float get_return_delay() const { return return_delay; }
 	void set_return_seconds(float p_seconds);

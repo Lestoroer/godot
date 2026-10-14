@@ -160,7 +160,7 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	for (float distance : distances) {
 		setup.max_distances.push_back(distance);
 	}
-	if (!cloth_mesh->get_pose_holds().is_empty()) {
+	if (cloth_mesh->has_holds()) {
 		for (float weight : cloth_mesh->get_hold_weights()) {
 			setup.hold_weights.push_back(weight);
 		}
@@ -180,7 +180,7 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	cloth->set_instance_id(get_instance_id());
 	_update_motion();
 	cloth->configure(setup);
-	cloth->set_hold(cloth_mesh->sample_hold(pose_position));
+	cloth->set_hold(hold);
 	cloth->set_release_stamp(JoltCloth3D::next_stamp());
 	cloth->set_space(space);
 	if (p_start_world != nullptr && follow_pose) {
@@ -250,7 +250,8 @@ void ClothBody3D::_update_drive(bool p_pose_moved) {
 	}
 	if (p_pose_moved) {
 		untouched_time = 0.0f;
-		cloth->set_drive(return_stiffness, Math::sqrt(return_stiffness));
+		const float stiffness = travel_stiffness < 0.0f ? return_stiffness : travel_stiffness;
+		cloth->set_drive(stiffness, Math::sqrt(stiffness));
 		return;
 	}
 	const float t = CLAMP((untouched_time - return_delay) / MAX(return_seconds, 0.001f), 0.0f, 1.0f);
@@ -283,7 +284,6 @@ void ClothBody3D::_update_pose() {
 	targets_dirty = true;
 	pose_reshaped = true;
 	if (cloth != nullptr) {
-		cloth->set_hold(cloth_mesh->sample_hold(pose_position));
 		_targets_moved();
 	} else {
 		_draw_pose();
@@ -698,6 +698,13 @@ CLOTH_REBUILD_SETTER(shear_compliance, float)
 CLOTH_REBUILD_SETTER(bend_compliance, float)
 CLOTH_REBUILD_SETTER(crease_compliance, float)
 CLOTH_REBUILD_SETTER(slack, float)
+
+void ClothBody3D::set_hold(float p_hold) {
+	hold = CLAMP(p_hold, 0.0f, 1.0f);
+	if (cloth != nullptr) {
+		cloth->set_hold(hold);
+	}
+}
 CLOTH_REBUILD_SETTER(backstop_distance, float)
 CLOTH_REBUILD_SETTER(backstop_radius, float)
 CLOTH_REBUILD_SETTER(dihedral_bends, bool)
@@ -708,6 +715,7 @@ CLOTH_MOTION_SETTER(vertex_radius, float)
 CLOTH_MOTION_SETTER(drive_stiffness, float)
 CLOTH_MOTION_SETTER(drive_damping, float)
 CLOTH_MOTION_SETTER(return_stiffness, float)
+CLOTH_MOTION_SETTER(travel_stiffness, float)
 CLOTH_MOTION_SETTER(return_delay, float)
 CLOTH_MOTION_SETTER(return_seconds, float)
 CLOTH_MOTION_SETTER(max_distance_scale, float)
@@ -873,6 +881,8 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_crease_compliance"), &ClothBody3D::get_crease_compliance);
 	ClassDB::bind_method(D_METHOD("set_slack", "slack"), &ClothBody3D::set_slack);
 	ClassDB::bind_method(D_METHOD("get_slack"), &ClothBody3D::get_slack);
+	ClassDB::bind_method(D_METHOD("set_hold", "hold"), &ClothBody3D::set_hold);
+	ClassDB::bind_method(D_METHOD("get_hold"), &ClothBody3D::get_hold);
 	ClassDB::bind_method(D_METHOD("set_dihedral_bends", "dihedral"), &ClothBody3D::set_dihedral_bends);
 	ClassDB::bind_method(D_METHOD("is_dihedral_bends"), &ClothBody3D::is_dihedral_bends);
 	ClassDB::bind_method(D_METHOD("set_linear_damping", "damping"), &ClothBody3D::set_linear_damping);
@@ -889,6 +899,8 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_drive_damping"), &ClothBody3D::get_drive_damping);
 	ClassDB::bind_method(D_METHOD("set_return_stiffness", "stiffness"), &ClothBody3D::set_return_stiffness);
 	ClassDB::bind_method(D_METHOD("get_return_stiffness"), &ClothBody3D::get_return_stiffness);
+	ClassDB::bind_method(D_METHOD("set_travel_stiffness", "stiffness"), &ClothBody3D::set_travel_stiffness);
+	ClassDB::bind_method(D_METHOD("get_travel_stiffness"), &ClothBody3D::get_travel_stiffness);
 	ClassDB::bind_method(D_METHOD("set_return_delay", "delay"), &ClothBody3D::set_return_delay);
 	ClassDB::bind_method(D_METHOD("get_return_delay"), &ClothBody3D::get_return_delay);
 	ClassDB::bind_method(D_METHOD("set_return_seconds", "seconds"), &ClothBody3D::set_return_seconds);
@@ -934,6 +946,7 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bend_compliance", PROPERTY_HINT_RANGE, "0,1,0.0001,or_greater"), "set_bend_compliance", "get_bend_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "crease_compliance", PROPERTY_HINT_RANGE, "-1,1000,0.01,or_greater"), "set_crease_compliance", "get_crease_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slack", PROPERTY_HINT_RANGE, "0,0.2,0.005"), "set_slack", "get_slack");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hold", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hold", "get_hold");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dihedral_bends"), "set_dihedral_bends", "is_dihedral_bends");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "linear_damping", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_linear_damping", "get_linear_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_friction", "get_friction");
@@ -945,6 +958,7 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drive_stiffness", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater"), "set_drive_stiffness", "get_drive_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drive_damping", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater"), "set_drive_damping", "get_drive_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "return_stiffness", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater"), "set_return_stiffness", "get_return_stiffness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "travel_stiffness", PROPERTY_HINT_RANGE, "-1,500,0.1,or_greater"), "set_travel_stiffness", "get_travel_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "return_delay", PROPERTY_HINT_RANGE, "0,10,0.05,suffix:s"), "set_return_delay", "get_return_delay");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "return_seconds", PROPERTY_HINT_RANGE, "0.05,10,0.05,suffix:s"), "set_return_seconds", "get_return_seconds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_distance_scale", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_max_distance_scale", "get_max_distance_scale");

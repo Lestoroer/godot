@@ -43,10 +43,8 @@ class ClothMesh : public Resource {
 	PackedInt32Array triangles;
 	PackedFloat32Array pin_weights;
 	PackedFloat32Array max_distances;
-	// How firmly a hold keeps each particle at its pose, from 0 to 1, and how firmly each pose holds:
-	// the cuff of a tied curtain keeps the fabric in it, a released curtain hangs free.
+	// How firmly a holder keeps each particle at its pose, from 0 to 1, like the cuff of a tied curtain.
 	PackedFloat32Array hold_weights;
-	PackedFloat32Array pose_holds;
 	TypedArray<PackedVector3Array> poses;
 	Ref<ArrayMesh> render_mesh;
 
@@ -57,8 +55,6 @@ class ClothMesh : public Resource {
 	mutable bool frames_ready = false;
 
 	void _prepare_frames() const;
-	// The two poses around a pose position and the weight of the second one.
-	void _pose_span(float p_position, int &r_from, int &r_to, float &r_weight) const;
 
 protected:
 	static void _bind_methods();
@@ -77,10 +73,7 @@ public:
 
 	void set_hold_weights(const PackedFloat32Array &p_weights) { hold_weights = p_weights; }
 	PackedFloat32Array get_hold_weights() const { return hold_weights; }
-	void set_pose_holds(const PackedFloat32Array &p_holds) { pose_holds = p_holds; }
-	PackedFloat32Array get_pose_holds() const { return pose_holds; }
-	// How firmly the poses hold at a pose position; zero when no pose holds.
-	float sample_hold(float p_position) const;
+	bool has_holds() const;
 
 	void set_poses(const TypedArray<PackedVector3Array> &p_poses);
 	TypedArray<PackedVector3Array> get_poses() const { return poses; }

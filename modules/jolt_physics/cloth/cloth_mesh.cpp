@@ -104,8 +104,6 @@ void ClothMesh::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_poses"), &ClothMesh::get_poses);
 	ClassDB::bind_method(D_METHOD("set_hold_weights", "weights"), &ClothMesh::set_hold_weights);
 	ClassDB::bind_method(D_METHOD("get_hold_weights"), &ClothMesh::get_hold_weights);
-	ClassDB::bind_method(D_METHOD("set_pose_holds", "holds"), &ClothMesh::set_pose_holds);
-	ClassDB::bind_method(D_METHOD("get_pose_holds"), &ClothMesh::get_pose_holds);
 	ClassDB::bind_method(D_METHOD("set_render_mesh", "mesh"), &ClothMesh::set_render_mesh);
 	ClassDB::bind_method(D_METHOD("get_render_mesh"), &ClothMesh::get_render_mesh);
 	ClassDB::bind_method(D_METHOD("get_particle_count"), &ClothMesh::get_particle_count);
@@ -116,7 +114,6 @@ void ClothMesh::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "pin_weights", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), "set_pin_weights", "get_pin_weights");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "max_distances", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), "set_max_distances", "get_max_distances");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "hold_weights", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), "set_hold_weights", "get_hold_weights");
-	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "pose_holds", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), "set_pose_holds", "get_pose_holds");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "poses", PROPERTY_HINT_ARRAY_TYPE, "PackedVector3Array", PROPERTY_USAGE_NO_EDITOR), "set_poses", "get_poses");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "render_mesh", PROPERTY_HINT_RESOURCE_TYPE, "ArrayMesh"), "set_render_mesh", "get_render_mesh");
 }
@@ -144,31 +141,21 @@ int ClothMesh::get_particle_count() const {
 	return poses.is_empty() ? 0 : PackedVector3Array(poses[0]).size();
 }
 
-void ClothMesh::_pose_span(float p_position, int &r_from, int &r_to, float &r_weight) const {
-	const float position = CLAMP(p_position, 0.0f, float(poses.size() - 1));
-	r_from = MIN(int(Math::floor(position)), poses.size() - 1);
-	r_to = MIN(r_from + 1, poses.size() - 1);
-	r_weight = position - float(r_from);
-}
-
-float ClothMesh::sample_hold(float p_position) const {
-	if (pose_holds.is_empty() || poses.is_empty()) {
-		return 0.0f;
+bool ClothMesh::has_holds() const {
+	for (float weight : hold_weights) {
+		if (weight > 0.0f) {
+			return true;
+		}
 	}
-	ERR_FAIL_COND_V_MSG(pose_holds.size() != poses.size(), 0.0f, "Cloth pose holds must match the pose count.");
-	int from = 0;
-	int to = 0;
-	float weight = 0.0f;
-	_pose_span(p_position, from, to, weight);
-	return Math::lerp(pose_holds[from], pose_holds[to], weight);
+	return false;
 }
 
 void ClothMesh::sample_pose(float p_position, LocalVector<Vector3> &r_positions) const {
 	ERR_FAIL_COND(poses.is_empty());
-	int from = 0;
-	int to = 0;
-	float weight = 0.0f;
-	_pose_span(p_position, from, to, weight);
+	const float position = CLAMP(p_position, 0.0f, float(poses.size() - 1));
+	const int from = MIN(int(Math::floor(position)), poses.size() - 1);
+	const int to = MIN(from + 1, poses.size() - 1);
+	const float weight = position - float(from);
 
 	const PackedVector3Array from_positions = poses[from];
 	const PackedVector3Array to_positions = poses[to];
