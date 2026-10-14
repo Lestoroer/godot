@@ -63,8 +63,8 @@ constexpr float PUSH_SPEED_LIMIT = 0.8f;
 // a hold eases in or out, the allowed distance goes from a meter to this.
 constexpr float HOLD_REACH = 0.01f;
 constexpr float HOLD_EASE_REACH = 1.0f;
-// Spreading fabric keeps its rest shape updating until every edge grows to within this fraction of its pose
-// length: smaller differences at rest do not keep it reshaping every step.
+// Fabric does not push itself apart: an edge compressed by more than this fraction rests at its current
+// length until the fabric spreads to its pose.
 constexpr float REST_COMPRESSION_FREE = 0.02f;
 // A particle allowed to leave its pose by less than this follows the pose exactly: next to pins it
 // barely moves anyway, and as a free particle it fights the pins and the bends and never sleeps.
@@ -246,10 +246,6 @@ bool JoltCloth3D::_reshape_rest() {
 		// Skinning starts from the bind position, so the inverse bind moves with it.
 		shared_settings->mInvBindMatrices[i].mInvBind = JPH::Mat44::sTranslation(-position);
 	}
-	previous_rest_lengths.resize(shared_settings->mEdgeConstraints.size());
-	for (uint32_t i = 0; i < previous_rest_lengths.size(); i++) {
-		previous_rest_lengths[i] = shared_settings->mEdgeConstraints[i].mRestLength;
-	}
 	shared_settings->CalculateEdgeLengths();
 	_apply_slack(*shared_settings);
 	const bool spreading = _limit_edges_to_current(*shared_settings);
@@ -260,19 +256,18 @@ bool JoltCloth3D::_reshape_rest() {
 }
 
 // When the pose spreads gathered fabric, like a curtain released from its cuff, its edges would rest longer
-// than they are and push their neighbours apart: the fabric buckles into ripples. Such an edge grows from its
-// previous rest length no faster than the fabric spreads: the drive spreads the fabric, and the edge follows
-// it to its pose length. It never rests shorter than before, so the fabric does not collapse into itself.
-bool JoltCloth3D::_limit_edges_to_current(JPH::SoftBodySharedSettings &p_shared) {
+// than they are and push their neighbours apart: the fabric buckles into ripples. Such an edge rests at its
+// current length instead; the drive spreads the fabric, and the edge grows to its pose length as it follows.
+bool JoltCloth3D::_limit_edges_to_current(JPH::SoftBodySharedSettings &p_shared) const {
 	const JPH::SoftBodyMotionProperties *motion = static_cast<const JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
 	const JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
 	bool limited = false;
-	for (uint32_t i = 0; i < p_shared.mEdgeConstraints.size(); i++) {
-		JPH::SoftBodySharedSettings::Edge &edge = p_shared.mEdgeConstraints[i];
-		const float pose = edge.mRestLength;
+	for (JPH::SoftBodySharedSettings::Edge &edge : p_shared.mEdgeConstraints) {
 		const float current = (vertices[edge.mVertex[0]].mPosition - vertices[edge.mVertex[1]].mPosition).Length();
-		edge.mRestLength = MIN(pose, MAX(previous_rest_lengths[i], current));
-		limited = limited || edge.mRestLength < pose * (1.0f - REST_COMPRESSION_FREE);
+		if (current < edge.mRestLength * (1.0f - REST_COMPRESSION_FREE)) {
+			edge.mRestLength = current;
+			limited = true;
+		}
 	}
 	return limited;
 }
