@@ -3278,7 +3278,8 @@ void fragment_shader(in SceneData scene_data) {
 	if (surface_cache_transmission > 0.0 && bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
 		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 		ivec2 pixel = ivec2(gl_FragCoord.xy);
-		if (all(lessThan(pixel, textureSize(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), 0))) && all(equal(texelFetch(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), pixel, 0).xy, uvec2(cache_surface, uint(gl_PrimitiveID) + 1u)))) {
+		// Fork(Lestoroer): glass_primary holds the global triangle + 1 of the resolved glass surface.
+		if (cache_surface != 0u && all(lessThan(pixel, textureSize(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), 0))) && texelFetch(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), pixel, 0).x == surface_cache_surfaces.data[cache_surface - 1u].material.x + uint(gl_PrimitiveID) + 1u) {
 			vec4 transmitted = texelFetch(sampler2D(surface_cache_glass, SAMPLER_NEAREST_CLAMP), pixel, 0);
 			if (transmitted.a > 0.0) {
 #ifdef USE_MULTIVIEW

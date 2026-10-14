@@ -1384,7 +1384,7 @@ public:
 		RID blas;
 	};
 
-	Error blas_build(RID p_blas);
+	Error blas_build(RID p_blas, bool p_keep_build_memory = true); // Fork(Lestoroer): build memory flag.
 	Error tlas_build(RID p_tlas, Span<AccelerationStructureInstance> p_instances);
 
 private:

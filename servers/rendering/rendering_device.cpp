@@ -443,7 +443,7 @@ RID RenderingDevice::tlas_create(uint32_t p_max_instance_count, BitField<Acceler
 	return id;
 }
 
-Error RenderingDevice::blas_build(RID p_blas) {
+Error RenderingDevice::blas_build(RID p_blas, bool p_keep_build_memory) {
 	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
 
 	ERR_FAIL_COND_V_MSG(draw_list.active, ERR_INVALID_PARAMETER, "Building BLAS is forbidden during creation of a draw list.");
@@ -457,6 +457,16 @@ Error RenderingDevice::blas_build(RID p_blas) {
 	ERR_FAIL_COND_V(err != OK, err);
 
 	draw_graph.add_blas_build(blas->driver_id, blas->scratch_buffer, blas->draw_tracker, blas->draw_trackers);
+
+	// Fork(Lestoroer): a BLAS that is not rebuilt does not need its scratch after the build. It is
+	// disposed of after the frame's commands; a later build creates a new one.
+	if (!p_keep_build_memory) {
+		Buffer to_dispose = Buffer();
+		to_dispose.driver_id = blas->scratch_buffer;
+		to_dispose.size = driver->acceleration_structure_get_scratch_size_bytes(blas->driver_id);
+		frames[frame].buffers_to_dispose_of.push_back(to_dispose);
+		blas->scratch_buffer = RDD::BufferID();
+	}
 
 	blas->invalidated = false;
 	_blas_remove_tlas_dependencies(blas, p_blas);
@@ -9166,7 +9176,7 @@ void RenderingDevice::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("blas_create", "geometries", "flags"), &RenderingDevice::_blas_create);
 	ClassDB::bind_method(D_METHOD("tlas_create", "max_instance_count", "flags"), &RenderingDevice::tlas_create);
-	ClassDB::bind_method(D_METHOD("blas_build", "blas"), &RenderingDevice::blas_build);
+	ClassDB::bind_method(D_METHOD("blas_build", "blas", "keep_build_memory"), &RenderingDevice::blas_build, DEFVAL(true)); // Fork(Lestoroer)
 	ClassDB::bind_method(D_METHOD("tlas_build", "tlas", "instances"), &RenderingDevice::_tlas_build);
 
 	ClassDB::bind_method(D_METHOD("hit_sbt_create", "raytracing_pipeline", "initial_hit_group_capacity"), &RenderingDevice::hit_sbt_create);
