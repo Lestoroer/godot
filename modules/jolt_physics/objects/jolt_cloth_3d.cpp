@@ -196,7 +196,9 @@ JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 	const JPH::SoftBodySharedSettings::ELRAType lra = has_pins ? JPH::SoftBodySharedSettings::ELRAType::EuclideanDistance : JPH::SoftBodySharedSettings::ELRAType::None;
 	const JPH::SoftBodySharedSettings::VertexAttributes attributes(setup.stretch_compliance, setup.shear_compliance, setup.bend_compliance, lra, LRA_SLACK);
 	shared->CreateConstraints(&attributes, 1, setup.dihedral_bends ? JPH::SoftBodySharedSettings::EBendType::Dihedral : JPH::SoftBodySharedSettings::EBendType::Distance);
-	_shear_cell_diagonals(*shared);
+	if (setup.shear_across_folds) {
+		_shear_cell_diagonals(*shared);
+	}
 	_apply_crease_compliance(*shared);
 
 	if (setup.follow_targets) {
@@ -223,6 +225,8 @@ JPH::SoftBodySharedSettings *JoltCloth3D::_create_shared_settings() const {
 // cell for a shear edge only where the cell is nearly flat; across the folds of a curtain the diagonals would
 // be as stiff as the threads, the fabric could not shear, and a pull would stretch it like rubber instead.
 // Here every cell diagonal, the longest edge of both its triangles, shears, and so does the other diagonal.
+// In a bent cell both diagonals also hold its bend: fabric with soft shear bends anyway, but nearly rigid
+// shear would keep the cell from bending, so cloth turns this on with its shear soft.
 void JoltCloth3D::_shear_cell_diagonals(JPH::SoftBodySharedSettings &p_shared) const {
 	const auto edge_key = [](uint32_t p_a, uint32_t p_b) {
 		return (uint64_t(MIN(p_a, p_b)) << 32) | uint64_t(MAX(p_a, p_b));

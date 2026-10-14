@@ -57,6 +57,7 @@ class ClothBody3D : public GeometryInstance3D {
 	float bend_compliance = 0.01f;
 	float crease_compliance = -1.0f;
 	bool dihedral_bends = true;
+	bool shear_across_folds = false;
 	float linear_damping = 0.3f;
 	float friction = 0.5f;
 	float gravity_scale = 1.0f;
@@ -178,6 +179,8 @@ public:
 	float get_hold() const { return hold; }
 	void set_dihedral_bends(bool p_dihedral);
 	bool is_dihedral_bends() const { return dihedral_bends; }
+	void set_shear_across_folds(bool p_shear);
+	bool is_shear_across_folds() const { return shear_across_folds; }
 	void set_linear_damping(float p_damping);
 	float get_linear_damping() const { return linear_damping; }
 	void set_friction(float p_friction);

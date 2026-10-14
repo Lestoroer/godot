@@ -61,6 +61,8 @@ public:
 		float bend_compliance = 0.0001f;
 		// Dihedral bends keep hanging folds crisp; distance bends cost several times less.
 		bool dihedral_bends = true;
+		// Every cell of a grid shears with both its diagonals, also across folds; see _shear_cell_diagonals.
+		bool shear_across_folds = false;
 		// Compliance of bends folded in the pose by a crease angle or more; negative: as other bends.
 		float crease_compliance = -1.0f;
 		float backstop_distance = -1.0f;

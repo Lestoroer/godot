@@ -174,6 +174,7 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	setup.backstop_radius = backstop_radius;
 	setup.follow_targets = follow_pose;
 	setup.dihedral_bends = dihedral_bends;
+	setup.shear_across_folds = shear_across_folds;
 	setup.crease_compliance = crease_compliance;
 
 	cloth = memnew(JoltCloth3D);
@@ -715,6 +716,7 @@ void ClothBody3D::set_hold(float p_hold) {
 CLOTH_REBUILD_SETTER(backstop_distance, float)
 CLOTH_REBUILD_SETTER(backstop_radius, float)
 CLOTH_REBUILD_SETTER(dihedral_bends, bool)
+CLOTH_REBUILD_SETTER(shear_across_folds, bool)
 CLOTH_MOTION_SETTER(linear_damping, float)
 CLOTH_MOTION_SETTER(friction, float)
 CLOTH_MOTION_SETTER(gravity_scale, float)
@@ -890,6 +892,8 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_hold"), &ClothBody3D::get_hold);
 	ClassDB::bind_method(D_METHOD("set_dihedral_bends", "dihedral"), &ClothBody3D::set_dihedral_bends);
 	ClassDB::bind_method(D_METHOD("is_dihedral_bends"), &ClothBody3D::is_dihedral_bends);
+	ClassDB::bind_method(D_METHOD("set_shear_across_folds", "shear"), &ClothBody3D::set_shear_across_folds);
+	ClassDB::bind_method(D_METHOD("is_shear_across_folds"), &ClothBody3D::is_shear_across_folds);
 	ClassDB::bind_method(D_METHOD("set_linear_damping", "damping"), &ClothBody3D::set_linear_damping);
 	ClassDB::bind_method(D_METHOD("get_linear_damping"), &ClothBody3D::get_linear_damping);
 	ClassDB::bind_method(D_METHOD("set_friction", "friction"), &ClothBody3D::set_friction);
@@ -952,6 +956,7 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "crease_compliance", PROPERTY_HINT_RANGE, "-1,1000,0.01,or_greater"), "set_crease_compliance", "get_crease_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hold", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hold", "get_hold");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dihedral_bends"), "set_dihedral_bends", "is_dihedral_bends");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shear_across_folds"), "set_shear_across_folds", "is_shear_across_folds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "linear_damping", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_linear_damping", "get_linear_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_friction", "get_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gravity_scale", PROPERTY_HINT_RANGE, "-2,2,0.01"), "set_gravity_scale", "get_gravity_scale");
