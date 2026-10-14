@@ -326,7 +326,7 @@ public:
 
 	// Fork(Lestoroer): capture is explicit and supported only by Forward+.
 	virtual void surface_cache_set_context(const Vector<RID> &p_buffers, const Callable &p_view_callback) {}
-	virtual void surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side) { ERR_FAIL_MSG("Surface Cache capture requires Forward+."); }
+	virtual void surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side, int p_layout) { ERR_FAIL_MSG("Surface Cache capture requires Forward+."); }
 	virtual void render_material(const Transform3D &p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) = 0;
 	virtual void render_particle_collider_heightfield(RID p_collider, const Transform3D &p_transform, const PagedArray<RenderGeometryInstance *> &p_instances) = 0;
 

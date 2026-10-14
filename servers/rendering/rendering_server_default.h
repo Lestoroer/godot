@@ -398,7 +398,7 @@ public:
 	FUNC1RC(RSE::BlendShapeMode, mesh_get_blend_shape_mode, RID)
 
 	FUNC4(mesh_surface_update_vertex_region, RID, int, int, const Vector<uint8_t> &)
-	FUNC3(mesh_surface_set_capture_uv, RID, int, const Vector<Vector2> &) // Fork(Lestoroer)
+	FUNC4(mesh_surface_set_capture_uv, RID, int, int, const Vector<Vector2> &) // Fork(Lestoroer)
 	FUNC4(mesh_surface_update_attribute_region, RID, int, int, const Vector<uint8_t> &)
 	FUNC4(mesh_surface_update_skin_region, RID, int, int, const Vector<uint8_t> &)
 	FUNC4(mesh_surface_update_index_region, RID, int, int, const Vector<uint8_t> &)
@@ -977,7 +977,7 @@ public:
 	FUNC2RC(Variant, instance_geometry_get_shader_parameter_default_value, RID, const StringName &)
 	FUNC2SC(instance_geometry_get_shader_parameter_list, RID, List<PropertyInfo> *)
 
-	FUNC5(instance_surface_cache_capture, RID, RID, RID, const Rect2i &, bool) // Fork(Lestoroer)
+	FUNC6(instance_surface_cache_capture, RID, RID, RID, const Rect2i &, bool, int) // Fork(Lestoroer)
 	FUNC2(scenario_set_surface_cache_callback, RID, const Callable &)
 	FUNC2(scenario_set_surface_cache_view_callback, RID, const Callable &)
 	FUNC1R(Array, scenario_surface_cache_poll, RID)

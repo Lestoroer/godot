@@ -1712,7 +1712,7 @@ void RendererSceneCull::instance_geometry_set_shader_parameter(RID p_instance, c
 }
 
 // Fork(Lestoroer): source owns material, transform and instance-uniform state.
-void RendererSceneCull::instance_surface_cache_capture(RID p_instance, RID p_chart_instance, RID p_framebuffer, const Rect2i &p_region, bool p_back_side) {
+void RendererSceneCull::instance_surface_cache_capture(RID p_instance, RID p_chart_instance, RID p_framebuffer, const Rect2i &p_region, bool p_back_side, int p_layout) {
 	Instance *source = instance_owner.get_or_null(p_instance);
 	Instance *chart = instance_owner.get_or_null(p_chart_instance);
 	ERR_FAIL_NULL(source);
@@ -1724,7 +1724,7 @@ void RendererSceneCull::instance_surface_cache_capture(RID p_instance, RID p_cha
 	InstanceGeometryData *chart_geometry = static_cast<InstanceGeometryData *>(chart->base_data);
 	ERR_FAIL_NULL(source_geometry);
 	ERR_FAIL_NULL(chart_geometry);
-	scene_render->surface_cache_capture(source_geometry->geometry_instance, chart_geometry->geometry_instance, p_framebuffer, p_region, p_back_side);
+	scene_render->surface_cache_capture(source_geometry->geometry_instance, chart_geometry->geometry_instance, p_framebuffer, p_region, p_back_side, p_layout);
 }
 
 Variant RendererSceneCull::instance_geometry_get_shader_parameter(RID p_instance, const StringName &p_parameter) const {

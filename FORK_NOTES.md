@@ -423,14 +423,14 @@ GI работает только на Vulkan с аппаратным ray query �
      порядок треугольников, skin и morph не меняются.
    - `Mesh.surface_cache_prepare(texel_sizes)` — вся подготовка меша за один проход для
      одного размера texel (раскладка материала) или двух (материала и освещения).
-     Поверхности складываются в атлас столбиком с отступом 2 texel. Для каждого размера —
-     свой `ArrayMesh` захвата: вершины повторены по углам треугольников, материалы
-     поверхностей и blend shapes исходного `ArrayMesh`, координаты захвата заданы
-     `mesh_surface_set_capture_uv`. Записи треугольников по 144 байта повторяют
+     Поверхности складываются в атлас столбиком с отступом 2 texel. Один `ArrayMesh` захвата
+     на все размеры (`mesh`): вершины повторены по углам треугольников, материалы
+     поверхностей и blend shapes исходного `ArrayMesh`, координаты захвата каждой раскладки
+     заданы `mesh_surface_set_capture_uv`. Записи треугольников по 144 байта повторяют
      `SurfaceCacheTriangle` из `surface_cache_inc.glsl`: вершины с исходными индексами,
      UV и chart раскладки материала, знак ориентации по нормали, тайл; при втором размере —
-     UV, chart и тайл раскладки освещения. Результат: `layouts` (`size`, `sample_count`,
-     `mesh`, `surfaces` с `offset`, `size`, `tiles`, `charts`, `sample_count`),
+     UV, chart и тайл раскладки освещения. Результат: `mesh`, `layouts` (`size`, `sample_count`,
+     `surfaces` с `offset`, `size`, `tiles`, `charts`, `sample_count`),
      `triangle_data`, `vertex_data` (float3 на угол), а при двух размерах — узлы переноса
      раскладки освещения: `lighting_nodes` (узел каждой ячейки) и `lighting_node_cells` (ячейка-
      представитель каждого узла, узлы пронумерованы по возрастанию представителя). Ячейки
@@ -441,14 +441,16 @@ GI работает только на Vulkan с аппаратным ray query �
      ячеек до каждого слова из 32). Его считает тот же строгий SAT, что захват, теми же точными
      знаками во float (`SurfaceCacheCoverage` в `mesh.cpp`): захват покрывает только ячейки маски,
      и игра хранит только их.
-   - `RenderingServer.mesh_surface_set_capture_uv` задаёт частному capture-мешу отдельный
-     неизменяемый поток координат (в texel) до создания экземпляров.
+   - `RenderingServer.mesh_surface_set_capture_uv(mesh, surface, layout, uv)` задаёт частному
+     capture-мешу неизменяемый поток координат (в texel) раскладки `layout` (0 — материал,
+     1 — освещение) до создания экземпляров. Раскладки делят потоки вершин меша.
    - `RenderingServer.instance_surface_cache_capture(instance, chart_instance, framebuffer,
-     region, back_side)` исполняет на GPU настоящий spatial material исходного экземпляра
-     на геометрии chart-экземпляра. Transform, overrides, instance uniforms и поза
-     skin/morph берутся у исходного. Результат остаётся в framebuffer вызывающего: пять
-     targets — albedo/alpha, нормаль RGBA16F (alpha — доля пропускания), AO/roughness/
-     metallic/specular, emission, канонические barycentrics и primitive ID.
+     region, back_side, layout)` исполняет на GPU настоящий spatial material исходного
+     экземпляра на геометрии chart-экземпляра с координатами раскладки `layout`. Transform,
+     overrides, instance uniforms и поза skin/morph берутся у исходного. Результат остаётся
+     в framebuffer вызывающего: пять targets — albedo/alpha, нормаль RGBA16F (alpha — доля
+     пропускания), AO/roughness/metallic/specular, emission, канонические barycentrics и
+     primitive ID.
    - Каждый исходный примитив получает свой домен. Перекрытие с texel определяется строгим
      SAT до float-клиппинга; контакты нулевой площади отбрасываются. Фрагмент вычисляется
      в центре площади пересечения, smooth varyings интерполируются аналитически. Сначала
