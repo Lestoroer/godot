@@ -62,12 +62,12 @@ constexpr real_t POSE_SPEED_LIMIT = 3.0;
 // something the pose goes into; a slow swing back to the pose is not cut short. Free cloth moved less than
 // REST_DRIFT_FREE, or on average less than REST_DRIFT_MEAN_FREE: a few particles caught between the
 // floor and another garment may keep trembling. Posed cloth that moved less than REST_DRIFT_POSED for
-// REST_STUCK_SECONDS rests away from its pose, on something the pose goes into: a swing moves farther
-// in that time. Cloth that was not touched for REST_TIMEOUT_SECONDS falls asleep anyway, like a cover
+// REST_STUCK_SECONDS rests away from its pose, on something the pose goes into or sagging on its slack:
+// a visible swing moves farther in that time. Cloth that was not touched for REST_TIMEOUT_SECONDS falls asleep anyway, like a cover
 // pressed between a folded towel and the mattress.
 constexpr float REST_WINDOW_SECONDS = 0.25f;
 constexpr float REST_QUIET_SECONDS = 0.5f;
-constexpr float REST_STUCK_SECONDS = 1.5f;
+constexpr float REST_STUCK_SECONDS = 0.75f;
 constexpr float REST_TIMEOUT_SECONDS = 12.0f;
 constexpr real_t REST_DRIFT_POSED = 0.003;
 constexpr real_t REST_POSE_DISTANCE = 0.03;
