@@ -235,6 +235,7 @@ private:
 		bool force_wireframe = false;
 		Vector2 uv_offset;
 		RenderGeometryInstanceBase *capture_geometry = nullptr; // Fork(Lestoroer): vertex/index streams only.
+		uint32_t capture_layout = 0; // Fork(Lestoroer): chart stream of capture_geometry.
 		float lod_distance_multiplier = 0.0;
 		float screen_mesh_lod_threshold = 0.0;
 		RD::FramebufferFormatID framebuffer_format = 0;
@@ -817,7 +818,7 @@ protected:
 	// Fork(Lestoroer): surface_cache texture with this viewport's diffuse gather, named by the view callback.
 	StringName surface_cache_gather_texture = SNAME("gather");
 	void surface_cache_set_context(const Vector<RID> &p_buffers, const Callable &p_view_callback) override { surface_cache_buffers = p_buffers; surface_cache_view_callback = p_view_callback; }
-	void surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side) override; // Fork(Lestoroer)
+	void surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side, int p_layout) override; // Fork(Lestoroer)
 	virtual void _render_uv2(const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) override;
 	virtual void _render_sdfgi(Ref<RenderSceneBuffersRD> p_render_buffers, const Vector3i &p_from, const Vector3i &p_size, const AABB &p_bounds, const PagedArray<RenderGeometryInstance *> &p_instances, const RID &p_albedo_texture, const RID &p_emission_texture, const RID &p_emission_aniso_texture, const RID &p_geom_facing_texture, float p_exposure_normalization) override;
 	virtual void _render_particle_collider_heightfield(RID p_fb, const Transform3D &p_cam_transform, const Projection &p_cam_projection, const PagedArray<RenderGeometryInstance *> &p_instances) override;

@@ -350,7 +350,7 @@ public:
 	virtual void instance_set_surface_cache_ids(RID p_instance, const Vector<int32_t> &p_ids) = 0;
 	virtual Array scenario_surface_cache_poll(RID p_scenario) = 0;
 	virtual Dictionary instance_get_deformed_surface(RID p_instance, int p_surface) const = 0;
-	virtual void instance_surface_cache_capture(RID p_instance, RID p_chart_instance, RID p_framebuffer, const Rect2i &p_region, bool p_back_side) = 0; // Fork(Lestoroer)
+	virtual void instance_surface_cache_capture(RID p_instance, RID p_chart_instance, RID p_framebuffer, const Rect2i &p_region, bool p_back_side, int p_layout) = 0; // Fork(Lestoroer)
 	virtual TypedArray<Image> bake_render_uv2(RID p_base, const TypedArray<RID> &p_material_overrides, const Size2i &p_image_size) = 0;
 	virtual PackedByteArray bake_render_area_light_atlas(const TypedArray<RID> &p_area_light_textures, const TypedArray<Rect2> &p_area_light_atlas_texture_rects, const Size2i &p_size, int p_mipmaps) = 0;
 

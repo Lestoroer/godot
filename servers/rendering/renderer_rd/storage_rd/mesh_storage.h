@@ -43,6 +43,9 @@ namespace RendererRD {
 
 class MeshStorage : public RendererMeshStorage {
 public:
+	// Fork(Lestoroer): Surface Cache layouts of one capture mesh: material and lighting.
+	static constexpr uint32_t SURFACE_CACHE_CAPTURE_LAYOUTS = 2;
+
 	enum DefaultRDBuffer {
 		DEFAULT_RD_BUFFER_VERTEX,
 		DEFAULT_RD_BUFFER_NORMAL,
@@ -84,7 +87,7 @@ private:
 			RID vertex_buffer;
 			uint32_t vertex_buffer_size = 0;
 
-			RID capture_uv_buffer; // Fork(Lestoroer): immutable private chart stream.
+			RID capture_uv_buffers[SURFACE_CACHE_CAPTURE_LAYOUTS]; // Fork(Lestoroer): immutable private chart stream per layout.
 			RID attribute_buffer;
 			uint32_t attribute_buffer_size = 0;
 
@@ -104,6 +107,7 @@ private:
 				uint32_t previous_buffer = 0;
 				bool input_motion_vectors = false;
 				bool point_size_emulated = false;
+				uint32_t capture_layout = 0; // Fork(Lestoroer): chart stream bound to the capture inputs.
 				RD::VertexFormatID vertex_format = 0;
 				RID vertex_array;
 			};
@@ -214,7 +218,7 @@ private:
 	};
 
 	RD::VertexFormatID _mesh_surface_generate_vertex_format(uint64_t p_surface_format, uint64_t p_input_mask, bool p_instanced_surface, bool p_input_motion_vectors, bool p_point_size_emulated, uint32_t &r_position_stride, bool p_capture_stream); // Fork(Lestoroer): p_capture_stream added.
-	void _mesh_surface_generate_version_for_input_mask(Mesh::Surface::Version &v, Mesh::Surface *s, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, MeshInstance::Surface *mis = nullptr, uint32_t p_current_buffer = 0, uint32_t p_previous_buffer = 0);
+	void _mesh_surface_generate_version_for_input_mask(Mesh::Surface::Version &v, Mesh::Surface *s, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, MeshInstance::Surface *mis = nullptr, uint32_t p_current_buffer = 0, uint32_t p_previous_buffer = 0, uint32_t p_capture_layout = 0); // Fork(Lestoroer): p_capture_layout added.
 	void _mesh_surface_clear(Mesh *p_mesh, int p_surface);
 
 	void _mesh_instance_clear(MeshInstance *mi);
@@ -386,7 +390,7 @@ public:
 	virtual RSE::BlendShapeMode mesh_get_blend_shape_mode(RID p_mesh) const override;
 
 	virtual void mesh_surface_update_vertex_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) override;
-	void mesh_surface_set_capture_uv(RID p_mesh, int p_surface, const Vector<Vector2> &p_uv) override; // Fork(Lestoroer)
+	void mesh_surface_set_capture_uv(RID p_mesh, int p_surface, int p_layout, const Vector<Vector2> &p_uv) override; // Fork(Lestoroer)
 	void mesh_instance_copy_pose(RID p_source, RID p_target); // Fork(Lestoroer)
 	virtual void mesh_surface_update_attribute_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) override;
 	virtual void mesh_surface_update_skin_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) override;
@@ -512,7 +516,8 @@ public:
 		}
 	}
 
-	_FORCE_INLINE_ void mesh_surface_get_vertex_arrays_and_format(void *p_surface, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, RID &r_vertex_array_rd, RD::VertexFormatID &r_vertex_format) {
+	// Fork(Lestoroer): p_capture_layout added.
+	_FORCE_INLINE_ void mesh_surface_get_vertex_arrays_and_format(void *p_surface, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, RID &r_vertex_array_rd, RD::VertexFormatID &r_vertex_format, uint32_t p_capture_layout = 0) {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 
 		s->version_lock.lock();
@@ -520,7 +525,7 @@ public:
 		//there will never be more than, at much, 3 or 4 versions, so iterating is the fastest way
 
 		for (uint32_t i = 0; i < s->version_count; i++) {
-			if (s->versions[i].input_mask != p_input_mask || s->versions[i].input_motion_vectors != p_input_motion_vectors || s->versions[i].point_size_emulated != p_point_size_emulated) {
+			if (s->versions[i].input_mask != p_input_mask || s->versions[i].input_motion_vectors != p_input_motion_vectors || s->versions[i].point_size_emulated != p_point_size_emulated || s->versions[i].capture_layout != p_capture_layout) {
 				// Find the version that matches the inputs required.
 				continue;
 			}
@@ -536,7 +541,7 @@ public:
 		s->version_count++;
 		s->versions = (Mesh::Surface::Version *)memrealloc(s->versions, sizeof(Mesh::Surface::Version) * s->version_count);
 
-		_mesh_surface_generate_version_for_input_mask(s->versions[version], s, p_input_mask, p_input_motion_vectors, p_point_size_emulated);
+		_mesh_surface_generate_version_for_input_mask(s->versions[version], s, p_input_mask, p_input_motion_vectors, p_point_size_emulated, nullptr, 0, 0, p_capture_layout);
 
 		r_vertex_format = s->versions[version].vertex_format;
 		r_vertex_array_rd = s->versions[version].vertex_array;
@@ -544,7 +549,8 @@ public:
 		s->version_lock.unlock();
 	}
 
-	_FORCE_INLINE_ void mesh_instance_surface_get_vertex_arrays_and_format(RID p_mesh_instance, uint64_t p_surface_index, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, RID &r_vertex_array_rd, RD::VertexFormatID &r_vertex_format) {
+	// Fork(Lestoroer): p_capture_layout added.
+	_FORCE_INLINE_ void mesh_instance_surface_get_vertex_arrays_and_format(RID p_mesh_instance, uint64_t p_surface_index, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, RID &r_vertex_array_rd, RD::VertexFormatID &r_vertex_format, uint32_t p_capture_layout = 0) {
 		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
 		ERR_FAIL_NULL(mi);
 		Mesh *mesh = mi->mesh;
@@ -562,7 +568,7 @@ public:
 		//there will never be more than, at much, 3 or 4 versions, so iterating is the fastest way
 
 		for (uint32_t i = 0; i < mis->version_count; i++) {
-			if (mis->versions[i].input_mask != p_input_mask || mis->versions[i].input_motion_vectors != p_input_motion_vectors) {
+			if (mis->versions[i].input_mask != p_input_mask || mis->versions[i].input_motion_vectors != p_input_motion_vectors || mis->versions[i].capture_layout != p_capture_layout) {
 				// Find the version that matches the inputs required.
 				continue;
 			}
@@ -583,7 +589,7 @@ public:
 		mis->version_count++;
 		mis->versions = (Mesh::Surface::Version *)memrealloc(mis->versions, sizeof(Mesh::Surface::Version) * mis->version_count);
 
-		_mesh_surface_generate_version_for_input_mask(mis->versions[version], s, p_input_mask, p_input_motion_vectors, p_point_size_emulated, mis, current_buffer, previous_buffer);
+		_mesh_surface_generate_version_for_input_mask(mis->versions[version], s, p_input_mask, p_input_motion_vectors, p_point_size_emulated, mis, current_buffer, previous_buffer, p_capture_layout);
 
 		r_vertex_format = mis->versions[version].vertex_format;
 		r_vertex_array_rd = mis->versions[version].vertex_array;
@@ -638,7 +644,13 @@ public:
 	_FORCE_INLINE_ RD::VertexFormatID mesh_surface_get_vertex_format(void *p_surface, uint64_t p_input_mask, bool p_instanced_surface, bool p_input_motion_vectors, bool p_point_size_emulated) {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 		uint32_t position_stride = 0;
-		return _mesh_surface_generate_vertex_format(s->format, p_input_mask, p_instanced_surface, p_input_motion_vectors, p_point_size_emulated, position_stride, s->capture_uv_buffer.is_valid()); // Fork(Lestoroer): capture stream flag added.
+		return _mesh_surface_generate_vertex_format(s->format, p_input_mask, p_instanced_surface, p_input_motion_vectors, p_point_size_emulated, position_stride, s->capture_uv_buffers[0].is_valid()); // Fork(Lestoroer): capture stream flag added.
+	}
+
+	// Fork(Lestoroer)
+	_FORCE_INLINE_ bool mesh_surface_has_capture_uv(void *p_surface, uint32_t p_layout) const {
+		const Mesh::Surface *s = reinterpret_cast<const Mesh::Surface *>(p_surface);
+		return p_layout < SURFACE_CACHE_CAPTURE_LAYOUTS && s->capture_uv_buffers[p_layout].is_valid();
 	}
 
 	Dependency *mesh_get_dependency(RID p_mesh) const;

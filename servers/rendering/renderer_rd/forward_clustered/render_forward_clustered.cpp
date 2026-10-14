@@ -530,9 +530,9 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 			uint64_t input_mask = shader->get_vertex_input_mask(pipeline_key.version, pipeline_key.color_pass_flags, pipeline_key.ubershader);
 			RID geometry_mesh_instance = p_params->capture_geometry ? p_params->capture_geometry->mesh_instance : surf->owner->mesh_instance; // Fork(Lestoroer)
 			if (geometry_mesh_instance.is_valid()) {
-				mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(geometry_mesh_instance, surf->surface_index, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
+				mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(geometry_mesh_instance, surf->surface_index, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format, p_params->capture_layout);
 			} else {
-				mesh_storage->mesh_surface_get_vertex_arrays_and_format(mesh_surface, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
+				mesh_storage->mesh_surface_get_vertex_arrays_and_format(mesh_surface, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format, p_params->capture_layout);
 			}
 
 			pipeline_key.vertex_format_id = vertex_format;
@@ -3094,7 +3094,7 @@ void RenderForwardClustered::_render_material(const Transform3D &p_cam_transform
 }
 
 // Fork(Lestoroer): source material is rasterized on chart streams, entirely on GPU.
-void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side) {
+void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side, int p_layout) {
 	ERR_FAIL_NULL(p_source);
 	ERR_FAIL_NULL(p_chart);
 	ERR_FAIL_COND(p_region.size.x <= 0 || p_region.size.y <= 0);
@@ -3102,6 +3102,9 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	RenderGeometryInstanceBase *chart = static_cast<RenderGeometryInstanceBase *>(p_chart);
 	ERR_FAIL_COND(RSG::mesh_storage->mesh_get_surface_count(source->data->base) != RSG::mesh_storage->mesh_get_surface_count(chart->data->base));
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+	for (uint32_t surface = 0; surface < uint32_t(RSG::mesh_storage->mesh_get_surface_count(chart->data->base)); surface++) {
+		ERR_FAIL_COND_MSG(!mesh_storage->mesh_surface_has_capture_uv(mesh_storage->mesh_get_surface(chart->data->base, surface), p_layout), "Surface Cache capture mesh has no chart stream for this layout.");
+	}
 	if (chart->mesh_instance.is_valid()) {
 		mesh_storage->mesh_instance_copy_pose(source->mesh_instance, chart->mesh_instance);
 		mesh_storage->mesh_instance_check_for_update(chart->mesh_instance);
@@ -3139,6 +3142,7 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SECONDARY, nullptr, RID(), RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default(), uniform_buffer_index);
 	RenderListParameters params(render_list[RENDER_LIST_SECONDARY].elements.ptr(), render_list[RENDER_LIST_SECONDARY].element_info.ptr(), render_list[RENDER_LIST_SECONDARY].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
 	params.capture_geometry = chart;
+	params.capture_layout = p_layout;
 	Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
 	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, capture_pass == 0 ? RD::DRAW_CLEAR_ALL : RD::DRAW_DEFAULT_ALL, clear, 0.0f, 0, p_region);
 	// Fork(Lestoroer): vertex shader expands triangle coverage; material samples

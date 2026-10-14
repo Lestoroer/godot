@@ -2415,18 +2415,14 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 		}
 	}
 
-	Vector<Ref<ArrayMesh>> meshes;
-	meshes.resize(layout_count);
-	for (int layout_index = 0; layout_index < layout_count; layout_index++) {
-		Ref<ArrayMesh> mesh;
-		mesh.instantiate();
-		if (array_mesh) {
-			for (int shape = 0; shape < array_mesh->get_blend_shape_count(); shape++) {
-				mesh->add_blend_shape(array_mesh->get_blend_shape_name(shape));
-			}
-			mesh->set_blend_shape_mode(array_mesh->get_blend_shape_mode());
+	// One capture mesh for all layouts: a capture binds the chart stream of its layout.
+	Ref<ArrayMesh> capture_mesh;
+	capture_mesh.instantiate();
+	if (array_mesh) {
+		for (int shape = 0; shape < array_mesh->get_blend_shape_count(); shape++) {
+			capture_mesh->add_blend_shape(array_mesh->get_blend_shape_name(shape));
 		}
-		meshes.write[layout_index] = mesh;
+		capture_mesh->set_blend_shape_mode(array_mesh->get_blend_shape_mode());
 	}
 
 	// Lighting cells of a triangle smaller than a lighting texel (a 1x1 tile) join a cluster with
@@ -2496,6 +2492,8 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 			}
 			flags = uint64_t(surface_get_format(surface)) & ~uint64_t(ARRAY_FLAG_COMPRESS_ATTRIBUTES);
 		}
+		capture_mesh->add_surface_from_arrays(PRIMITIVE_TRIANGLES, remapped, shapes, Dictionary(), flags);
+		capture_mesh->surface_set_material(surface, surface_get_material(surface));
 
 		// Chart coordinates per corner: capture pixels for the GPU capture, atlas UV for rays.
 		Vector<Vector<Vector2>> primitive_uv;
@@ -2517,10 +2515,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 				corner_uv.write[corner] = (uv[chart_indices[corner]] * chart_size + offset) / atlas;
 				capture_pixels.write[corner] = pixels[chart_indices[corner]] + offset;
 			}
-			Ref<ArrayMesh> mesh = meshes[layout_index];
-			mesh->add_surface_from_arrays(PRIMITIVE_TRIANGLES, remapped, shapes, Dictionary(), flags);
-			mesh->surface_set_material(surface, surface_get_material(surface));
-			RS::get_singleton()->mesh_surface_set_capture_uv(mesh->get_rid(), surface, capture_pixels);
+			RS::get_singleton()->mesh_surface_set_capture_uv(capture_mesh->get_rid(), surface, layout_index, capture_pixels);
 			primitive_uv.write[layout_index] = corner_uv;
 			if (layout_index == 0) {
 				material_pixels = capture_pixels;
@@ -2658,7 +2653,6 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 		Dictionary layout;
 		layout["size"] = Vector2i(layouts[layout_index].size);
 		layout["sample_count"] = layouts[layout_index].sample_count;
-		layout["mesh"] = meshes[layout_index];
 		layout["surfaces"] = surfaces;
 		result_layouts.push_back(layout);
 	}
@@ -2674,6 +2668,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 
 	Dictionary result;
 	result["layouts"] = result_layouts;
+	result["mesh"] = capture_mesh;
 	result["material_coverage"] = material_coverage;
 	result["material_coverage_ranks"] = material_coverage_ranks;
 	result["triangle_data"] = triangle_data;

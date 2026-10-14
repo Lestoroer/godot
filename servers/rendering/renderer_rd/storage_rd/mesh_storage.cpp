@@ -521,8 +521,10 @@ void MeshStorage::_mesh_surface_clear(Mesh *p_mesh, int p_surface) {
 	if (s.vertex_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(s.vertex_buffer); // Clears arrays as dependency automatically, including all versions.
 	}
-	if (s.capture_uv_buffer.is_valid()) { // Fork(Lestoroer)
-		RD::get_singleton()->free_rid(s.capture_uv_buffer);
+	for (RID &capture_uv_buffer : s.capture_uv_buffers) { // Fork(Lestoroer)
+		if (capture_uv_buffer.is_valid()) {
+			RD::get_singleton()->free_rid(capture_uv_buffer);
+		}
 	}
 	if (s.attribute_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(s.attribute_buffer);
@@ -573,13 +575,15 @@ RSE::BlendShapeMode MeshStorage::mesh_get_blend_shape_mode(RID p_mesh) const {
 }
 
 // Fork(Lestoroer): immutable chart data is assigned before this private mesh gets VAOs or instances.
-void MeshStorage::mesh_surface_set_capture_uv(RID p_mesh, int p_surface, const Vector<Vector2> &p_uv) {
+// Layouts share the vertex streams; a capture binds the chart stream of its layout.
+void MeshStorage::mesh_surface_set_capture_uv(RID p_mesh, int p_surface, int p_layout, const Vector<Vector2> &p_uv) {
 	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL(mesh);
 	ERR_FAIL_UNSIGNED_INDEX((uint32_t)p_surface, mesh->surface_count);
+	ERR_FAIL_UNSIGNED_INDEX((uint32_t)p_layout, SURFACE_CACHE_CAPTURE_LAYOUTS);
 	Mesh::Surface *surface = mesh->surfaces[p_surface];
 	ERR_FAIL_COND(p_uv.size() != surface->vertex_count);
-	ERR_FAIL_COND(surface->capture_uv_buffer.is_valid());
+	ERR_FAIL_COND(surface->capture_uv_buffers[p_layout].is_valid());
 	ERR_FAIL_COND(surface->version_count != 0 || !mesh->instances.is_empty());
 	Vector<uint8_t> bytes;
 	ERR_FAIL_COND(p_uv.size() % 3 != 0);
@@ -592,7 +596,7 @@ void MeshStorage::mesh_surface_set_capture_uv(RID p_mesh, int p_surface, const V
 			uv[i * 6 + corner * 2 + 1] = point.y;
 		}
 	}
-	surface->capture_uv_buffer = RD::get_singleton()->vertex_buffer_create(bytes.size(), bytes);
+	surface->capture_uv_buffers[p_layout] = RD::get_singleton()->vertex_buffer_create(bytes.size(), bytes);
 }
 
 // Fork(Lestoroer): same skeleton and morph state on a remapped mesh.
@@ -1552,9 +1556,9 @@ RD::VertexFormatID MeshStorage::_mesh_surface_generate_vertex_format(uint64_t p_
 	return RD::get_singleton()->vertex_format_create(attributes);
 }
 
-void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::Version &v, Mesh::Surface *s, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, MeshInstance::Surface *mis, uint32_t p_current_buffer, uint32_t p_previous_buffer) {
+void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::Version &v, Mesh::Surface *s, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, MeshInstance::Surface *mis, uint32_t p_current_buffer, uint32_t p_previous_buffer, uint32_t p_capture_layout) {
 	uint32_t position_stride = 0;
-	v.vertex_format = _mesh_surface_generate_vertex_format(s->format, p_input_mask, mis != nullptr, p_input_motion_vectors, p_point_size_emulated, position_stride, s->capture_uv_buffer.is_valid()); // Fork(Lestoroer): capture stream flag added.
+	v.vertex_format = _mesh_surface_generate_vertex_format(s->format, p_input_mask, mis != nullptr, p_input_motion_vectors, p_point_size_emulated, position_stride, s->capture_uv_buffers[0].is_valid()); // Fork(Lestoroer): capture stream flag added.
 
 	Vector<RID> buffers;
 	Vector<uint64_t> offsets;
@@ -1614,9 +1618,10 @@ void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::V
 		}
 	}
 
+	const RID capture_uv_buffer = p_capture_layout < SURFACE_CACHE_CAPTURE_LAYOUTS ? s->capture_uv_buffers[p_capture_layout] : RID(); // Fork(Lestoroer)
 	for (int location = 15; location <= 16; location++) { // Fork(Lestoroer)
 		if (p_input_mask & (1ULL << location)) {
-			buffers.push_back(s->capture_uv_buffer.is_valid() ? s->capture_uv_buffer : mesh_default_rd_buffers[RSE::ARRAY_COLOR]);
+			buffers.push_back(capture_uv_buffer.is_valid() ? capture_uv_buffer : mesh_default_rd_buffers[RSE::ARRAY_COLOR]);
 			offsets.push_back(0);
 		}
 	}
@@ -1625,6 +1630,7 @@ void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::V
 	v.previous_buffer = p_previous_buffer;
 	v.input_motion_vectors = p_input_motion_vectors;
 	v.point_size_emulated = p_point_size_emulated;
+	v.capture_layout = p_capture_layout; // Fork(Lestoroer)
 	v.vertex_array = RD::get_singleton()->vertex_array_create(p_point_size_emulated ? 0 : s->vertex_count, v.vertex_format, buffers, offsets);
 }
 
