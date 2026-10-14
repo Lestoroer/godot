@@ -383,6 +383,16 @@ void JoltCloth3D::_apply_grab(float p_step) {
 	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
 	JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
 	const Vector3 origin = to_godot(jolt_body->GetCenterOfMassPosition());
+	// A few rounds bring the target within reach of every anchor at once.
+	for (int round = 0; round < 3; round++) {
+		for (uint32_t k = 0; k < grip_anchors.size(); k++) {
+			const Vector3 anchor = origin + to_godot(vertices[grip_anchors[k]].mPosition);
+			const Vector3 offset = grab_target - anchor;
+			if (offset.length() > grip_reaches[k]) {
+				grab_target = anchor + offset.normalized() * grip_reaches[k];
+			}
+		}
+	}
 	// An implicit damped spring stays stable at the physics step for any stiffness.
 	const float denominator = 1.0f + GRIP_DAMPING * p_step + GRIP_STIFFNESS * p_step * p_step;
 	for (uint32_t k = 0; k < grip_particles.size(); k++) {
@@ -533,8 +543,39 @@ int JoltCloth3D::grab(const Vector3 &p_world_position) {
 	for (uint32_t particle : grip_particles) {
 		grip_offsets.push_back(positions[particle] - grab_target);
 	}
+	_find_grip_anchors();
 	wake_up();
 	return nearest;
+}
+
+// Fabric does not stretch: the hand takes it no farther than it reaches from its pin and from the fabric a
+// closed holder keeps. A stiffer grip would stretch it like a rubber band, and it would snap back on release.
+void JoltCloth3D::_find_grip_anchors() {
+	if (shared_settings.GetPtr() == nullptr) {
+		return;
+	}
+	for (const JPH::SoftBodySharedSettings::LRA &attachment : shared_settings->mLRAConstraints) {
+		if (attachment.mVertex[1] == uint32_t(grabbed_particle)) {
+			grip_anchors.push_back(attachment.mVertex[0]);
+			grip_reaches.push_back(attachment.mMaxDistance);
+		}
+	}
+	if (hold <= 0.0f || setup.hold_weights.is_empty()) {
+		return;
+	}
+	int held = -1;
+	real_t held_distance = Math::INF;
+	for (uint32_t i = 0; i < setup.hold_weights.size(); i++) {
+		const real_t distance = targets[i].distance_to(targets[grabbed_particle]);
+		if (hold * setup.hold_weights[i] >= 0.5f && distance < held_distance) {
+			held_distance = distance;
+			held = i;
+		}
+	}
+	if (held >= 0) {
+		grip_anchors.push_back(held);
+		grip_reaches.push_back(held_distance);
+	}
 }
 
 void JoltCloth3D::move_grab(const Vector3 &p_world_position) {
@@ -546,6 +587,8 @@ void JoltCloth3D::release_grab() {
 	grabbed_particle = -1;
 	grip_particles.clear();
 	grip_offsets.clear();
+	grip_anchors.clear();
+	grip_reaches.clear();
 }
 
 bool JoltCloth3D::is_active() const {

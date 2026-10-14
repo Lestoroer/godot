@@ -108,6 +108,10 @@ private:
 	int grabbed_particle = -1;
 	LocalVector<uint32_t> grip_particles;
 	LocalVector<Vector3> grip_offsets;
+	// What holds the grabbed fabric, its pin and the fabric in a closed holder, and how far the hand
+	// may take the grabbed particle from each.
+	LocalVector<uint32_t> grip_anchors;
+	LocalVector<float> grip_reaches;
 	Vector3 grab_target;
 	Vector3 grab_requested;
 	bool targets_valid = false;
@@ -126,6 +130,7 @@ private:
 	void _apply_drive(float p_step);
 	void _apply_pushes();
 	void _apply_grab(float p_step);
+	void _find_grip_anchors();
 	void _apply_hold();
 	void _apply_crease_compliance(JPH::SoftBodySharedSettings &p_shared) const;
 	void _apply_slack(JPH::SoftBodySharedSettings &p_shared) const;
