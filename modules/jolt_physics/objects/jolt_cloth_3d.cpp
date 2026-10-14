@@ -40,6 +40,8 @@
 #include "jolt_body_3d.h"
 #include "jolt_group_filter.h"
 
+#include "core/templates/pair.h"
+
 #include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
 #include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
 
@@ -56,6 +58,7 @@ constexpr float GRIP_SPEED = 3.0f;
 constexpr float GRIP_STIFFNESS = 6400.0f;
 constexpr float GRIP_DAMPING = 60.0f;
 constexpr float GRIP_LEASH = 0.08f;
+constexpr uint32_t GRIP_HELD_ANCHORS = 4;
 // Brushing adds to the fabric's motion, but never past this speed along the brush: a flick of the
 // mouse swings the curtain, it does not throw it.
 constexpr float PUSH_SPEED_LIMIT = 0.8f;
@@ -558,18 +561,18 @@ void JoltCloth3D::_find_grip_anchors() {
 	if (hold <= 0.0f || setup.hold_weights.is_empty()) {
 		return;
 	}
-	int held = -1;
-	real_t held_distance = Math::INF;
+	// The holder keeps a ring of fabric: the nearest few held particles, not one, so the hand does not
+	// swing the fabric around a single point and stretch it against the rest of the ring.
+	LocalVector<Pair<real_t, uint32_t>> held;
 	for (uint32_t i = 0; i < setup.hold_weights.size(); i++) {
-		const real_t distance = targets[i].distance_to(targets[grabbed_particle]);
-		if (hold * setup.hold_weights[i] >= 0.5f && distance < held_distance) {
-			held_distance = distance;
-			held = i;
+		if (hold * setup.hold_weights[i] >= 0.5f) {
+			held.push_back(Pair<real_t, uint32_t>(targets[i].distance_to(targets[grabbed_particle]), i));
 		}
 	}
-	if (held >= 0) {
-		grip_anchors.push_back(held);
-		grip_reaches.push_back(held_distance);
+	held.sort_custom<PairSort<real_t, uint32_t>>();
+	for (uint32_t k = 0; k < MIN(held.size(), GRIP_HELD_ANCHORS); k++) {
+		grip_anchors.push_back(held[k].second);
+		grip_reaches.push_back(held[k].first);
 	}
 }
 
