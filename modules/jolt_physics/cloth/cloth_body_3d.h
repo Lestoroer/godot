@@ -119,6 +119,8 @@ class ClothBody3D : public GeometryInstance3D {
 	// How long the cloth has been still in a row, and awake since it was woken or last touched.
 	float rest_quiet_time = 0.0f;
 	float rest_stuck_time = 0.0f;
+	// The cloth fell asleep back in its pose, not resting on something away from it.
+	bool rested_in_pose = false;
 	float awake_time = 0.0f;
 	// The cursor or a hand touched the cloth since the last rest check.
 	bool attended = false;

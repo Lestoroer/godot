@@ -56,6 +56,10 @@ constexpr float CREASE_ANGLE = 0.35f;
 // motion up to GRIP_RELEASE_SPEED: a flick of the mouse does not throw it.
 constexpr float GRIP_SPEED = 3.0f;
 constexpr float GRIP_RELEASE_SPEED = 0.8f;
+// The held patch is this many times heavier than the fabric, so the fabric's weight does not pull it from
+// the hand. It is not weightless: Jolt collides only particles with mass, and a weightless hand would drag
+// the fabric through walls.
+constexpr float GRIP_MASS_SCALE = 1000.0f;
 // Brushing adds to the fabric's motion, but never past this speed along the brush: a flick of the
 // mouse swings the curtain, it does not throw it.
 constexpr float PUSH_SPEED_LIMIT = 0.8f;
@@ -461,8 +465,8 @@ void JoltCloth3D::_apply_grab(float p_step) {
 			}
 		}
 	}
-	// The held patch weighs nothing for the solver and reaches the hand within the step: the weight of the
-	// fabric does not pull it from the hand, and the fabric next to it follows instead of stretching.
+	// The heavy patch reaches the hand within the step: the fabric next to it follows instead of stretching,
+	// and walls stop it like any particle.
 	const float inverse_step = 1.0f / p_step;
 	for (uint32_t k = 0; k < grip_particles.size(); k++) {
 		JPH::SoftBodyVertex &vertex = vertices[grip_particles[k]];
@@ -523,6 +527,20 @@ void JoltCloth3D::reset_to_targets() {
 	hard_reset_requested = true;
 	previous_targets = targets;
 	wake_up();
+}
+
+void JoltCloth3D::rest_in_targets() {
+	if (!in_space()) {
+		return;
+	}
+	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
+	JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
+	const JPH::RVec3 origin = jolt_body->GetCenterOfMassPosition();
+	for (uint32_t i = 0; i < vertices.size(); i++) {
+		vertices[i].mPosition = JPH::Vec3(to_jolt_r(targets[i]) - origin);
+		vertices[i].mPreviousPosition = vertices[i].mPosition;
+		vertices[i].mVelocity = JPH::Vec3::sZero();
+	}
 }
 
 void JoltCloth3D::set_drive(float p_stiffness, float p_damping) {
@@ -615,7 +633,7 @@ int JoltCloth3D::grab(const Vector3 &p_world_position) {
 	JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
 	for (uint32_t particle : grip_particles) {
 		grip_offsets.push_back(positions[particle] - grab_target);
-		vertices[particle].mInvMass = 0.0f;
+		vertices[particle].mInvMass = particle_inverse_masses[particle] / GRIP_MASS_SCALE;
 	}
 	_find_grip_anchors();
 	wake_up();

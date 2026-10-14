@@ -62,12 +62,13 @@ constexpr real_t POSE_SPEED_LIMIT = 3.0;
 // something the pose goes into; a slow swing back to the pose is not cut short. Free cloth moved less than
 // REST_DRIFT_FREE, or on average less than REST_DRIFT_MEAN_FREE: a few particles caught between the
 // floor and another garment may keep trembling. Posed cloth that moved less than REST_DRIFT_POSED for
-// REST_STUCK_SECONDS rests away from its pose, on something the pose goes into: a visible swing moves
-// farther in that time. Cloth that was not touched for REST_TIMEOUT_SECONDS falls asleep anyway, like a cover
+// REST_STUCK_SECONDS while the full return pulls it rests away from its pose, on something the pose goes
+// into: a visible swing moves farther in that time, and before the return is full the cloth may just hang
+// still away from its pose for a moment. Cloth that was not touched for REST_TIMEOUT_SECONDS falls asleep anyway, like a cover
 // pressed between a folded towel and the mattress.
 constexpr float REST_WINDOW_SECONDS = 0.25f;
 constexpr float REST_QUIET_SECONDS = 0.5f;
-constexpr float REST_STUCK_SECONDS = 0.75f;
+constexpr float REST_STUCK_SECONDS = 1.5f;
 constexpr float REST_TIMEOUT_SECONDS = 12.0f;
 constexpr real_t REST_DRIFT_POSED = 0.003;
 constexpr real_t REST_POSE_DISTANCE = 0.03;
@@ -412,8 +413,10 @@ void ClothBody3D::_check_rest(uint64_t p_steps) {
 	const bool still = follow_pose ? drift_most < REST_DRIFT_POSED && returned
 								   : drift_most < REST_DRIFT_FREE || drift_total / count < REST_DRIFT_MEAN_FREE;
 	rest_quiet_time = still ? rest_quiet_time + window : 0.0f;
-	rest_stuck_time = follow_pose && drift_most < REST_DRIFT_POSED ? rest_stuck_time + window : 0.0f;
+	const bool returning_fully = return_stiffness <= drive_stiffness || untouched_time >= return_delay + return_seconds;
+	rest_stuck_time = follow_pose && returning_fully && drift_most < REST_DRIFT_POSED ? rest_stuck_time + window : 0.0f;
 	if (rest_quiet_time >= REST_QUIET_SECONDS || rest_stuck_time >= REST_STUCK_SECONDS || awake_time >= REST_TIMEOUT_SECONDS) {
+		rested_in_pose = returned;
 		rest_quiet_time = 0.0f;
 		rest_stuck_time = 0.0f;
 		cloth->put_to_sleep();
@@ -496,9 +499,12 @@ void ClothBody3D::_draw_pose() {
 
 void ClothBody3D::_fell_asleep() {
 	was_active = false;
-	if (follow_pose) {
-		// Asleep, the cloth rests near its pose; it blends into the exact pose so folds stay clean.
+	if (follow_pose && rested_in_pose) {
+		// Asleep in its pose, the cloth blends into the exact pose so folds stay clean, and its particles
+		// rest there too: the next touch moves the shape that is drawn. Cloth asleep away from its pose is
+		// drawn where it lies.
 		settle_left = SETTLE_SECONDS;
+		cloth->rest_in_targets();
 	}
 	_update_lying_collision();
 	emit_signal(SNAME("sleeping_changed"), true);

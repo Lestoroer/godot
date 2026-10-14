@@ -155,6 +155,8 @@ public:
 	// p_reshape: the targets form a new pose, not the same pose moved; the fabric then rests in it.
 	void set_targets(const LocalVector<Vector3> &p_world_targets, bool p_reshape);
 	void reset_to_targets();
+	// Puts the particles of a sleeping cloth exactly at its targets, at rest, without waking it.
+	void rest_in_targets();
 
 	void set_drive(float p_stiffness, float p_damping);
 	void set_gravity_scale(float p_scale);
