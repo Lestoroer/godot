@@ -555,7 +555,7 @@ void RendererSceneCull::scenario_set_surface_cache_view_callback(RID p_scenario,
 void RendererSceneCull::scenario_set_surface_cache_buffers(RID p_scenario, const TypedArray<RID> &p_buffers) {
 	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
 	ERR_FAIL_NULL(scenario);
-	ERR_FAIL_COND(p_buffers.size() != 0 && p_buffers.size() != 4);
+	ERR_FAIL_COND(p_buffers.size() != 0 && p_buffers.size() != 3);
 	scenario->surface_cache_buffers.resize(p_buffers.size());
 	for (int i = 0; i < p_buffers.size(); i++) scenario->surface_cache_buffers.write[i] = p_buffers[i];
 }
