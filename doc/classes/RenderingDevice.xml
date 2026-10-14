@@ -25,8 +25,9 @@
 		<method name="blas_build" experimental="">
 			<return type="int" enum="Error" />
 			<param index="0" name="blas" type="RID" />
+			<param index="1" name="keep_build_memory" type="bool" default="true" />
 			<description>
-				Builds the [param blas].
+				Builds the [param blas]. With [param keep_build_memory] set to [code]false[/code], the scratch memory of the build is released once the frame's commands have run; use it for a BLAS that is not rebuilt. A later build allocates scratch memory again.
 			</description>
 		</method>
 		<method name="blas_create" experimental="">
