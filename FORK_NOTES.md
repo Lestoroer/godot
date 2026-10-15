@@ -548,10 +548,11 @@ GI работает только на Vulkan с аппаратным ray query �
 
 14. **Ткань на Jolt** | `interior-star/feat-cloth` | `modules/jolt_physics/cloth/`,
     `modules/jolt_physics/objects/jolt_cloth_3d.{h,cpp}`, `objects/jolt_object_3d.{h,cpp}`,
-    `register_types.cpp`, `SCsub` | Классы `ClothMesh` и `ClothBody3D`: ткань следует
-    заготовленной позе, а мягкое тело Jolt добавляет вокруг неё движение. Новый тип объекта
-    `OBJECT_TYPE_CLOTH` не выдаёт себя за `JoltSoftBody3D`, поэтому области, контакты и запросы
-    обходят его штатно. Устройство — `modules/jolt_physics/cloth/README.md`.
+    `spaces/jolt_contact_listener_3d.cpp`, `register_types.cpp`, `SCsub` | Классы `ClothMesh` и
+    `ClothBody3D`: ткань следует заготовленной позе, а мягкое тело Jolt добавляет вокруг неё
+    движение. Новый тип объекта `OBJECT_TYPE_CLOTH` не выдаёт себя за `JoltSoftBody3D`, поэтому
+    области, контакты и запросы обходят его штатно; слушатель контактов передаёт ткани, чего
+    касались её частицы. Устройство — `modules/jolt_physics/cloth/README.md`.
 
 ### Чеклист обновления `interior-star/main`
 

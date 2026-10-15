@@ -39,6 +39,7 @@
 
 #include <Jolt/Jolt.h>
 
+#include <Jolt/Physics/SoftBody/SoftBodyManifold.h>
 #include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
 
 class JoltCloth3D final : public JoltObject3D {
@@ -90,11 +91,23 @@ private:
 	LocalVector<float> particle_inverse_masses;
 	JPH::Array<JPH::Mat44> joint_matrices;
 	JPH::Ref<JPH::SoftBodySharedSettings> shared_settings;
+	// Neighbors of particle i along the triangle edges: neighbor_list from neighbor_starts[i] to neighbor_starts[i + 1].
+	LocalVector<uint32_t> neighbor_starts;
+	LocalVector<uint32_t> neighbor_list;
+	// What each particle touched in the last step and in the step before it: the normal of the surface, facing
+	// the particle; zero without contact. Jolt forgets contacts before the next step, so the cloth keeps them.
+	LocalVector<Vector3> contact_normals;
+	LocalVector<Vector3> previous_contact_normals;
+	// Particles squeezed between two surfaces stand still; see _hold_squeezed.
+	LocalVector<uint32_t> squeezed;
 
 	float drive_stiffness = 0.0f;
 	float drive_damping = 0.0f;
 	float gravity_scale = 1.0f;
 	float linear_damping = 0.1f;
+	float air_resistance = 0.0f;
+	// Normals of the fabric at the particles, recomputed each step for the air.
+	LocalVector<JPH::Vec3> air_normals;
 	float friction = 0.4f;
 	float vertex_radius = 0.005f;
 	float max_distance_scale = 1.0f;
@@ -112,6 +125,9 @@ private:
 	// may take the grabbed particle from each.
 	LocalVector<uint32_t> grip_anchors;
 	LocalVector<float> grip_reaches;
+	// Cloth without pins: how far along the fabric each particle is from the grabbed one. Held by the hand,
+	// it stays within that length of the hand.
+	LocalVector<real_t> grip_tethers;
 	Vector3 grab_target;
 	Vector3 grab_requested;
 	bool targets_valid = false;
@@ -125,14 +141,21 @@ private:
 	bool _is_kinematic(uint32_t p_particle) const;
 	JPH::SoftBodySharedSettings *_create_shared_settings() const;
 	void _shear_cell_diagonals(JPH::SoftBodySharedSettings &p_shared) const;
+	void _find_neighbors();
 	void _skin_to_targets(bool p_hard_reset);
 	void _reshape_rest();
 	void _keep_attachments_from_pulling();
+	void _hold_squeezed();
+	bool _is_pulled_out(uint32_t p_particle, const JPH::Array<JPH::SoftBodyVertex> &p_vertices) const;
+	void _free_squeezed();
 	void _apply_gravity(float p_step);
+	void _apply_air(float p_step);
 	void _apply_drive(float p_step);
 	void _apply_pushes();
 	void _apply_grab(float p_step);
 	void _find_grip_anchors();
+	void _measure_along_fabric(uint32_t p_from, LocalVector<real_t> &r_along) const;
+	void _apply_tethers(float p_step);
 	void _forget_grip();
 	void _apply_hold(float p_step);
 	void _apply_crease_compliance(JPH::SoftBodySharedSettings &p_shared) const;
@@ -162,10 +185,14 @@ public:
 	// Whether something the cloth touches stands between a particle farther than p_distance from its target
 	// and that target.
 	bool is_kept_from_targets(float p_distance) const;
+	// Called by the contact listener at the end of a step in which particles touched something.
+	void record_contacts(const JPH::SoftBodyManifold &p_manifold);
 
 	void set_drive(float p_stiffness, float p_damping);
 	void set_gravity_scale(float p_scale);
 	void set_linear_damping(float p_damping);
+	// Slowdown across the fabric per squared speed across it, 1/m.
+	void set_air_resistance(float p_resistance);
 	void set_friction(float p_friction);
 	void set_vertex_radius(float p_radius);
 	void set_max_distance_scale(float p_scale);

@@ -234,6 +234,7 @@ void ClothBody3D::_update_motion() {
 	_update_drive(false);
 	cloth->set_gravity_scale(gravity_scale);
 	cloth->set_linear_damping(linear_damping);
+	cloth->set_air_resistance(air_resistance);
 	cloth->set_friction(friction);
 	cloth->set_vertex_radius(vertex_radius);
 	cloth->set_max_distance_scale(max_distance_scale);
@@ -724,6 +725,7 @@ CLOTH_REBUILD_SETTER(backstop_radius, float)
 CLOTH_REBUILD_SETTER(dihedral_bends, bool)
 CLOTH_REBUILD_SETTER(shear_across_folds, bool)
 CLOTH_MOTION_SETTER(linear_damping, float)
+CLOTH_MOTION_SETTER(air_resistance, float)
 CLOTH_MOTION_SETTER(friction, float)
 CLOTH_MOTION_SETTER(gravity_scale, float)
 CLOTH_MOTION_SETTER(vertex_radius, float)
@@ -902,6 +904,8 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_shear_across_folds"), &ClothBody3D::is_shear_across_folds);
 	ClassDB::bind_method(D_METHOD("set_linear_damping", "damping"), &ClothBody3D::set_linear_damping);
 	ClassDB::bind_method(D_METHOD("get_linear_damping"), &ClothBody3D::get_linear_damping);
+	ClassDB::bind_method(D_METHOD("set_air_resistance", "resistance"), &ClothBody3D::set_air_resistance);
+	ClassDB::bind_method(D_METHOD("get_air_resistance"), &ClothBody3D::get_air_resistance);
 	ClassDB::bind_method(D_METHOD("set_friction", "friction"), &ClothBody3D::set_friction);
 	ClassDB::bind_method(D_METHOD("get_friction"), &ClothBody3D::get_friction);
 	ClassDB::bind_method(D_METHOD("set_gravity_scale", "scale"), &ClothBody3D::set_gravity_scale);
@@ -964,6 +968,7 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dihedral_bends"), "set_dihedral_bends", "is_dihedral_bends");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shear_across_folds"), "set_shear_across_folds", "is_shear_across_folds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "linear_damping", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_linear_damping", "get_linear_damping");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "air_resistance", PROPERTY_HINT_RANGE, "0,100,0.1,suffix:1/m"), "set_air_resistance", "get_air_resistance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_friction", "get_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gravity_scale", PROPERTY_HINT_RANGE, "-2,2,0.01"), "set_gravity_scale", "get_gravity_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vertex_radius", PROPERTY_HINT_RANGE, "0,0.05,0.0005,suffix:m"), "set_vertex_radius", "get_vertex_radius");

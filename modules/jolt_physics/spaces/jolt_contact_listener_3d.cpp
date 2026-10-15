@@ -34,6 +34,7 @@
 #include "../misc/jolt_type_conversions.h"
 #include "../objects/jolt_area_3d.h"
 #include "../objects/jolt_body_3d.h"
+#include "../objects/jolt_cloth_3d.h"
 #include "../objects/jolt_soft_body_3d.h"
 #include "jolt_space_3d.h"
 
@@ -78,6 +79,10 @@ JPH::SoftBodyValidateResult JoltContactListener3D::OnSoftBodyContactValidate(con
 }
 
 void JoltContactListener3D::OnSoftBodyContactAdded(const JPH::Body &p_soft_body, const JPH::SoftBodyManifold &p_manifold) {
+	// Fork(Lestoroer): Jolt forgets what the particles touched before the next step; cloth keeps it.
+	if (JoltCloth3D *cloth = reinterpret_cast<JoltObject3D *>(p_soft_body.GetUserData())->as_cloth()) {
+		cloth->record_contacts(p_manifold);
+	}
 	for (JPH::uint i = 0; i < p_manifold.GetNumSensorContacts(); i++) {
 		if (JPH::Body *other_jolt_body = space->try_get_jolt_body(p_manifold.GetSensorContactBodyID(i))) {
 			_try_evaluate_area_overlap(p_soft_body, *other_jolt_body, JPH::SubShapeID(), JPH::SubShapeID());
