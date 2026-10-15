@@ -773,6 +773,35 @@ void ClothBody3D::release_grab() {
 	}
 }
 
+// Lets go but leaves the held patch where it is, as a pin; false when nothing is held.
+bool ClothBody3D::pin_grab() {
+	untouched_time = 0.0f;
+	return cloth != nullptr && cloth->pin_grab();
+}
+
+void ClothBody3D::unpin(int p_index) {
+	untouched_time = 0.0f;
+	if (cloth != nullptr) {
+		cloth->unpin(p_index);
+	}
+}
+
+void ClothBody3D::clear_pins() {
+	if (cloth != nullptr) {
+		cloth->clear_pins();
+	}
+}
+
+PackedVector3Array ClothBody3D::get_pin_positions() const {
+	PackedVector3Array positions;
+	if (cloth != nullptr) {
+		for (int i = 0; i < cloth->get_pin_count(); i++) {
+			positions.push_back(cloth->get_pin_position(i));
+		}
+	}
+	return positions;
+}
+
 bool ClothBody3D::is_grabbing() const {
 	return cloth != nullptr && cloth->get_grabbed_particle() >= 0;
 }
@@ -943,6 +972,10 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("grab", "point"), &ClothBody3D::grab);
 	ClassDB::bind_method(D_METHOD("move_grab", "point"), &ClothBody3D::move_grab);
 	ClassDB::bind_method(D_METHOD("release_grab"), &ClothBody3D::release_grab);
+	ClassDB::bind_method(D_METHOD("pin_grab"), &ClothBody3D::pin_grab);
+	ClassDB::bind_method(D_METHOD("unpin", "index"), &ClothBody3D::unpin);
+	ClassDB::bind_method(D_METHOD("clear_pins"), &ClothBody3D::clear_pins);
+	ClassDB::bind_method(D_METHOD("get_pin_positions"), &ClothBody3D::get_pin_positions);
 	ClassDB::bind_method(D_METHOD("is_grabbing"), &ClothBody3D::is_grabbing);
 	ClassDB::bind_method(D_METHOD("set_carried", "carried"), &ClothBody3D::set_carried);
 	ClassDB::bind_method(D_METHOD("is_carried"), &ClothBody3D::is_carried);
