@@ -166,11 +166,7 @@ void ClothBody3D::_create_physics(const LocalVector<Vector3> *p_start_world) {
 	for (float distance : distances) {
 		setup.max_distances.push_back(distance);
 	}
-	if (cloth_mesh->has_holds()) {
-		for (float weight : cloth_mesh->get_hold_weights()) {
-			setup.hold_weights.push_back(weight);
-		}
-	}
+	_held_weights(setup.hold_weights);
 	setup.particle_mass = particle_mass;
 	setup.stretch_compliance = stretch_compliance;
 	setup.shear_compliance = shear_compliance;
@@ -751,6 +747,31 @@ void ClothBody3D::set_hold(float p_hold) {
 		cloth->set_hold(hold);
 	}
 }
+
+// Another holder takes the fabric, like a garment moved from a hanger to a hook: the fabric it no longer
+// holds is let go, and the hold brings the newly held fabric to the holder.
+void ClothBody3D::set_hold_weights(const PackedFloat32Array &p_weights) {
+	ERR_FAIL_COND_MSG(!p_weights.is_empty() && cloth_mesh.is_valid() && p_weights.size() != cloth_mesh->get_particle_count(), "Hold weights must match the particle count.");
+	hold_weights = p_weights;
+	if (cloth != nullptr) {
+		LocalVector<float> weights;
+		_held_weights(weights);
+		// Nothing held: every particle lets go.
+		for (int i = int(weights.size()); i < cloth_mesh->get_particle_count(); i++) {
+			weights.push_back(0.0f);
+		}
+		cloth->set_hold_weights(weights);
+	}
+}
+
+// One weight per particle: the weights set on the body, else those of the cloth mesh, else nothing held.
+void ClothBody3D::_held_weights(LocalVector<float> &r_weights) const {
+	r_weights.clear();
+	const PackedFloat32Array source = !hold_weights.is_empty() ? hold_weights : (cloth_mesh->has_holds() ? cloth_mesh->get_hold_weights() : PackedFloat32Array());
+	for (float weight : source) {
+		r_weights.push_back(weight);
+	}
+}
 CLOTH_REBUILD_SETTER(backstop_distance, float)
 CLOTH_REBUILD_SETTER(backstop_radius, float)
 CLOTH_REBUILD_SETTER(dihedral_bends, bool)
@@ -928,6 +949,8 @@ void ClothBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_crease_compliance", "compliance"), &ClothBody3D::set_crease_compliance);
 	ClassDB::bind_method(D_METHOD("get_crease_compliance"), &ClothBody3D::get_crease_compliance);
 	ClassDB::bind_method(D_METHOD("set_hold", "hold"), &ClothBody3D::set_hold);
+	ClassDB::bind_method(D_METHOD("set_hold_weights", "weights"), &ClothBody3D::set_hold_weights);
+	ClassDB::bind_method(D_METHOD("get_hold_weights"), &ClothBody3D::get_hold_weights);
 	ClassDB::bind_method(D_METHOD("get_hold"), &ClothBody3D::get_hold);
 	ClassDB::bind_method(D_METHOD("set_dihedral_bends", "dihedral"), &ClothBody3D::set_dihedral_bends);
 	ClassDB::bind_method(D_METHOD("is_dihedral_bends"), &ClothBody3D::is_dihedral_bends);
@@ -996,6 +1019,7 @@ void ClothBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bend_compliance", PROPERTY_HINT_RANGE, "0,1,0.0001,or_greater"), "set_bend_compliance", "get_bend_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "crease_compliance", PROPERTY_HINT_RANGE, "-1,1000,0.01,or_greater"), "set_crease_compliance", "get_crease_compliance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hold", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hold", "get_hold");
+	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "hold_weights", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NONE), "set_hold_weights", "get_hold_weights");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dihedral_bends"), "set_dihedral_bends", "is_dihedral_bends");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shear_across_folds"), "set_shear_across_folds", "is_shear_across_folds");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "linear_damping", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_linear_damping", "get_linear_damping");

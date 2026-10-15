@@ -86,6 +86,8 @@ class ClothBody3D : public GeometryInstance3D {
 	float push_response = 1.0f;
 	// How firmly the holder keeps the held fabric, from 0 to 1: the closed cuff of a tied curtain.
 	float hold = 0.0f;
+	// Which fabric the holder holds, one weight per particle; empty: the hold weights of the cloth mesh.
+	PackedFloat32Array hold_weights;
 
 	LocalVector<Vector3> pose_local;
 	// Where the pose pulls the particles: the pose itself, reached at most POSE_SPEED_LIMIT per second.
@@ -149,6 +151,7 @@ class ClothBody3D : public GeometryInstance3D {
 	void _draw_pose();
 	void _fell_asleep();
 	void _update_lying_collision();
+	void _held_weights(LocalVector<float> &r_weights) const;
 	void _free_lying_collision(bool p_wake_resting);
 	void _wake_resting_on(const AABB &p_bounds);
 	void _targets_moved();
@@ -181,6 +184,8 @@ public:
 	float get_crease_compliance() const { return crease_compliance; }
 	void set_hold(float p_hold);
 	float get_hold() const { return hold; }
+	void set_hold_weights(const PackedFloat32Array &p_weights);
+	PackedFloat32Array get_hold_weights() const { return hold_weights; }
 	void set_dihedral_bends(bool p_dihedral);
 	bool is_dihedral_bends() const { return dihedral_bends; }
 	void set_shear_across_folds(bool p_shear);

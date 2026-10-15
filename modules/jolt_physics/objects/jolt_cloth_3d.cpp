@@ -743,6 +743,12 @@ void JoltCloth3D::set_hold(float p_hold) {
 	}
 }
 
+void JoltCloth3D::set_hold_weights(const LocalVector<float> &p_weights) {
+	ERR_FAIL_COND(p_weights.size() != setup.positions.size());
+	setup.hold_weights = p_weights;
+	hold_dirty = true;
+}
+
 void JoltCloth3D::set_max_distance_scale(float p_scale) {
 	max_distance_scale = MAX(p_scale, 0.0f);
 	_update_motion_settings();

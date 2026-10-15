@@ -200,6 +200,8 @@ public:
 	void set_max_distance_scale(float p_scale);
 	// How firmly the hold acts now, from 0 to 1.
 	void set_hold(float p_hold);
+	// Which fabric the holder holds, one weight per particle from 0 to 1.
+	void set_hold_weights(const LocalVector<float> &p_weights);
 	void set_iterations(int p_iterations);
 
 	void push(const Vector3 &p_point, const Vector3 &p_velocity, float p_radius);
