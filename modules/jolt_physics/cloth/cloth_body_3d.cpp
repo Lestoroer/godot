@@ -82,6 +82,8 @@ constexpr real_t REST_DRIFT_MEAN_FREE = 0.0015;
 constexpr real_t LYING_REBUILD_DISTANCE = 0.005;
 // Cloth this close above a changed resting shape is woken to settle again.
 constexpr real_t LYING_WAKE_MARGIN = 0.03;
+// The shape other cloth lies on is a sheet this thick, its sides this far from the resting fabric.
+constexpr real_t LYING_HALF_THICKNESS = 0.001;
 
 AABB bounds_of(const LocalVector<Vector3> &p_points, real_t p_margin) {
 	if (p_points.is_empty()) {
@@ -552,9 +554,38 @@ void ClothBody3D::_update_lying_collision() {
 	lying_positions = world_scratch;
 	lying_bounds = bounds_of(lying_positions, 0.0);
 
+	// A thin sheet with two sides: fabric tucked under the edge of the resting cloth stays under it. A single
+	// surface is solid for Jolt far behind it and would push such fabric up through the cloth every step.
+	const PackedInt32Array triangles = cloth_mesh->get_triangles();
+	LocalVector<Vector3> normals;
+	normals.resize(lying_positions.size());
+	for (Vector3 &normal : normals) {
+		normal = Vector3();
+	}
+	for (int i = 0; i + 2 < triangles.size(); i += 3) {
+		const Vector3 &a = lying_positions[triangles[i]];
+		const Vector3 &b = lying_positions[triangles[i + 1]];
+		const Vector3 &c = lying_positions[triangles[i + 2]];
+		// The front of the face as Jolt sees it: faces reach Jolt in the opposite winding.
+		const Vector3 front = (b - c).cross(a - c);
+		for (int corner = 0; corner < 3; corner++) {
+			normals[triangles[i + corner]] += front;
+		}
+	}
+	for (Vector3 &normal : normals) {
+		normal = normal.normalized() * LYING_HALF_THICKNESS;
+	}
 	PackedVector3Array faces;
-	for (int index : cloth_mesh->get_triangles()) {
-		faces.push_back(lying_positions[index]);
+	for (int i = 0; i + 2 < triangles.size(); i += 3) {
+		const int a = triangles[i];
+		const int b = triangles[i + 1];
+		const int c = triangles[i + 2];
+		faces.push_back(lying_positions[a] + normals[a]);
+		faces.push_back(lying_positions[b] + normals[b]);
+		faces.push_back(lying_positions[c] + normals[c]);
+		faces.push_back(lying_positions[a] - normals[a]);
+		faces.push_back(lying_positions[c] - normals[c]);
+		faces.push_back(lying_positions[b] - normals[b]);
 	}
 	Dictionary shape_data;
 	shape_data["faces"] = faces;

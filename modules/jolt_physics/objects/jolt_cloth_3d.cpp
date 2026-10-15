@@ -492,9 +492,10 @@ void JoltCloth3D::_apply_drive(float p_step) {
 		const JPH::Vec3 target = JPH::Vec3(to_jolt_r(targets[i]) - origin);
 		const JPH::Vec3 target_velocity = to_jolt((targets[i] - previous_targets[i]) * inverse_step);
 		JPH::Vec3 acceleration = drive_stiffness * (target - vertex.mPosition) + drive_damping * (target_velocity - vertex.mVelocity);
-		if (contact_normals[i] != Vector3()) {
+		if (!hangs && contact_normals[i] != Vector3()) {
 			// The drive does not press a particle into what it touches: a cover over a pillow rests on
 			// the pillow instead of trembling between it and the pose, and comes back when it is gone.
+			// Hanging cloth is pulled through: a fold caught behind a holder or a rod comes free.
 			const JPH::Vec3 normal = to_jolt(contact_normals[i]);
 			const float into = acceleration.Dot(normal);
 			if (into < 0.0f) {
@@ -630,8 +631,10 @@ void JoltCloth3D::configure(const Setup &p_setup) {
 	_find_neighbors();
 	particle_inverse_masses.resize(particle_count);
 	const float inverse_mass = 1.0f / MAX(setup.particle_mass, 0.0001f);
+	hangs = false;
 	for (uint32_t i = 0; i < particle_count; i++) {
 		particle_inverse_masses[i] = _is_kinematic(i) ? 0.0f : inverse_mass;
+		hangs = hangs || _is_kinematic(i);
 	}
 	targets = setup.positions;
 	previous_targets = setup.positions;
@@ -671,9 +674,10 @@ void JoltCloth3D::rest_in_targets() {
 }
 
 // A cover on a pillow its pose goes into is kept from its pose: the way of its particles to their targets
-// leads into what they touch. Fabric twisted around itself or caught by friction is not kept.
+// leads into what they touch. Fabric twisted around itself or caught by friction is not kept, nor is hanging
+// cloth: a fold caught behind its holder is a tangle.
 bool JoltCloth3D::is_kept_from_targets(float p_distance) const {
-	if (!in_space()) {
+	if (!in_space() || hangs) {
 		return false;
 	}
 	const JPH::SoftBodyMotionProperties *motion = static_cast<const JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());

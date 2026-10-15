@@ -100,6 +100,8 @@ private:
 	LocalVector<Vector3> previous_contact_normals;
 	// Particles squeezed between two surfaces stand still; see _hold_squeezed.
 	LocalVector<uint32_t> squeezed;
+	// Some particles are pinned: the cloth hangs, and what stands in the way to its pose is a tangle.
+	bool hangs = false;
 
 	float drive_stiffness = 0.0f;
 	float drive_damping = 0.0f;
