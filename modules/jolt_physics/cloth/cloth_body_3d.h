@@ -227,10 +227,6 @@ public:
 	int grab(const Vector3 &p_point);
 	void move_grab(const Vector3 &p_point);
 	void release_grab();
-	bool pin_grab();
-	void unpin(int p_index);
-	void clear_pins();
-	PackedVector3Array get_pin_positions() const;
 	bool is_grabbing() const;
 
 	void set_carried(bool p_carried);

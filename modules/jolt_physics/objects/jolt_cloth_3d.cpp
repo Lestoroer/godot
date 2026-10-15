@@ -119,9 +119,8 @@ void JoltCloth3D::_add_to_space() {
 	// The body stays at the origin, so particle positions are world positions.
 	shared_settings = _create_shared_settings();
 	hold_dirty = true;
-	// A new body has the particles' own masses: a hand or pins from before hold nothing.
+	// A new body has the particles' own masses: a hand from before holds nothing.
 	_forget_grip();
-	pins.clear();
 	JPH::SoftBodyCreationSettings settings(shared_settings.GetPtr(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), _get_object_layer());
 	settings.mUserData = reinterpret_cast<JPH::uint64>(this);
 	// Jolt asks the group filter whether the cloth touches a body; without it the cloth would also
@@ -508,7 +507,6 @@ void JoltCloth3D::configure(const Setup &p_setup) {
 
 	setup = p_setup;
 	_forget_grip();
-	pins.clear();
 	particle_inverse_masses.resize(particle_count);
 	const float inverse_mass = 1.0f / MAX(setup.particle_mass, 0.0001f);
 	for (uint32_t i = 0; i < particle_count; i++) {
@@ -656,15 +654,6 @@ int JoltCloth3D::grab(const Vector3 &p_world_position) {
 	}
 	grab_target = positions[nearest];
 	grab_requested = p_world_position;
-	// The hand takes up a pin it grabs again.
-	for (int k = int(pins.size()) - 1; k >= 0; k--) {
-		for (uint32_t particle : pins[k].particles) {
-			if (grip_particles.has(particle)) {
-				_drop_pin(k);
-				break;
-			}
-		}
-	}
 	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
 	JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
 	for (uint32_t particle : grip_particles) {
@@ -755,67 +744,6 @@ void JoltCloth3D::release_grab() {
 	_forget_grip();
 }
 
-bool JoltCloth3D::pin_grab() {
-	if (grabbed_particle < 0 || !in_space()) {
-		return false;
-	}
-	// The patch stays heavy and stays where the hand has brought it, not where the hand was heading.
-	const JPH::SoftBodyMotionProperties *motion = static_cast<const JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
-	Pin pin;
-	pin.particles = grip_particles;
-	pin.offsets = grip_offsets;
-	pin.position = to_godot(jolt_body->GetCenterOfMassPosition()) + to_godot(motion->GetVertices()[grabbed_particle].mPosition) - grip_offsets[0];
-	pins.push_back(pin);
-	_forget_grip();
-	wake_up();
-	return true;
-}
-
-void JoltCloth3D::unpin(int p_index) {
-	ERR_FAIL_INDEX(p_index, int(pins.size()));
-	_drop_pin(p_index);
-	wake_up();
-}
-
-void JoltCloth3D::clear_pins() {
-	while (!pins.is_empty()) {
-		_drop_pin(pins.size() - 1);
-	}
-	wake_up();
-}
-
-Vector3 JoltCloth3D::get_pin_position(int p_index) const {
-	ERR_FAIL_INDEX_V(p_index, int(pins.size()), Vector3());
-	return pins[p_index].position;
-}
-
-void JoltCloth3D::_drop_pin(uint32_t p_index) {
-	if (in_space()) {
-		JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
-		JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
-		for (uint32_t particle : pins[p_index].particles) {
-			vertices[particle].mInvMass = particle_inverse_masses[particle];
-		}
-	}
-	pins.remove_at(p_index);
-}
-
-void JoltCloth3D::_apply_pins(float p_step) {
-	if (pins.is_empty()) {
-		return;
-	}
-	JPH::SoftBodyMotionProperties *motion = static_cast<JPH::SoftBodyMotionProperties *>(jolt_body->GetMotionPropertiesUnchecked());
-	JPH::Array<JPH::SoftBodyVertex> &vertices = motion->GetVertices();
-	const Vector3 origin = to_godot(jolt_body->GetCenterOfMassPosition());
-	const float inverse_step = 1.0f / p_step;
-	for (const Pin &pin : pins) {
-		for (uint32_t k = 0; k < pin.particles.size(); k++) {
-			JPH::SoftBodyVertex &vertex = vertices[pin.particles[k]];
-			vertex.mVelocity = to_jolt((pin.position + pin.offsets[k] - (origin + to_godot(vertex.mPosition))) * inverse_step);
-		}
-	}
-}
-
 void JoltCloth3D::_forget_grip() {
 	grabbed_particle = -1;
 	grip_particles.clear();
@@ -902,6 +830,5 @@ void JoltCloth3D::pre_step(float p_step) {
 	_apply_drive(p_step);
 	_apply_pushes();
 	_apply_grab(p_step);
-	_apply_pins(p_step);
 	previous_targets = targets;
 }

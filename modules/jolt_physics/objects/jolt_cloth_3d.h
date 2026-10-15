@@ -114,13 +114,6 @@ private:
 	LocalVector<float> grip_reaches;
 	Vector3 grab_target;
 	Vector3 grab_requested;
-	// Patches the hand left where they are, like pins: the fabric hangs from them.
-	struct Pin {
-		LocalVector<uint32_t> particles;
-		LocalVector<Vector3> offsets;
-		Vector3 position;
-	};
-	LocalVector<Pin> pins;
 	bool targets_valid = false;
 	bool hard_reset_requested = false;
 	bool rest_shape_dirty = false;
@@ -141,8 +134,6 @@ private:
 	void _apply_grab(float p_step);
 	void _find_grip_anchors();
 	void _forget_grip();
-	void _apply_pins(float p_step);
-	void _drop_pin(uint32_t p_index);
 	void _apply_hold(float p_step);
 	void _apply_crease_compliance(JPH::SoftBodySharedSettings &p_shared) const;
 	void _update_motion_settings();
@@ -187,12 +178,6 @@ public:
 	int grab(const Vector3 &p_world_position);
 	void move_grab(const Vector3 &p_world_position);
 	void release_grab();
-	// Leaves the held patch where it is now, as a pin; false when the hand holds nothing.
-	bool pin_grab();
-	void unpin(int p_index);
-	void clear_pins();
-	int get_pin_count() const { return (int)pins.size(); }
-	Vector3 get_pin_position(int p_index) const;
 	int get_grabbed_particle() const { return grabbed_particle; }
 
 	bool is_active() const;
