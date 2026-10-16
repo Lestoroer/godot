@@ -72,18 +72,6 @@ void RenderForwardClustered::RenderBufferDataForwardClustered::ensure_normal_rou
 	}
 }
 
-// Fork(Lestoroer): primary visibility (surface/primitive + barycentrics) for Surface Cache gather.
-void RenderForwardClustered::RenderBufferDataForwardClustered::ensure_surface_cache_visibility() {
-	ERR_FAIL_NULL(render_buffers);
-	if (!render_buffers->has_texture("surface_cache_visibility", "primary")) {
-		bool msaa = render_buffers->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED;
-		render_buffers->create_texture("surface_cache_visibility", "primary", RD::DATA_FORMAT_R32G32B32A32_UINT, get_normal_roughness_usage_bits(msaa, false, true));
-		if (msaa) {
-			render_buffers->create_texture("surface_cache_visibility", "primary_msaa", RD::DATA_FORMAT_R32G32B32A32_UINT, get_normal_roughness_usage_bits(false, true, true), render_buffers->get_texture_samples());
-		}
-	}
-}
-
 void RenderForwardClustered::RenderBufferDataForwardClustered::ensure_voxelgi() {
 	ERR_FAIL_NULL(render_buffers);
 
@@ -125,7 +113,6 @@ void RenderForwardClustered::RenderBufferDataForwardClustered::free_data() {
 	// JIC, should already have been cleared
 	if (render_buffers) {
 		render_buffers->clear_context(RB_SCOPE_FORWARD_CLUSTERED);
-		render_buffers->clear_context("surface_cache_visibility"); // Fork(Lestoroer)
 		render_buffers->clear_context(RB_SCOPE_SSDS);
 		render_buffers->clear_context(RB_SCOPE_SSIL);
 		render_buffers->clear_context(RB_SCOPE_SSAO);
@@ -226,13 +213,6 @@ RID RenderForwardClustered::RenderBufferDataForwardClustered::get_depth_fb(Depth
 	switch (p_type) {
 		case DEPTH_FB: {
 			return FramebufferCacheRD::get_singleton()->get_cache_multiview(render_buffers->get_view_count(), depth);
-		} break;
-		case DEPTH_FB_SURFACE_CACHE: { // Fork(Lestoroer)
-			ensure_normal_roughness_texture();
-			ensure_surface_cache_visibility();
-			RID normal = render_buffers->get_texture(RB_SCOPE_FORWARD_CLUSTERED, use_msaa ? RB_TEX_NORMAL_ROUGHNESS_MSAA : RB_TEX_NORMAL_ROUGHNESS);
-			RID primary = render_buffers->get_texture("surface_cache_visibility", use_msaa ? "primary_msaa" : "primary");
-			return FramebufferCacheRD::get_singleton()->get_cache_multiview(render_buffers->get_view_count(), depth, normal, primary);
 		} break;
 		case DEPTH_FB_ROUGHNESS: {
 			ensure_normal_roughness_texture();
@@ -490,10 +470,6 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 				ERR_FAIL_COND_MSG(p_params->view_count > 1, "Multiview not supported for shadow DP pass");
 				pipeline_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_DEPTH_PASS_DP;
 			} break;
-			case PASS_MODE_DEPTH_SURFACE_CACHE: { // Fork(Lestoroer)
-				ERR_FAIL_COND_MSG(p_params->view_count > 1, "Surface Cache primary visibility requires a single view");
-				pipeline_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE;
-			} break;
 			case PASS_MODE_DEPTH_NORMAL_ROUGHNESS: {
 				pipeline_key.version = p_params->view_count > 1 ? SceneShaderForwardClustered::PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_MULTIVIEW : SceneShaderForwardClustered::PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS;
 			} break;
@@ -689,9 +665,6 @@ void RenderForwardClustered::_render_list(RenderingDevice::DrawListID p_draw_lis
 		} break;
 		case PASS_MODE_DEPTH: {
 			_render_list_template<PASS_MODE_DEPTH>(p_draw_list, p_framebuffer_Format, p_params, p_from_element, p_to_element);
-		} break;
-		case PASS_MODE_DEPTH_SURFACE_CACHE: { // Fork(Lestoroer)
-			_render_list_template<PASS_MODE_DEPTH_SURFACE_CACHE>(p_draw_list, p_framebuffer_Format, p_params, p_from_element, p_to_element);
 		} break;
 		case PASS_MODE_DEPTH_NORMAL_ROUGHNESS: {
 			_render_list_template<PASS_MODE_DEPTH_NORMAL_ROUGHNESS>(p_draw_list, p_framebuffer_Format, p_params, p_from_element, p_to_element);
@@ -1101,8 +1074,7 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 					inst->gi_offset_cache = 0xFFFFFFFF;
 				}
 			}
-			// Fork(Lestoroer): PASS_MODE_DEPTH_SURFACE_CACHE added.
-			if (p_pass_mode == PASS_MODE_DEPTH_SURFACE_CACHE || p_pass_mode == PASS_MODE_DEPTH_NORMAL_ROUGHNESS || p_pass_mode == PASS_MODE_DEPTH_NORMAL_ROUGHNESS_VOXEL_GI || p_pass_mode == PASS_MODE_COLOR) {
+			if (p_pass_mode == PASS_MODE_DEPTH_NORMAL_ROUGHNESS || p_pass_mode == PASS_MODE_DEPTH_NORMAL_ROUGHNESS_VOXEL_GI || p_pass_mode == PASS_MODE_COLOR) {
 				bool transform_changed = inst->transform_status == GeometryInstanceForwardClustered::TransformStatus::MOVED;
 				bool has_mesh_instance = inst->mesh_instance.is_valid();
 				bool uses_particles = inst->base_flags & INSTANCE_DATA_FLAG_PARTICLES;
@@ -1142,9 +1114,10 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 			surf->sort.uses_lightmap = 0;
 
 			// LOD
-			// Fork(Lestoroer): LOD disabled for Surface Cache instances.
-			// A different LOD needs its own source-primitive remap.
-			if (inst->surface_cache_ids.is_empty() && p_render_data->scene_data->screen_mesh_lod_threshold > 0.0 && mesh_storage->mesh_surface_has_lod(surf->surface)) {
+			// Fork(Lestoroer): Surface Cache glass keeps the full mesh: its fragments are matched to the
+			// GI glass of their pixel by primitive (surface_cache_glass_owned).
+			bool surface_cache_glass = !inst->surface_cache_ids.is_empty() && surf->shader->uses_surface_cache_transmission;
+			if (!surface_cache_glass && p_render_data->scene_data->screen_mesh_lod_threshold > 0.0 && mesh_storage->mesh_surface_has_lod(surf->surface)) {
 				uint32_t indices = 0;
 				surf->sort.lod_index = mesh_storage->mesh_surface_get_lod(surf->surface, inst->lod_model_scale * inst->lod_bias, lod_distance * p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, indices);
 				if (p_render_data->render_info) {
@@ -1751,7 +1724,7 @@ void RenderForwardClustered::_process_sss(Ref<RenderSceneBuffersRD> p_render_buf
 }
 
 void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Color &p_default_bg_color) {
-	p_render_data->scene_data->surface_cache_enabled = surface_cache_buffers.size() == 3; // Fork(Lestoroer)
+	p_render_data->scene_data->surface_cache_enabled = surface_cache_buffers.size() == 2; // Fork(Lestoroer)
 	scene_state.used_uniform_buffer_count = 0;
 
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
@@ -1777,7 +1750,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	// get info about our rendering effects
 	bool ce_needs_motion_vectors = _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_NEEDS_MOTION_VECTORS);
-	bool surface_cache_gather = !is_reflection_probe && surface_cache_buffers.size() == 3 && surface_cache_view_callback.is_valid(); // Fork(Lestoroer)
+	bool surface_cache_gather = !is_reflection_probe && surface_cache_buffers.size() == 2 && surface_cache_view_callback.is_valid(); // Fork(Lestoroer)
 	bool ce_needs_normal_roughness = surface_cache_gather || _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_NEEDS_ROUGHNESS);
 	bool ce_needs_separate_specular = _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_NEEDS_SEPARATE_SPECULAR);
 
@@ -1974,11 +1947,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	RD::get_singleton()->draw_command_end_label();
 
 	if (!is_reflection_probe) {
-		// Fork(Lestoroer): Surface Cache primary visibility takes priority over VoxelGI ids.
-		if (surface_cache_gather) {
-			depth_pass_mode = PASS_MODE_DEPTH_SURFACE_CACHE;
-			global_pipeline_data_required.use_surface_cache = true;
-		} else if (using_voxelgi) {
+		if (using_voxelgi) {
 			depth_pass_mode = PASS_MODE_DEPTH_NORMAL_ROUGHNESS_VOXEL_GI;
 		} else if (p_render_data->environment.is_valid()) {
 			if (using_ssr ||
@@ -1997,11 +1966,6 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		switch (depth_pass_mode) {
 			case PASS_MODE_DEPTH: {
 				depth_framebuffer = rb_data->get_depth_fb();
-			} break;
-			case PASS_MODE_DEPTH_SURFACE_CACHE: { // Fork(Lestoroer)
-				depth_framebuffer = rb_data->get_depth_fb(RenderBufferDataForwardClustered::DEPTH_FB_SURFACE_CACHE);
-				depth_pass_clear.push_back(Color(0, 0, 0, 0));
-				depth_pass_clear.push_back(Color(0, 0, 0, 0));
 			} break;
 			case PASS_MODE_DEPTH_NORMAL_ROUGHNESS: {
 				depth_framebuffer = rb_data->get_depth_fb(RenderBufferDataForwardClustered::DEPTH_FB_ROUGHNESS);
@@ -2044,8 +2008,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	}
 
 	// Update the global pipeline requirements with all the features found to be in use in this scene.
-	// Fork(Lestoroer): PASS_MODE_DEPTH_SURFACE_CACHE also writes normal/roughness.
-	if (depth_pass_mode == PASS_MODE_DEPTH_SURFACE_CACHE || depth_pass_mode == PASS_MODE_DEPTH_NORMAL_ROUGHNESS || global_surface_data.normal_texture_used) {
+	if (depth_pass_mode == PASS_MODE_DEPTH_NORMAL_ROUGHNESS || global_surface_data.normal_texture_used) {
 		global_pipeline_data_required.use_normal_and_roughness = true;
 	}
 
@@ -2171,7 +2134,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	bool debug_voxelgis = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_ALBEDO || get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_LIGHTING || get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_EMISSION;
 	bool debug_sdfgi_probes = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_SDFGI_PROBES;
-	bool force_depth_pre_pass = scene_state.used_opaque_stencil || surface_cache_gather; // Fork(Lestoroer): gather needs primary visibility before opaque.
+	bool force_depth_pre_pass = scene_state.used_opaque_stencil || surface_cache_gather; // Fork(Lestoroer): the gather needs depth and normal before opaque.
 	bool depth_pre_pass = (force_depth_pre_pass || bool(GLOBAL_GET_CACHED(bool, "rendering/driver/depth_prepass/enable"))) && depth_framebuffer.is_valid();
 
 	SceneShaderForwardClustered::ShaderSpecialization base_specialization = scene_shader.default_specialization;
@@ -2196,7 +2159,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 		RD::get_singleton()->draw_command_begin_label("Render Depth Pre-Pass");
 
-		RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, nullptr, RID(), samplers, depth_prepass_uniform_buffer_index, false, surface_cache_gather); // Fork(Lestoroer)
+		RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, nullptr, RID(), samplers, depth_prepass_uniform_buffer_index);
 
 		bool finish_depth = using_ssao || using_ssil || using_sdfgi || using_voxelgi || ce_pre_opaque_resolved_depth || ce_post_opaque_resolved_depth;
 		RenderListParameters render_list_params(render_list[RENDER_LIST_OPAQUE].elements.ptr(), render_list[RENDER_LIST_OPAQUE].element_info.ptr(), render_list[RENDER_LIST_OPAQUE].elements.size(), reverse_cull, depth_pass_mode, 0, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
@@ -2207,10 +2170,9 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		if (use_msaa) {
 			RENDER_TIMESTAMP("Resolve Depth Pre-Pass (MSAA)");
 			RD::get_singleton()->draw_command_begin_label("Resolve Depth Pre-Pass (MSAA)");
-			// Fork(Lestoroer): Surface Cache visibility is resolved in place of VoxelGI ids.
-			if (depth_pass_mode == PASS_MODE_DEPTH_SURFACE_CACHE || depth_pass_mode == PASS_MODE_DEPTH_NORMAL_ROUGHNESS || depth_pass_mode == PASS_MODE_DEPTH_NORMAL_ROUGHNESS_VOXEL_GI) {
+			if (depth_pass_mode == PASS_MODE_DEPTH_NORMAL_ROUGHNESS || depth_pass_mode == PASS_MODE_DEPTH_NORMAL_ROUGHNESS_VOXEL_GI) {
 				for (uint32_t v = 0; v < rb->get_view_count(); v++) {
-					resolve_effects->resolve_gi(rb->get_depth_msaa(v), rb_data->get_normal_roughness_msaa(v), surface_cache_gather ? rb->get_texture_slice("surface_cache_visibility", "primary_msaa", v, 0) : (using_voxelgi ? rb_data->get_voxelgi_msaa(v) : RID()), rb->get_depth_texture(v), rb_data->get_normal_roughness(v), surface_cache_gather ? rb->get_texture_slice("surface_cache_visibility", "primary", v, 0) : (using_voxelgi ? rb_data->get_voxelgi(v) : RID()), rb->get_internal_size(), texture_multisamples[msaa], surface_cache_gather);
+					resolve_effects->resolve_gi(rb->get_depth_msaa(v), rb_data->get_normal_roughness_msaa(v), using_voxelgi ? rb_data->get_voxelgi_msaa(v) : RID(), rb->get_depth_texture(v), rb_data->get_normal_roughness(v), using_voxelgi ? rb_data->get_voxelgi(v) : RID(), rb->get_internal_size(), texture_multisamples[msaa]);
 				}
 			} else if (finish_depth) {
 				for (uint32_t v = 0; v < rb->get_view_count(); v++) {
@@ -3517,8 +3479,7 @@ void RenderForwardClustered::_update_render_base_uniform_set() {
 	}
 }
 
-// Fork(Lestoroer): p_surface_cache_geometry binds Surface Cache buffers without render data (depth pre-pass).
-RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas, bool p_surface_cache_geometry) {
+RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas) {
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 
@@ -3903,37 +3864,23 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 	}
 
 	// Fork(Lestoroer): Surface Cache bindings 37-46; defaults keep the layout valid without GI.
-	// Buffers: surfaces, triangles and lighting-cell irradiance.
-	static const int surface_cache_buffer_bindings[3] = { 37, 38, 40 };
-	for (int i = 0; i < 3; i++) {
+	// Buffers: lookup records and rooms of the world cache.
+	for (int i = 0; i < 2; i++) {
 		RD::Uniform u;
-		u.binding = surface_cache_buffer_bindings[i];
+		u.binding = 37 + i;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-		u.append_id((p_render_data || p_surface_cache_geometry) && surface_cache_buffers.size() == 3 ? surface_cache_buffers[i] : scene_shader.default_vec4_xform_buffer);
+		u.append_id(p_render_data && surface_cache_buffers.size() == 2 ? surface_cache_buffers[i] : scene_shader.default_vec4_xform_buffer);
 		uniforms.push_back(u);
 	}
-	{ // Fork(Lestoroer): viewport-owned diffuse final gather, produced after depth.
+	// Fork(Lestoroer): viewport-owned diffuse gather and reflection, produced after depth. Without them
+	// the transparent default has no owner depth, and fragments read the world cache.
+	for (int i = 0; i < 2; i++) {
 		RD::Uniform u;
-		u.binding = 41;
+		u.binding = i == 0 ? 41 : 43;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		RID gather = rb.is_valid() && rb->has_texture("surface_cache", surface_cache_gather_texture) ? rb->get_texture("surface_cache", surface_cache_gather_texture) : RID();
-		u.append_id(gather.is_valid() ? gather : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
-		uniforms.push_back(u);
-	}
-	{
-		RD::Uniform u;
-		u.binding = 42;
-		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		RID primary = rb.is_valid() && rb->has_texture("surface_cache_visibility", "primary") ? rb->get_texture("surface_cache_visibility", "primary") : RID();
-		u.append_id(primary.is_valid() ? primary : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT));
-		uniforms.push_back(u);
-	}
-	{
-		RD::Uniform u;
-		u.binding = 43;
-		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		RID reflection = rb.is_valid() && rb->has_texture("surface_cache", "reflection") ? rb->get_texture("surface_cache", "reflection") : RID();
-		u.append_id(reflection.is_valid() ? reflection : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
+		StringName name = i == 0 ? surface_cache_gather_texture : StringName("reflection");
+		RID texture = rb.is_valid() && rb->has_texture("surface_cache", name) ? rb->get_texture("surface_cache", name) : RID();
+		u.append_id(texture.is_valid() ? texture : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_TRANSPARENT));
 		uniforms.push_back(u);
 	}
 	for (int i = 0; i < 3; i++) {
@@ -4778,8 +4725,7 @@ static RD::FramebufferFormatID _get_reflection_probe_color_framebuffer_format_fo
 	return RD::get_singleton()->framebuffer_format_create(attachments);
 }
 
-// Fork(Lestoroer): p_surface_cache adds the RGBA32UI visibility attachment.
-static RD::FramebufferFormatID _get_depth_framebuffer_format_for_pipeline(bool p_can_be_storage, RD::TextureSamples p_samples, bool p_normal_roughness, bool p_voxelgi, bool p_surface_cache = false) {
+static RD::FramebufferFormatID _get_depth_framebuffer_format_for_pipeline(bool p_can_be_storage, RD::TextureSamples p_samples, bool p_normal_roughness, bool p_voxelgi) {
 	const bool multisampling = p_samples > RD::TEXTURE_SAMPLES_1;
 	RD::AttachmentFormat attachment;
 	attachment.samples = p_samples;
@@ -4794,12 +4740,6 @@ static RD::FramebufferFormatID _get_depth_framebuffer_format_for_pipeline(bool p
 	if (p_normal_roughness) {
 		attachment.format = RenderForwardClustered::RenderBufferDataForwardClustered::get_normal_roughness_format();
 		attachment.usage_flags = RenderForwardClustered::RenderBufferDataForwardClustered::get_normal_roughness_usage_bits(false, multisampling, p_can_be_storage);
-		attachments.push_back(attachment);
-	}
-
-	if (p_surface_cache) { // Fork(Lestoroer)
-		attachment.format = RD::DATA_FORMAT_R32G32B32A32_UINT;
-		attachment.usage_flags = RenderForwardClustered::RenderBufferDataForwardClustered::get_normal_roughness_usage_bits(false, multisampling, true);
 		attachments.push_back(attachment);
 	}
 
@@ -4957,11 +4897,6 @@ void RenderForwardClustered::_mesh_compile_pipelines_for_surface(const SurfacePi
 	// Generate the depth pipelines if the material supports depth or it must be part of the shadow pass.
 	pipeline_key.color_pass_flags = 0;
 
-	if (p_global.use_surface_cache) { // Fork(Lestoroer)
-		pipeline_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE;
-		pipeline_key.framebuffer_format_id = _get_depth_framebuffer_format_for_pipeline(buffers_can_be_storage, RD::TextureSamples(p_global.texture_samples), true, false, true);
-		_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, true, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
-	}
 	if (p_global.use_normal_and_roughness) {
 		// A lot of different effects rely on normal and roughness being written to during the depth pass.
 		pipeline_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS;

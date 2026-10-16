@@ -1,86 +1,125 @@
-// Fork(Lestoroer): instance/surface/primitive address, independent of the camera.
-struct SurfaceCacheTriangle { vec4 a; vec4 b; vec4 c; vec4 uv_ab; vec4 uv_c; vec4 light_uv_ab; vec4 light_uv_c; uvec4 material_tile; uvec4 lighting_tile; };
-struct SurfaceCacheMapping { uvec4 material; uvec4 lighting; };
-layout(set=1,binding=37,std430) readonly buffer SurfaceCacheSurfaces { SurfaceCacheMapping data[]; } surface_cache_surfaces;
-layout(set=1,binding=38,std430) readonly buffer SurfaceCacheTriangles { SurfaceCacheTriangle data[]; } surface_cache_triangles;
-// Irradiance of a lighting cell; alpha marks a captured (owned) cell. Every triangle owns its tile,
-// so the address alone identifies the chart and surface.
-layout(set=1,binding=40,std430) readonly buffer SurfaceCacheIrradiance { vec4 data[]; } surface_cache_light;
+// Fork(Lestoroer): Surface Cache GI of Forward+ fragments.
+// The screen gather and the reflection of a pixel belong to the surface whose view depth (distance
+// along the view axis) they carry in alpha: the pre-pass surface of the pixel. Other fragments,
+// transparent ones above all, read the world cache at their position.
 
-layout(set=1,binding=41) uniform texture2D surface_cache_gather;
-layout(set=1,binding=44) uniform texture2D surface_cache_glass;
-layout(set=1,binding=45) uniform utexture2D surface_cache_glass_primary;
-layout(set=1,binding=46) uniform texture2D surface_cache_transmittance;
-layout(set=1,binding=43) uniform texture2D surface_cache_reflection;
-layout(set=1,binding=42) uniform utexture2D surface_cache_primary;
+// World cache of the game GI: lookup records of its hash grid (fingerprint, light) and room volumes.
+// surface_cache_world_irradiance repeats hash_irradiance of the game (world_hash_layout and
+// world_hash_access in features/lighting/surface_cache); its probe world_cache_fragments.gd checks
+// that both agree.
+layout(set = 1, binding = 37, std430) readonly buffer SurfaceCacheHashLookup { uvec4 data[]; } surface_cache_hash_lookup;
+layout(set = 1, binding = 38, std430) readonly buffer SurfaceCacheHashRooms { uvec4 header; vec4 data[]; } surface_cache_hash_rooms;
 
-vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 normal) {
-	uvec4 mapping=surface_cache_surfaces.data[surface].lighting;
-	SurfaceCacheTriangle triangle=surface_cache_triangles.data[mapping.x+primitive];
-	vec3 ab=triangle.b.xyz-triangle.a.xyz, ac=triangle.c.xyz-triangle.a.xyz, ap=position-triangle.a.xyz;
-	vec3 geometric=cross(ab,ac), absolute_normal=abs(geometric);
-	uint axis=absolute_normal.x>absolute_normal.y?0u:1u;
-	if(absolute_normal.z>absolute_normal[axis]) axis=2u;
-	vec2 barycentric=vec2(cross(ap,ac)[axis],cross(ab,ap)[axis])/geometric[axis];
-	vec2 uv=triangle.light_uv_ab.xy*(1.0-barycentric.x-barycentric.y)+triangle.light_uv_ab.zw*barycentric.x+triangle.light_uv_c.xy*barycentric.y;
-	uint side=dot(normal,cross(ab,ac)*triangle.a.w)<0.0?1u:0u;
-	ivec2 size=ivec2(mapping.zw);
-	vec2 pixel=uv*vec2(size)-0.5;
-	ivec2 base=ivec2(floor(pixel));
-	vec2 fraction=fract(pixel);
-	vec3 irradiance=vec3(0.0);
-	float weight_sum=0.0;
-	uvec4 tile=triangle.lighting_tile;
-	ivec2 tile_size=ivec2(tile.z&65535u,tile.z>>16u);
-	uint offset=mapping.y+tile.w+side*uint(tile_size.x*tile_size.y);
-	for (int y=0;y<2;y++) for (int x=0;x<2;x++) {
-		ivec2 point=base+ivec2(x,y);
-		ivec2 local=point-ivec2(tile.xy);
-		if (any(lessThan(local,ivec2(0))) || any(greaterThanEqual(local,tile_size))) continue;
-		uint address=offset+uint(local.y*tile_size.x+local.x);
-		if (surface_cache_light.data[address].w<=0.0) continue;
-		float weight=(x==0?1.0-fraction.x:fraction.x)*(y==0?1.0-fraction.y:fraction.y);
-		irradiance+=surface_cache_light.data[address].rgb*weight;
-		weight_sum+=weight;
-	}
-	if (weight_sum>1e-6) return max(irradiance/weight_sum,vec3(0.0));
-	// A chart edge may fall between raster samples. Search only this chart/side.
-	float nearest=1e30;
-	bool found=false;
-	for (int y=-2;y<=2;y++) for (int x=-2;x<=2;x++) {
-		ivec2 point=base+ivec2(x,y);
-		ivec2 local=point-ivec2(tile.xy);
-		if (any(lessThan(local,ivec2(0))) || any(greaterThanEqual(local,tile_size))) continue;
-		uint address=offset+uint(local.y*tile_size.x+local.x);
-		if (surface_cache_light.data[address].w<=0.0) continue;
-		float distance=dot(vec2(point)-pixel,vec2(point)-pixel);
-		if (distance<nearest) { nearest=distance; irradiance=surface_cache_light.data[address].rgb; found=true; }
-	}
-	// Visible coverage failure, never disguised as computed darkness.
-	return found?max(irradiance,vec3(0.0)):vec3(1.0,0.0,1.0);
+layout(set = 1, binding = 41) uniform texture2D surface_cache_gather;
+layout(set = 1, binding = 43) uniform texture2D surface_cache_reflection;
+layout(set = 1, binding = 44) uniform texture2D surface_cache_glass;
+layout(set = 1, binding = 45) uniform utexture2D surface_cache_glass_primary;
+layout(set = 1, binding = 46) uniform texture2D surface_cache_transmittance;
+
+const float SURFACE_CACHE_HASH_CELL = 0.08;
+const float SURFACE_CACHE_HASH_NEAR = 12.0;
+const float SURFACE_CACHE_HASH_ROOM_PROBE = 0.05;
+const uint SURFACE_CACHE_HASH_PROBES = 8u;
+// View depth in a half-float alpha keeps about 5e-4 of itself.
+const float SURFACE_CACHE_DEPTH_TOLERANCE = 2e-3;
+
+uint surface_cache_hash(uint x) {
+	x ^= x >> 16u;
+	x *= 0x7feb352du;
+	x ^= x >> 15u;
+	x *= 0x846ca68bu;
+	return x ^ (x >> 16u);
 }
 
+uint surface_cache_hash_room(vec3 position) {
+	for (uint room = 0u; room < surface_cache_hash_rooms.header.x; room++) {
+		uint base = room * 5u;
+		vec3 local = vec3(dot(surface_cache_hash_rooms.data[base].xyz, position) + surface_cache_hash_rooms.data[base].w,
+				dot(surface_cache_hash_rooms.data[base + 1u].xyz, position) + surface_cache_hash_rooms.data[base + 1u].w,
+				dot(surface_cache_hash_rooms.data[base + 2u].xyz, position) + surface_cache_hash_rooms.data[base + 2u].w);
+		if (all(greaterThanEqual(local, surface_cache_hash_rooms.data[base + 3u].xyz)) && all(lessThanEqual(local, surface_cache_hash_rooms.data[base + 4u].xyz))) {
+			return room + 1u;
+		}
+	}
+	return 0u;
+}
 
-vec3 surface_cache_for_fragment(uint surface, uint primitive, vec3 position, vec3 normal, ivec2 pixel, float view_depth, out bool gather_used) {
+// Cell key of the level; tag holds the normal face and the room of the point.
+uvec2 surface_cache_hash_key(vec3 position, uint tag, uint level) {
+	uvec3 cell = uvec3(ivec3(floor(position / (SURFACE_CACHE_HASH_CELL * float(1u << level)))) + ivec3(32768)) & 65535u;
+	return uvec2(cell.x | (cell.y << 16u), cell.z | tag | (level << 19u));
+}
+
+bool surface_cache_hash_light(uvec2 key, out vec3 light) {
+	uint mask = uint(surface_cache_hash_lookup.data.length()) - 1u;
+	uint fingerprint = surface_cache_hash(key.x ^ surface_cache_hash(key.y ^ 0x68bc21ebu)) | 1u;
+	uint base = surface_cache_hash(key.y ^ surface_cache_hash(key.x));
+	light = vec3(0.0);
+	for (uint i = 0u; i < SURFACE_CACHE_HASH_PROBES; i++) {
+		uvec4 record = surface_cache_hash_lookup.data[(base + i) & mask];
+		if (record.x == fingerprint) {
+			light = uintBitsToFloat(record.yzw);
+			return true;
+		}
+		if (record.x == 0u) {
+			return false;
+		}
+	}
+	return false;
+}
+
+// Incident light of the world cache at a surface point; the cell of the other level when the own
+// one is not filled yet, black without both.
+vec3 surface_cache_world_irradiance(vec3 position, vec3 normal, vec3 camera) {
+	vec3 magnitude = abs(normal);
+	uint axis = magnitude.x >= magnitude.y && magnitude.x >= magnitude.z ? 0u : (magnitude.y >= magnitude.z ? 1u : 2u);
+	uint face = axis * 2u + (normal[axis] < 0.0 ? 1u : 0u);
+	uint tag = (face << 16u) | (surface_cache_hash_room(position + normal * SURFACE_CACHE_HASH_ROOM_PROBE) << 20u);
+	uint level = distance(position, camera) < SURFACE_CACHE_HASH_NEAR ? 0u : 1u;
+	vec3 light;
+	if (surface_cache_hash_light(surface_cache_hash_key(position, tag, level), light) || surface_cache_hash_light(surface_cache_hash_key(position, tag, 1u - level), light)) {
+		return max(light, vec3(0.0));
+	}
+	return vec3(0.0);
+}
+
+// The GI texel belongs to the fragment at its view depth; zero — the GI has no value there.
+bool surface_cache_texel_owned(float texel_depth, float fragment_depth) {
+	return texel_depth > 0.0 && abs(texel_depth - fragment_depth) <= texel_depth * SURFACE_CACHE_DEPTH_TOLERANCE;
+}
+
+// Diffuse irradiance of a GI fragment: the screen gather of its pixel or the world cache. fragment —
+// pixel coordinates and view depth of the fragment.
+vec3 surface_cache_for_fragment(vec3 position, vec3 normal, vec3 camera, vec3 fragment, out bool gather_used) {
+	ivec2 pixel = ivec2(fragment.xy);
 	ivec2 size = textureSize(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), 0);
 	gather_used = false;
 	if (all(greaterThanEqual(pixel, ivec2(0))) && all(lessThan(pixel, size))) {
 		vec4 gather = texelFetch(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), pixel, 0);
-		// Transparent fragments cannot borrow irradiance of opaque geometry behind them.
-		if (gather.a > 0.0 && all(equal(texelFetch(usampler2D(surface_cache_primary, SAMPLER_NEAREST_CLAMP), pixel, 0).xy, uvec2(surface + 1u, primitive + 1u)))) {
+		if (surface_cache_texel_owned(gather.a, fragment.z)) {
 			gather_used = true;
 			return gather.rgb;
 		}
 	}
-	return surface_cache_irradiance(surface, primitive, position, normal);
+	return surface_cache_world_irradiance(position, normal, camera);
 }
 
-// Fully BRDF-weighted radiance; never apply the environment DFG a second time.
-bool surface_cache_reflection_for_fragment(uint surface, uint primitive, ivec2 pixel, out vec3 radiance) {
-	ivec2 size=textureSize(sampler2D(surface_cache_reflection,SAMPLER_NEAREST_CLAMP),0);
-	if(any(lessThan(pixel,ivec2(0))) || any(greaterThanEqual(pixel,size)))return false;
-	if(any(notEqual(texelFetch(usampler2D(surface_cache_primary,SAMPLER_NEAREST_CLAMP),pixel,0).xy,uvec2(surface,primitive+1u))))return false;
-	vec4 value=texelFetch(sampler2D(surface_cache_reflection,SAMPLER_NEAREST_CLAMP),pixel,0);
-	radiance=value.rgb;
-	return value.a>0.0;
+// Radiance along the reflection of the fragment, before the environment BRDF.
+bool surface_cache_reflection_for_fragment(vec3 fragment, out vec3 radiance) {
+	ivec2 pixel = ivec2(fragment.xy);
+	ivec2 size = textureSize(sampler2D(surface_cache_reflection, SAMPLER_NEAREST_CLAMP), 0);
+	radiance = vec3(0.0);
+	if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size))) {
+		return false;
+	}
+	vec4 value = texelFetch(sampler2D(surface_cache_reflection, SAMPLER_NEAREST_CLAMP), pixel, 0);
+	radiance = value.rgb;
+	return surface_cache_texel_owned(value.a, fragment.z);
+}
+
+// The GI resolved the glass of this pixel for this surface (cache id + 1) and primitive: glass_primary
+// holds surface + 1 and primitive + 1 of its nearest glass. Surface Cache glass is drawn without LOD,
+// so its primitives are those of the GI triangles.
+bool surface_cache_glass_owned(uint cache_surface, uint primitive, ivec2 pixel) {
+	return all(lessThan(pixel, textureSize(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), 0))) && all(equal(texelFetch(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), pixel, 0).xy, uvec2(cache_surface, primitive + 1u)));
 }

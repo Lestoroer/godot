@@ -62,8 +62,7 @@ public:
 		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW = 6;
 		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_MATERIAL = 7;
 		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_SDF = 8;
-		constexpr static uint16_t SHADER_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE = 9; // Fork(Lestoroer)
-		constexpr static uint16_t SHADER_VERSION_COLOR_PASS = 10; // Fork(Lestoroer): was 9 upstream; shifted by the Surface Cache depth variant.
+		constexpr static uint16_t SHADER_VERSION_COLOR_PASS = 9;
 	};
 
 	enum ShaderColorPassFlags {
@@ -85,7 +84,6 @@ public:
 		PIPELINE_VERSION_DEPTH_PASS_MULTIVIEW,
 		PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_MULTIVIEW,
 		PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW,
-		PIPELINE_VERSION_DEPTH_PASS_WITH_SURFACE_CACHE, // Fork(Lestoroer)
 		PIPELINE_VERSION_COLOR_PASS,
 		PIPELINE_VERSION_MAX
 	};
@@ -260,6 +258,7 @@ public:
 		// Fork(Lestoroer): Surface Cache render modes.
 		bool surface_cache_global_invariant = false;
 		bool surface_cache_presentation = false;
+		bool uses_surface_cache_transmission = false; // Fork(Lestoroer): thin glass of the GI.
 		bool uses_vertex = false;
 		bool uses_position = false;
 		bool uses_sss = false;

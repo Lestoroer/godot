@@ -427,7 +427,7 @@ GI работает только на Vulkan с аппаратным ray query �
      на все размеры (`mesh`): вершины повторены по углам треугольников, материалы
      поверхностей и blend shapes исходного `ArrayMesh`, координаты захвата каждой раскладки
      заданы `mesh_surface_set_capture_uv`. Записи треугольников по 144 байта повторяют
-     `SurfaceCacheTriangle` из `surface_cache_inc.glsl`: вершины с исходными индексами,
+     `CacheTriangle` игры (`cache_types`): вершины с исходными индексами,
      UV и chart раскладки материала, знак ориентации по нормали, тайл; при втором размере —
      UV, chart и тайл раскладки освещения. Результат: `mesh`, `layouts` (`size`, `sample_count`,
      `surfaces` с `offset`, `size`, `tiles`, `charts`, `sample_count`),
@@ -501,36 +501,37 @@ GI работает только на Vulkan с аппаратным ray query �
     `renderer_rd/forward_clustered/scene_shader_forward_clustered.{h,cpp}`,
     `renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl`,
     `renderer_rd/shaders/surface_cache_inc.glsl`, `renderer_rd/shaders/scene_data_inc.glsl`,
-    `renderer_rd/storage_rd/render_scene_data_rd.{h,cpp}`, `renderer_rd/effects/resolve.{h,cpp}`,
-    `renderer_rd/shaders/effects/resolve.glsl`, `scene/resources/compositor.{h,cpp}`,
+    `renderer_rd/storage_rd/render_scene_data_rd.{h,cpp}`, `scene/resources/compositor.{h,cpp}`,
     `rendering_server_enums.h`; заглушки других renderer-ов —
     `renderer_rd/forward_mobile/scene_shader_forward_mobile.cpp`,
     `renderer_rd/shaders/forward_mobile/scene_forward_mobile.glsl`,
     `drivers/gles3/shaders/scene.glsl`, `drivers/gles3/storage/material_storage.cpp` |
-    - `scenario_set_surface_cache_buffers` задаёт три storage buffer: таблицу поверхностей
-      с раздельными адресами материала и света, мировые треугольники с обеими
-      параметризациями и irradiance ячеек света; её alpha — годность ячейки: у каждого
-      треугольника свой тайл, поэтому адрес сам задаёт карту и поверхность, а раскладку
-      ячеек света движок не читает. Descriptors (binding 37, 38, 40) объявлены во всех
-      вариантах Forward+, включая depth, shadow и unshaded, ради общего layout uniform set.
-    - При активном GI depth/normal prepass пишет primary visibility RGBA32UI: surface,
-      primitive и barycentrics покрытой точки (+8 байт на пиксель и на MSAA sample).
-      MSAA resolve берёт её из того же sample, что depth/normal.
+    - `scenario_set_surface_cache_buffers` задаёт два storage buffer мирового кеша игры:
+      записи поиска хеш-сетки (uvec4 на слот: отпечаток и свет; слотов — степень двойки) и
+      помещения (заголовок и пять vec4 на помещение). Пустой массив выключает GI. Descriptors
+      (binding 37, 38) объявлены во всех вариантах Forward+, включая depth, shadow и unshaded,
+      ради общего layout uniform set. Поиск ячейки в `surface_cache_inc.glsl` повторяет
+      `hash_irradiance` игры (`world_hash_layout`, `world_hash_access`): при правке раскладки
+      ключа меняются обе копии, расхождение ловит `world_cache_fragments.gd`.
+    - При активном GI depth prepass обязателен; это штатный prepass с normal/roughness.
     - `scenario_set_surface_cache_view_callback` вызывается после prepass для каждого
       viewport, включая зеркала, независимо от его Compositor. Viewport-текстуры
-      `surface_cache/gather`, `surface_cache/reflection`, `glass`, `glass_primary`
-      применяются к фрагменту только при совпадении surface/primitive с primary visibility.
-      Обратный вызов может вернуть имя текстуры контекста `surface_cache`, в которой лежит сбор
-      этого вида; без ответа — `gather`.
+      `surface_cache/gather` и `surface_cache/reflection` несут в альфе глубину своей точки
+      вдоль взгляда, м; фрагмент берёт их, только если его глубина совпадает в пределах 0,2 %:
+      это поверхность prepass пикселя. Остальные фрагменты, прежде всего прозрачные, берут
+      свет мирового кеша по позиции и нормали; без ячейки — чёрный. Обратный вызов может
+      вернуть имя текстуры контекста `surface_cache`, в которой лежит сбор этого вида; без
+      ответа — `gather`.
     - Irradiance заменяет ambient после пользовательского `IRRADIANCE`, до AO, albedo и
-      тонемапа. Трассированное отражение заменяет IBL без повторного DFG и SSAO;
-      пользовательский `RADIANCE` сохраняет приоритет. Затенение IBL при Surface Cache
-      считается по AO, roughness и углу взгляда (аппроксимация Lagarde), без него —
+      тонемапа. Трассированное отражение — свет вдоль отражения до доли отражённой энергии:
+      оно заменяет карту окружения после её затенения и SSR, и DFG движка взвешивает его,
+      как карту; пользовательский `RADIANCE` сохраняет приоритет. Затенение IBL при Surface
+      Cache считается по AO, roughness и углу взгляда (аппроксимация Lagarde), без него —
       по-прежнему. Тонкое стекло получает RGB transmittance (binding 46) и копию opaque HDR;
-      `glass_primary` (R32UI) — глобальный треугольник+1 стекла, для которого посчитан пиксель.
-      Отсутствие покрытия рисуется пурпурным.
-    - Зарегистрированные в GI экземпляры рисуются без mesh LOD: у LOD нет соответствия
-      primitive → chart.
+      `glass_primary` (RG32UI) — поверхность + 1 и примитив + 1 стекла, для которого посчитан
+      пиксель.
+    - Экземпляры GI рисуются с mesh LOD, кроме поверхностей с `SURFACE_CACHE_TRANSMISSION`:
+      стекло сверяется с GI по примитиву.
     - `CompositorEffect` получает callback `POST_TEMPORAL`: после TAA, до тонемапа. При
       temporal upscaling потребитель читает соответствующую upscaled-текстуру.
     - `CompositorEffect` с флагом `NEEDS_ROUGHNESS` получает normal/roughness и без
@@ -538,7 +539,7 @@ GI работает только на Vulkan с аппаратным ray query �
 
     Проверки: `gather_reference.gd`, `reflection_contract.gd`, `specular_visibility.gd`,
     `temporal_reprojection.gd`, `temporal_motion.gd`, `surface_origin.gd`,
-    `enclosure_reference.gd`, `bathroom_capture.gd`.
+    `enclosure_reference.gd`, `bathroom_capture.gd`, `world_cache_fragments.gd`.
 
 11. **Язык шейдеров** | `shader_types.cpp`, `shader_compiler.{h,cpp}`,
     `renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp`,

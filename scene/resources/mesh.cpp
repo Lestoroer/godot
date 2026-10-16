@@ -2378,7 +2378,7 @@ static uint64_t _surface_cache_lighting_cluster_key(const Vector3 &p_center, con
 
 // Fork(Lestoroer): the complete Surface Cache preparation of a mesh. Every texel size gets
 // its own capture chart and capture mesh; the remap shared by them is computed once. Ray
-// triangle records (SurfaceCacheTriangle in surface_cache_inc.glsl) pack the first layout
+// triangle records (CacheTriangle of the game's Surface Cache cache_types) pack the first layout
 // and, for a second texel size, its chart coordinates and tiles as the lighting layout.
 Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const {
 	static constexpr int TRIANGLE_BYTES = 144;

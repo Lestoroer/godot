@@ -127,8 +127,7 @@ public:
 		enum DepthFrameBufferType {
 			DEPTH_FB,
 			DEPTH_FB_ROUGHNESS,
-			DEPTH_FB_ROUGHNESS_VOXELGI, // Fork(Lestoroer): trailing comma added.
-			DEPTH_FB_SURFACE_CACHE // Fork(Lestoroer)
+			DEPTH_FB_ROUGHNESS_VOXELGI
 		};
 
 		RID render_sdfgi_uniform_set;
@@ -139,7 +138,6 @@ public:
 		RID get_specular(uint32_t p_layer) { return render_buffers->get_texture_slice(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_SPECULAR, p_layer, 0); }
 		RID get_specular_msaa(uint32_t p_layer) { return render_buffers->get_texture_slice(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_SPECULAR_MSAA, p_layer, 0); }
 
-		void ensure_surface_cache_visibility(); // Fork(Lestoroer)
 		void ensure_normal_roughness_texture();
 		bool has_normal_roughness() const { return render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS); }
 		RID get_normal_roughness() const { return render_buffers->get_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS); }
@@ -187,7 +185,7 @@ private:
 
 	void _update_render_base_uniform_set();
 	RID _setup_sdfgi_render_pass_uniform_set(RID p_albedo_texture, RID p_emission_texture, RID p_emission_aniso_texture, RID p_geom_facing_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index);
-	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false, bool p_surface_cache_geometry = false); // Fork(Lestoroer): p_surface_cache_geometry added.
+	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
 
 	struct BestFitNormal {
 		BestFitNormalShaderRD shader;
@@ -213,7 +211,6 @@ private:
 		PASS_MODE_SHADOW,
 		PASS_MODE_SHADOW_DP,
 		PASS_MODE_DEPTH,
-		PASS_MODE_DEPTH_SURFACE_CACHE, // Fork(Lestoroer)
 		PASS_MODE_DEPTH_NORMAL_ROUGHNESS,
 		PASS_MODE_DEPTH_NORMAL_ROUGHNESS_VOXEL_GI,
 		PASS_MODE_DEPTH_MATERIAL,
@@ -657,7 +654,6 @@ private:
 				uint32_t use_reflection_probes : 1;
 				uint32_t use_separate_specular : 1;
 				uint32_t use_motion_vectors : 1;
-				uint32_t use_surface_cache : 1; // Fork(Lestoroer)
 				uint32_t use_normal_and_roughness : 1;
 				uint32_t use_lightmaps : 1;
 				uint32_t use_voxelgi : 1;
