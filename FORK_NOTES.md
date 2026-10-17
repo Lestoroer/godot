@@ -510,9 +510,10 @@ GI работает только на Vulkan с аппаратным ray query �
       записи поиска хеш-сетки (uvec4 на слот: отпечаток и свет; слотов — степень двойки) и
       помещения (заголовок и пять vec4 на помещение). Пустой массив выключает GI. Descriptors
       (binding 37, 38) объявлены во всех вариантах Forward+, включая depth, shadow и unshaded,
-      ради общего layout uniform set. Поиск ячейки в `surface_cache_inc.glsl` повторяет
-      `hash_irradiance` игры (`world_hash_layout`, `world_hash_access`): при правке раскладки
-      ключа меняются обе копии, расхождение ловит `world_cache_fragments.gd`.
+      ради общего layout uniform set. Поиск света в `surface_cache_inc.glsl` повторяет
+      `hash_irradiance_smooth` игры (`world_hash_layout`, `world_hash_access`): билинейно по
+      четырём ячейкам вокруг точки в плоскости её грани. При правке раскладки ключа или поиска
+      меняются обе копии, расхождение ловит `world_cache_fragments.gd`.
     - При активном GI depth prepass обязателен; это штатный prepass с normal/roughness.
     - `scenario_set_surface_cache_view_callback` вызывается после prepass для каждого
       viewport, включая зеркала, независимо от его Compositor. Viewport-текстуры
