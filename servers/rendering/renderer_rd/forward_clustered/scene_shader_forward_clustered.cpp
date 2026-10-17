@@ -77,7 +77,6 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	// Fork(Lestoroer): Surface Cache render modes.
 	surface_cache_global_invariant = false;
 	surface_cache_presentation = false;
-	uses_surface_cache_transmission = false;
 	uses_vertex = false;
 	uses_position = false;
 	uses_sss = false;
@@ -129,7 +128,6 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.render_mode_flags["particle_trails"] = &uses_particle_trails;
 	actions.render_mode_flags["world_vertex_coords"] = &uses_world_coordinates;
 
-	actions.usage_flag_pointers["SURFACE_CACHE_TRANSMISSION"] = &uses_surface_cache_transmission; // Fork(Lestoroer)
 	actions.usage_flag_pointers["ALPHA"] = &uses_alpha;
 	actions.usage_flag_pointers["ALPHA_SCISSOR_THRESHOLD"] = &uses_alpha_clip;
 	actions.usage_flag_pointers["ALPHA_HASH_SCALE"] = &uses_alpha_clip;
@@ -207,7 +205,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	}
 	cull_mode = RSE::CullMode(cull_modei);
 	uses_screen_texture_mipmaps = gen_code.uses_screen_texture_mipmaps;
-	uses_screen_texture = gen_code.uses_screen_texture || uses_surface_cache_transmission; // Fork(Lestoroer): thin transmission composites over the screen copy.
+	uses_screen_texture = gen_code.uses_screen_texture;
 	uses_depth_texture = gen_code.uses_depth_texture;
 	uses_normal_texture = gen_code.uses_normal_roughness_texture;
 	uses_vertex_time = gen_code.uses_vertex_time;

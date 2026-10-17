@@ -12,9 +12,6 @@ layout(set = 1, binding = 38, std430) readonly buffer SurfaceCacheHashRooms { uv
 
 layout(set = 1, binding = 41) uniform texture2D surface_cache_gather;
 layout(set = 1, binding = 43) uniform texture2D surface_cache_reflection;
-layout(set = 1, binding = 44) uniform texture2D surface_cache_glass;
-layout(set = 1, binding = 45) uniform utexture2D surface_cache_glass_primary;
-layout(set = 1, binding = 46) uniform texture2D surface_cache_transmittance;
 
 const float SURFACE_CACHE_HASH_CELL = 0.08;
 const float SURFACE_CACHE_HASH_NEAR = 12.0;
@@ -145,9 +142,3 @@ bool surface_cache_reflection_for_fragment(vec3 fragment, out vec3 radiance) {
 	return surface_cache_texel_owned(value.a, fragment.z);
 }
 
-// The GI resolved the glass of this pixel for this surface (cache id + 1) and primitive: glass_primary
-// holds surface + 1 and primitive + 1 of its nearest glass. Surface Cache glass is drawn without LOD,
-// so its primitives are those of the GI triangles.
-bool surface_cache_glass_owned(uint cache_surface, uint primitive, ivec2 pixel) {
-	return all(lessThan(pixel, textureSize(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), 0))) && all(equal(texelFetch(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), pixel, 0).xy, uvec2(cache_surface, primitive + 1u)));
-}

@@ -1114,10 +1114,7 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 			surf->sort.uses_lightmap = 0;
 
 			// LOD
-			// Fork(Lestoroer): Surface Cache glass keeps the full mesh: its fragments are matched to the
-			// GI glass of their pixel by primitive (surface_cache_glass_owned).
-			bool surface_cache_glass = !inst->surface_cache_ids.is_empty() && surf->shader->uses_surface_cache_transmission;
-			if (!surface_cache_glass && p_render_data->scene_data->screen_mesh_lod_threshold > 0.0 && mesh_storage->mesh_surface_has_lod(surf->surface)) {
+			if (p_render_data->scene_data->screen_mesh_lod_threshold > 0.0 && mesh_storage->mesh_surface_has_lod(surf->surface)) {
 				uint32_t indices = 0;
 				surf->sort.lod_index = mesh_storage->mesh_surface_get_lod(surf->surface, inst->lod_model_scale * inst->lod_bias, lod_distance * p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, indices);
 				if (p_render_data->render_info) {
@@ -3863,7 +3860,7 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		uniforms.push_back(u);
 	}
 
-	// Fork(Lestoroer): Surface Cache bindings 37-46; defaults keep the layout valid without GI.
+	// Fork(Lestoroer): Surface Cache bindings 37-43; defaults keep the layout valid without GI.
 	// Buffers: lookup records and rooms of the world cache.
 	for (int i = 0; i < 2; i++) {
 		RD::Uniform u;
@@ -3881,15 +3878,6 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		StringName name = i == 0 ? surface_cache_gather_texture : StringName("reflection");
 		RID texture = rb.is_valid() && rb->has_texture("surface_cache", name) ? rb->get_texture("surface_cache", name) : RID();
 		u.append_id(texture.is_valid() ? texture : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_TRANSPARENT));
-		uniforms.push_back(u);
-	}
-	for (int i = 0; i < 3; i++) {
-		RD::Uniform u;
-		u.binding = 44 + i;
-		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		StringName name = i == 0 ? "glass" : (i == 1 ? "glass_primary" : "glass_transmittance");
-		RID texture = rb.is_valid() && rb->has_texture("surface_cache", name) ? rb->get_texture("surface_cache", name) : RID();
-		u.append_id(texture.is_valid() ? texture : texture_storage->texture_rd_get_default(i != 1 ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT));
 		uniforms.push_back(u);
 	}
 	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.default_shader_rd, RENDER_PASS_UNIFORM_SET, uniforms);

@@ -528,11 +528,9 @@ GI работает только на Vulkan с аппаратным ray query �
       оно заменяет карту окружения после её затенения и SSR, и DFG движка взвешивает его,
       как карту; пользовательский `RADIANCE` сохраняет приоритет. Затенение IBL при Surface
       Cache считается по AO, roughness и углу взгляда (аппроксимация Lagarde), без него —
-      по-прежнему. Тонкое стекло получает RGB transmittance (binding 46) и копию opaque HDR;
-      `glass_primary` (RG32UI) — поверхность + 1 и примитив + 1 стекла, для которого посчитан
-      пиксель.
-    - Экземпляры GI рисуются с mesh LOD, кроме поверхностей с `SURFACE_CACHE_TRANSMISSION`:
-      стекло сверяется с GI по примитиву.
+      по-прежнему. Стекло любой толщины рисует сам материал: кадр не составляет его из
+      результатов GI.
+    - Экземпляры GI рисуются с mesh LOD.
     - `CompositorEffect` получает callback `POST_TEMPORAL`: после TAA, до тонемапа. При
       temporal upscaling потребитель читает соответствующую upscaled-текстуру.
     - `CompositorEffect` с флагом `NEEDS_ROUGHNESS` получает normal/roughness и без
@@ -555,7 +553,7 @@ GI работает только на Vulkan с аппаратным ray query �
       меняет геометрию GI, его globals не инвалидируют материал. Действует на один проход.
     - Built-ins: `IN_SURFACE_CACHE_PASS` (global, bool), `SURFACE_CACHE_IRRADIANCE`
       (fragment, read-only vec4, alpha 0 без GI), `SURFACE_CACHE_TRANSMISSION` (fragment,
-      float, доля тонкого пропускания отдельно от alpha), `SURFACE_CACHE_GATHER_USED`
+      float, доля пропускания для лучей GI отдельно от alpha; читает только захват), `SURFACE_CACHE_GATHER_USED`
       (fragment, read-only bool). В проходе захвата `FRONT_FACING` задаётся стороной
       захвата, а не winding развёртки.
 

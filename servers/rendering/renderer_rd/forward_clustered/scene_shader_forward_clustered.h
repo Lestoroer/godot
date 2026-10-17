@@ -258,7 +258,6 @@ public:
 		// Fork(Lestoroer): Surface Cache render modes.
 		bool surface_cache_global_invariant = false;
 		bool surface_cache_presentation = false;
-		bool uses_surface_cache_transmission = false; // Fork(Lestoroer): thin glass of the GI.
 		bool uses_vertex = false;
 		bool uses_position = false;
 		bool uses_sss = false;
