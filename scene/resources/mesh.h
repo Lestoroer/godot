@@ -183,8 +183,8 @@ public:
 	virtual void set_blend_shape_name(int p_index, const StringName &p_name);
 	virtual AABB get_aabb() const;
 
-	Dictionary surface_cache_get_layout(int p_surface, float p_texel_size) const; // Fork(Lestoroer): non-destructive chart remap.
-	Dictionary surface_cache_prepare(const Vector<float> &p_texel_sizes) const; // Fork(Lestoroer): capture meshes and ray triangles in one pass.
+	Dictionary surface_cache_get_layout(int p_surface, float p_texel_size, int p_sides) const; // Fork(Lestoroer): non-destructive chart remap.
+	Dictionary surface_cache_prepare(const Vector<float> &p_texel_sizes, const Vector<int32_t> &p_surface_sides) const; // Fork(Lestoroer): capture meshes and ray triangles in one pass.
 	Vector<Face3> get_faces() const;
 	Vector<Face3> get_surface_faces(int p_surface) const;
 	Ref<TriangleMesh> generate_triangle_mesh() const;

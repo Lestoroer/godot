@@ -2809,6 +2809,15 @@ bool MaterialStorage::material_is_surface_cache_presentation(RID p_material) {
 	return material->next_pass.is_null() || material_is_surface_cache_presentation(material->next_pass);
 }
 
+// Fork(Lestoroer): the back side matters to the GI only where a captured pass draws it. An unknown
+// material keeps both sides.
+bool MaterialStorage::material_is_surface_cache_two_sided(RID p_material) {
+	Material *material = material_owner.get_or_null(p_material);
+	if (!material || !material->shader || !material->shader->data) return true;
+	const bool two_sided = !material->shader->data->is_surface_cache_presentation() && material_get_cull_mode(p_material) != RSE::CULL_MODE_BACK;
+	return two_sided || (material->next_pass.is_valid() && material_is_surface_cache_two_sided(material->next_pass));
+}
+
 void MaterialStorage::MaterialData::surface_texture_changed(Dependency::DependencyChangedNotification p_notification, DependencyTracker *p_tracker) {
 	MaterialData *data = static_cast<MaterialData *>(p_tracker->userdata);
 	Material *material = MaterialStorage::get_singleton()->get_material(data->self);

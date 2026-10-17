@@ -615,6 +615,19 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 					}
 				}
 				data["shader_displacement"] = displacement;
+				// Fork(Lestoroer): sides the GI keeps per surface, 1 when every captured pass culls back faces.
+				const bool overlay_two_sided = instance->material_overlay.is_valid() && RSG::material_storage->material_is_surface_cache_two_sided(instance->material_overlay);
+				PackedInt32Array surface_sides;
+				surface_sides.resize(RSG::mesh_storage->mesh_get_surface_count(instance->base));
+				for (int i = 0; i < surface_sides.size(); i++) {
+					RID material = instance->material_override;
+					if (material.is_null()) {
+						material = i < instance->materials.size() && instance->materials[i].is_valid() ? instance->materials[i] : RSG::mesh_storage->mesh_surface_get_material(instance->base, i);
+					}
+					const bool two_sided = overlay_two_sided || material.is_null() || RSG::material_storage->material_is_surface_cache_two_sided(material);
+					surface_sides.write[i] = two_sided ? 2 : 1;
+				}
+				data["surface_sides"] = surface_sides;
 			}
 		}
 		result.push_back(data);
