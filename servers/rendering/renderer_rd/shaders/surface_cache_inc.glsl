@@ -4,7 +4,7 @@
 // transparent ones above all, read the world cache at their position.
 
 // World cache of the game GI: lookup records of its hash grid (fingerprint, light) and room volumes.
-// surface_cache_world_irradiance repeats hash_irradiance of the game (world_hash_layout and
+// surface_cache_world_irradiance repeats hash_irradiance_smooth of the game (world_hash_layout and
 // world_hash_access in features/lighting/surface_cache); its probe world_cache_fragments.gd checks
 // that both agree.
 layout(set = 1, binding = 37, std430) readonly buffer SurfaceCacheHashLookup { uvec4 data[]; } surface_cache_hash_lookup;
@@ -44,10 +44,10 @@ uint surface_cache_hash_room(vec3 position) {
 	return 0u;
 }
 
-// Cell key of the level; tag holds the normal face and the room of the point.
-uvec2 surface_cache_hash_key(vec3 position, uint tag, uint level) {
-	uvec3 cell = uvec3(ivec3(floor(position / (SURFACE_CACHE_HASH_CELL * float(1u << level)))) + ivec3(32768)) & 65535u;
-	return uvec2(cell.x | (cell.y << 16u), cell.z | tag | (level << 19u));
+// Key of a cell of the level by its integer coordinates; tag holds the normal face and the room.
+uvec2 surface_cache_hash_key(ivec3 cell, uint tag, uint level) {
+	uvec3 wrapped = uvec3(cell + ivec3(32768)) & 65535u;
+	return uvec2(wrapped.x | (wrapped.y << 16u), wrapped.z | tag | (level << 19u));
 }
 
 bool surface_cache_hash_light(uvec2 key, out vec3 light) {
@@ -68,8 +68,36 @@ bool surface_cache_hash_light(uvec2 key, out vec3 light) {
 	return false;
 }
 
-// Incident light of the world cache at a surface point; the cell of the other level when the own
-// one is not filled yet, black without both.
+// Light of the level at a surface point, bilinear over the four cells around it in the plane of
+// its normal face (axis): one cell gave transparent surfaces hard 8 cm edges and its own noise.
+// Missing cells are left out; false — none of the four exists.
+bool surface_cache_hash_smooth(vec3 position, uint axis, uint tag, uint level, out vec3 light) {
+	vec3 scaled = position / (SURFACE_CACHE_HASH_CELL * float(1u << level));
+	ivec3 cell = ivec3(floor(scaled));
+	uint u = (axis + 1u) % 3u, v = (axis + 2u) % 3u;
+	vec2 point = vec2(scaled[u], scaled[v]) - 0.5;
+	ivec2 corner = ivec2(floor(point));
+	vec2 fraction = point - vec2(corner);
+	vec3 sum = vec3(0.0);
+	float total = 0.0;
+	for (int y = 0; y < 2; y++) {
+		for (int x = 0; x < 2; x++) {
+			cell[u] = corner.x + x;
+			cell[v] = corner.y + y;
+			vec3 value;
+			if (surface_cache_hash_light(surface_cache_hash_key(cell, tag, level), value)) {
+				float weight = (x == 0 ? 1.0 - fraction.x : fraction.x) * (y == 0 ? 1.0 - fraction.y : fraction.y);
+				sum += value * weight;
+				total += weight;
+			}
+		}
+	}
+	light = total > 1e-4 ? sum / total : vec3(0.0);
+	return total > 1e-4;
+}
+
+// Incident light of the world cache at a surface point; the other level when the own one has no
+// cells there yet, black without both.
 vec3 surface_cache_world_irradiance(vec3 position, vec3 normal, vec3 camera) {
 	vec3 magnitude = abs(normal);
 	uint axis = magnitude.x >= magnitude.y && magnitude.x >= magnitude.z ? 0u : (magnitude.y >= magnitude.z ? 1u : 2u);
@@ -77,7 +105,7 @@ vec3 surface_cache_world_irradiance(vec3 position, vec3 normal, vec3 camera) {
 	uint tag = (face << 16u) | (surface_cache_hash_room(position + normal * SURFACE_CACHE_HASH_ROOM_PROBE) << 20u);
 	uint level = distance(position, camera) < SURFACE_CACHE_HASH_NEAR ? 0u : 1u;
 	vec3 light;
-	if (surface_cache_hash_light(surface_cache_hash_key(position, tag, level), light) || surface_cache_hash_light(surface_cache_hash_key(position, tag, 1u - level), light)) {
+	if (surface_cache_hash_smooth(position, axis, tag, level, light) || surface_cache_hash_smooth(position, axis, tag, 1u - level, light)) {
 		return max(light, vec3(0.0));
 	}
 	return vec3(0.0);
