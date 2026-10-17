@@ -3902,7 +3902,7 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		uniforms.push_back(u);
 	}
 
-	// Fork(Lestoroer): Surface Cache bindings 37-46; defaults keep the layout valid without GI.
+	// Fork(Lestoroer): Surface Cache bindings 37-43; defaults keep the layout valid without GI.
 	// Buffers: surfaces, triangles and lighting-cell irradiance.
 	static const int surface_cache_buffer_bindings[3] = { 37, 38, 40 };
 	for (int i = 0; i < 3; i++) {
@@ -3934,15 +3934,6 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
 		RID reflection = rb.is_valid() && rb->has_texture("surface_cache", "reflection") ? rb->get_texture("surface_cache", "reflection") : RID();
 		u.append_id(reflection.is_valid() ? reflection : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
-		uniforms.push_back(u);
-	}
-	for (int i = 0; i < 3; i++) {
-		RD::Uniform u;
-		u.binding = 44 + i;
-		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		StringName name = i == 0 ? "glass" : (i == 1 ? "glass_primary" : "glass_transmittance");
-		RID texture = rb.is_valid() && rb->has_texture("surface_cache", name) ? rb->get_texture("surface_cache", name) : RID();
-		u.append_id(texture.is_valid() ? texture : texture_storage->texture_rd_get_default(i != 1 ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_UINT));
 		uniforms.push_back(u);
 	}
 	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.default_shader_rd, RENDER_PASS_UNIFORM_SET, uniforms);

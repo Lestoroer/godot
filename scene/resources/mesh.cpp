@@ -816,8 +816,8 @@ Ref<Resource> Mesh::create_placeholder() const {
 }
 
 void Mesh::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("surface_cache_get_layout", "surface", "texel_size"), &Mesh::surface_cache_get_layout); // Fork(Lestoroer)
-	ClassDB::bind_method(D_METHOD("surface_cache_prepare", "texel_sizes"), &Mesh::surface_cache_prepare); // Fork(Lestoroer)
+	ClassDB::bind_method(D_METHOD("surface_cache_get_layout", "surface", "texel_size", "sides"), &Mesh::surface_cache_get_layout); // Fork(Lestoroer)
+	ClassDB::bind_method(D_METHOD("surface_cache_prepare", "texel_sizes", "surface_sides"), &Mesh::surface_cache_prepare); // Fork(Lestoroer)
 	ClassDB::bind_method(D_METHOD("set_lightmap_size_hint", "size"), &Mesh::set_lightmap_size_hint);
 	ClassDB::bind_method(D_METHOD("get_lightmap_size_hint"), &Mesh::get_lightmap_size_hint);
 	ClassDB::bind_method(D_METHOD("get_aabb"), &Mesh::get_aabb);
@@ -2076,8 +2076,9 @@ bool (*array_mesh_lightmap_unwrap_callback)(float p_texel_size, const float *p_v
 
 // Fork(Lestoroer): retain the source vertex/primitive identities instead of rebuilding
 // a mesh through SurfaceTool, which drops CUSTOM data and refuses blend shapes.
-Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) const {
+Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size, int p_sides) const {
 	ERR_FAIL_COND_V(!Math::is_finite(p_texel_size) || p_texel_size <= 0, Dictionary());
+	ERR_FAIL_COND_V_MSG(p_sides != 1 && p_sides != 2, Dictionary(), "Surface Cache: a surface has one or two sides.");
 	ERR_FAIL_INDEX_V(p_surface, get_surface_count(), Dictionary());
 	ERR_FAIL_COND_V(surface_get_primitive_type(p_surface) != PRIMITIVE_TRIANGLES, Dictionary());
 	Array arrays = surface_get_arrays(p_surface);
@@ -2101,7 +2102,8 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 	// Fork(Lestoroer): separate primitive domains prevent sub-texel triangles
 	// from overwriting each other's material or emission. Density along the
 	// longest edge is preserved; one sample across narrow charts ensures robust
-	// raster coverage without changing or eroding the physical geometry.
+	// raster coverage without changing or eroding the physical geometry. A one-sided
+	// surface has no back-side cells.
 	for (int tri = 0; tri < indices.size(); tri += 3) {
 		Vector3 v[3] = { positions[indices[tri]], positions[indices[tri + 1]], positions[indices[tri + 2]] };
 		int first = 0;
@@ -2130,7 +2132,7 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size) con
 		tiles.write[(tri / 3) * 4 + 1] = 2;
 		tiles.write[(tri / 3) * 4 + 2] = width | (height_pixels << 16);
 		tiles.write[(tri / 3) * 4 + 3] = sample_count;
-		sample_count += width * height_pixels * 2;
+		sample_count += width * height_pixels * p_sides;
 		rectangles.write[tri / 3] = rectangle;
 		for (int corner = 0; corner < 3; corner++) {
 			coordinates.write[tri + corner] = uv[corner];
@@ -2379,13 +2381,15 @@ static uint64_t _surface_cache_lighting_cluster_key(const Vector3 &p_center, con
 // Fork(Lestoroer): the complete Surface Cache preparation of a mesh. Every texel size gets
 // its own capture chart and capture mesh; the remap shared by them is computed once. Ray
 // triangle records (SurfaceCacheTriangle in surface_cache_inc.glsl) pack the first layout
-// and, for a second texel size, its chart coordinates and tiles as the lighting layout.
-Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const {
+// and, for a second texel size, its chart coordinates and tiles as the lighting layout. Every
+// surface has one side (front only) or two; the caller takes them from its materials.
+Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes, const Vector<int32_t> &p_surface_sides) const {
 	static constexpr int TRIANGLE_BYTES = 144;
 	const int layout_count = p_texel_sizes.size();
 	ERR_FAIL_COND_V_MSG(layout_count < 1 || layout_count > 2, Dictionary(), "Surface Cache prepares a material layout and an optional lighting layout.");
 	const int surface_count = get_surface_count();
 	ERR_FAIL_COND_V_MSG(surface_count == 0, Dictionary(), "Surface Cache: mesh has no surfaces.");
+	ERR_FAIL_COND_V_MSG(p_surface_sides.size() != surface_count, Dictionary(), "Surface Cache: sides are required for every surface.");
 	const ArrayMesh *array_mesh = Object::cast_to<ArrayMesh>(this);
 
 	struct Layout {
@@ -2398,7 +2402,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 	for (int layout_index = 0; layout_index < layout_count; layout_index++) {
 		Layout &layout = layouts.write[layout_index];
 		for (int surface = 0; surface < surface_count; surface++) {
-			Dictionary chart = surface_cache_get_layout(surface, p_texel_sizes[layout_index]);
+			Dictionary chart = surface_cache_get_layout(surface, p_texel_sizes[layout_index], p_surface_sides[surface]);
 			ERR_FAIL_COND_V_MSG(chart.is_empty(), Dictionary(), vformat("Surface Cache could not lay out surface %d of %s.", surface, get_path()));
 			// Surfaces stack vertically with a two-texel border.
 			const Vector2i offset(2, layout.size.y + 2);
@@ -2456,7 +2460,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 		}
 	}
 
-	// Material cells the capture can cover (bit per cell of the material layout, both sides) and
+	// Material cells the capture can cover (bit per cell of the material layout, every side) and
 	// the covered count before every 32-cell word: storage is allocated only for covered cells.
 	PackedInt32Array material_coverage;
 	material_coverage.resize((layouts[0].sample_count + 31) / 32);
@@ -2466,6 +2470,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 	Array triangle_data;
 	Array vertex_data;
 	for (int surface = 0; surface < surface_count; surface++) {
+		const int sides = p_surface_sides[surface];
 		const Dictionary first_chart = layouts[0].surfaces[surface];
 		const Vector<int> indices = first_chart["indices"];
 		const Vector<int> source_vertices = first_chart["source_vertices"];
@@ -2553,7 +2558,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 				for (int cell = 0; cell < area; cell++) {
 					const Vector2 cell_min(tile[0] + cell % width, tile[1] + cell / width);
 					if (SurfaceCacheCoverage::triangle_cell_covered(material_pixels[corner], material_pixels[corner + 1], material_pixels[corner + 2], cell_min)) {
-						for (int side = 0; side < 2; side++) {
+						for (int side = 0; side < sides; side++) {
 							const int address = tile[3] + side * area + cell;
 							coverage[address >> 5] |= int32_t(1u << (address & 31));
 						}
@@ -2600,7 +2605,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes) const
 				if (tile[2] == (1 | (1 << 16)) && lighting_charts[indices[corner]] != 0 && front.length_squared() > 0.0f) {
 					const Vector3 center = (vertex[0] + vertex[1] + vertex[2]) / 3.0f;
 					const Vector3 normal = front.normalized();
-					for (int side = 0; side < 2; side++) {
+					for (int side = 0; side < sides; side++) {
 						const uint64_t key = _surface_cache_lighting_cluster_key(center, side == 0 ? normal : -normal, side, p_texel_sizes[1]);
 						ClusterCenter &cluster = lighting_clusters[key];
 						cluster.sum += center;

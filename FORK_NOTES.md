@@ -414,15 +414,17 @@ GI работает только на Vulkan с аппаратным ray query �
    `renderer_rd/storage_rd/material_storage.{h,cpp}`,
    `renderer_rd/storage_rd/texture_storage.{h,cpp}`, `renderer_rd/storage_rd/light_storage.cpp`,
    `storage/material_storage.h`, `storage/utilities.h` |
-   - `Mesh.surface_cache_get_layout(surface, texel_size)` строит собственную развёртку, не
+   - `Mesh.surface_cache_get_layout(surface, texel_size, sides)` строит собственную развёртку, не
      xatlas: каждый треугольник — отдельный прямоугольник в texel с отступом 2 texel,
-     плотность по длинному ребру, по короткой оси минимум один texel. Вырожденный
+     плотность по длинному ребру, по короткой оси минимум один texel. `sides` — 2, если у
+     ячеек есть обратная сторона, или 1 — только лицевая. Вырожденный
      треугольник получает chart 0 и один texel. Прямоугольники пакуются
      `Geometry2D::make_atlas`. Результат: `capture_pixels`, `uv`, `source_vertices`,
      `charts`, `indices`, `size`, `tiles`, `sample_count`. Авторские UV/UV2/CUSTOM,
      порядок треугольников, skin и morph не меняются.
-   - `Mesh.surface_cache_prepare(texel_sizes)` — вся подготовка меша за один проход для
-     одного размера texel (раскладка материала) или двух (материала и освещения).
+   - `Mesh.surface_cache_prepare(texel_sizes, surface_sides)` — вся подготовка меша за один
+     проход для одного размера texel (раскладка материала) или двух (материала и освещения);
+     `surface_sides` — число сторон каждой поверхности, его берут из её материала.
      Поверхности складываются в атлас столбиком с отступом 2 texel. Один `ArrayMesh` захвата
      на все размеры (`mesh`): вершины повторены по углам треугольников, материалы
      поверхностей и blend shapes исходного `ArrayMesh`, координаты захвата каждой раскладки
@@ -439,7 +441,7 @@ GI работает только на Vulkan с аппаратным ray query �
      ближайший к среднему центру. Лицевая и обратная стороны в один узел не попадают: обратная
      сторона рядом с лицевой того же направления — обычно изнанка тонкой стенки, и её свет не
      годится видимой поверхности. Остальные ячейки — каждая свой узел. Ещё — покрытие раскладки материала:
-     `material_coverage` (бит на ячейку, обе стороны) и `material_coverage_ranks` (число покрытых
+     `material_coverage` (бит на ячейку каждой стороны) и `material_coverage_ranks` (число покрытых
      ячеек до каждого слова из 32). Его считает тот же строгий SAT, что захват, теми же точными
      знаками во float (`SurfaceCacheCoverage` в `mesh.cpp`): захват покрывает только ячейки маски,
      и игра хранит только их.
@@ -482,8 +484,10 @@ GI работает только на Vulkan с аппаратным ray query �
      Callback вызывается один раз за кадр мира до рендера; остальные камеры используют
      его результат.
    - `scenario_surface_cache_poll` отдаёт объединённые изменения экземпляров по RID:
-     регистрацию и удаление, transform, материал, позу, свет. Подписка начинается с одного
-     снимка мира. Вырожденный transform и Mesh без поверхностей считаются неактивными,
+     регистрацию и удаление, transform, материал, позу, свет. У меша — ещё `surface_sides`:
+     1, если все захватываемые проходы материала поверхности отсекают обратную сторону
+     (`RendererMaterialStorage::material_is_surface_cache_two_sided`), иначе 2; неизвестный
+     материал — 2. Подписка начинается с одного снимка мира. Вырожденный transform и Mesh без поверхностей считаются неактивными,
      как в штатном raster.
    - `instance_get_deformed_surface` отдаёт заимствованный GPU-буфер skin/morph с layout и
      версией. Читать только на render thread; RID не хранить после callback.
@@ -508,7 +512,7 @@ GI работает только на Vulkan с аппаратным ray query �
     `renderer_rd/shaders/forward_mobile/scene_forward_mobile.glsl`,
     `drivers/gles3/shaders/scene.glsl`, `drivers/gles3/storage/material_storage.cpp` |
     - `scenario_set_surface_cache_buffers` задаёт три storage buffer: таблицу поверхностей
-      с раздельными адресами материала и света, мировые треугольники с обеими
+      с раздельными адресами материала и света и числом сторон, мировые треугольники с обеими
       параметризациями и irradiance ячеек света; её alpha — годность ячейки: у каждого
       треугольника свой тайл, поэтому адрес сам задаёт карту и поверхность, а раскладку
       ячеек света движок не читает. Descriptors (binding 37, 38, 40) объявлены во всех
@@ -518,17 +522,15 @@ GI работает только на Vulkan с аппаратным ray query �
       MSAA resolve берёт её из того же sample, что depth/normal.
     - `scenario_set_surface_cache_view_callback` вызывается после prepass для каждого
       viewport, включая зеркала, независимо от его Compositor. Viewport-текстуры
-      `surface_cache/gather`, `surface_cache/reflection`, `glass`, `glass_primary`
-      применяются к фрагменту только при совпадении surface/primitive с primary visibility.
+      `surface_cache/gather` и `surface_cache/reflection` применяются к фрагменту только при совпадении surface/primitive с primary visibility.
       Обратный вызов может вернуть имя текстуры контекста `surface_cache`, в которой лежит сбор
       этого вида; без ответа — `gather`.
     - Irradiance заменяет ambient после пользовательского `IRRADIANCE`, до AO, albedo и
       тонемапа. Трассированное отражение заменяет IBL без повторного DFG и SSAO;
       пользовательский `RADIANCE` сохраняет приоритет. Затенение IBL при Surface Cache
       считается по AO, roughness и углу взгляда (аппроксимация Lagarde), без него —
-      по-прежнему. Тонкое стекло получает RGB transmittance (binding 46) и копию opaque HDR;
-      `glass_primary` (R32UI) — глобальный треугольник+1 стекла, для которого посчитан пиксель.
-      Отсутствие покрытия рисуется пурпурным.
+      по-прежнему. Стекло любой толщины рисует сам материал: кадр не составляет его из
+      результатов GI. Отсутствие покрытия рисуется пурпурным.
     - Зарегистрированные в GI экземпляры рисуются без mesh LOD: у LOD нет соответствия
       primitive → chart.
     - `CompositorEffect` получает callback `POST_TEMPORAL`: после TAA, до тонемапа. При
@@ -553,7 +555,7 @@ GI работает только на Vulkan с аппаратным ray query �
       меняет геометрию GI, его globals не инвалидируют материал. Действует на один проход.
     - Built-ins: `IN_SURFACE_CACHE_PASS` (global, bool), `SURFACE_CACHE_IRRADIANCE`
       (fragment, read-only vec4, alpha 0 без GI), `SURFACE_CACHE_TRANSMISSION` (fragment,
-      float, доля тонкого пропускания отдельно от alpha), `SURFACE_CACHE_GATHER_USED`
+      float, доля пропускания для лучей GI отдельно от alpha; читает только захват), `SURFACE_CACHE_GATHER_USED`
       (fragment, read-only bool). В проходе захвата `FRONT_FACING` задаётся стороной
       захвата, а не winding развёртки.
 

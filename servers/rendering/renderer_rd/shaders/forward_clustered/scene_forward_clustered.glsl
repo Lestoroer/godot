@@ -3274,24 +3274,6 @@ void fragment_shader(in SceneData scene_data) {
 	frag_color = vec4(albedo, alpha);
 #else
 	frag_color = vec4(emission + ambient_light + diffuse_light + direct_specular_light + indirect_specular_light, alpha);
-	// Fork(Lestoroer): thin glass: resolved transmitted light plus attenuated background.
-	if (surface_cache_transmission > 0.0 && bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
-		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
-		ivec2 pixel = ivec2(gl_FragCoord.xy);
-		// Fork(Lestoroer): glass_primary holds the global triangle + 1 of the resolved glass surface.
-		if (cache_surface != 0u && all(lessThan(pixel, textureSize(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), 0))) && texelFetch(usampler2D(surface_cache_glass_primary, SAMPLER_NEAREST_CLAMP), pixel, 0).x == surface_cache_surfaces.data[cache_surface - 1u].material.x + uint(gl_PrimitiveID) + 1u) {
-			vec4 transmitted = texelFetch(sampler2D(surface_cache_glass, SAMPLER_NEAREST_CLAMP), pixel, 0);
-			if (transmitted.a > 0.0) {
-#ifdef USE_MULTIVIEW
-				vec3 background = texelFetch(sampler2DArray(color_buffer, SAMPLER_NEAREST_CLAMP), ivec3(pixel, ViewIndex), 0).rgb;
-#else
-				vec3 background = texelFetch(sampler2D(color_buffer, SAMPLER_NEAREST_CLAMP), pixel, 0).rgb;
-#endif
-				vec3 transmittance = texelFetch(sampler2D(surface_cache_transmittance, SAMPLER_NEAREST_CLAMP), pixel, 0).rgb;
-				frag_color = vec4(transmitted.rgb + transmittance * background, 1.0);
-			}
-		}
-	}
 //frag_color = vec4(1.0);
 #endif //USE_NO_SHADING
 
