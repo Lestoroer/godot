@@ -518,17 +518,15 @@ GI работает только на Vulkan с аппаратным ray query �
       MSAA resolve берёт её из того же sample, что depth/normal.
     - `scenario_set_surface_cache_view_callback` вызывается после prepass для каждого
       viewport, включая зеркала, независимо от его Compositor. Viewport-текстуры
-      `surface_cache/gather`, `surface_cache/reflection`, `glass`, `glass_primary`
-      применяются к фрагменту только при совпадении surface/primitive с primary visibility.
+      `surface_cache/gather` и `surface_cache/reflection` применяются к фрагменту только при совпадении surface/primitive с primary visibility.
       Обратный вызов может вернуть имя текстуры контекста `surface_cache`, в которой лежит сбор
       этого вида; без ответа — `gather`.
     - Irradiance заменяет ambient после пользовательского `IRRADIANCE`, до AO, albedo и
       тонемапа. Трассированное отражение заменяет IBL без повторного DFG и SSAO;
       пользовательский `RADIANCE` сохраняет приоритет. Затенение IBL при Surface Cache
       считается по AO, roughness и углу взгляда (аппроксимация Lagarde), без него —
-      по-прежнему. Тонкое стекло получает RGB transmittance (binding 46) и копию opaque HDR;
-      `glass_primary` (R32UI) — глобальный треугольник+1 стекла, для которого посчитан пиксель.
-      Отсутствие покрытия рисуется пурпурным.
+      по-прежнему. Стекло любой толщины рисует сам материал: кадр не составляет его из
+      результатов GI. Отсутствие покрытия рисуется пурпурным.
     - Зарегистрированные в GI экземпляры рисуются без mesh LOD: у LOD нет соответствия
       primitive → chart.
     - `CompositorEffect` получает callback `POST_TEMPORAL`: после TAA, до тонемапа. При
@@ -553,7 +551,7 @@ GI работает только на Vulkan с аппаратным ray query �
       меняет геометрию GI, его globals не инвалидируют материал. Действует на один проход.
     - Built-ins: `IN_SURFACE_CACHE_PASS` (global, bool), `SURFACE_CACHE_IRRADIANCE`
       (fragment, read-only vec4, alpha 0 без GI), `SURFACE_CACHE_TRANSMISSION` (fragment,
-      float, доля тонкого пропускания отдельно от alpha), `SURFACE_CACHE_GATHER_USED`
+      float, доля пропускания для лучей GI отдельно от alpha; читает только захват), `SURFACE_CACHE_GATHER_USED`
       (fragment, read-only bool). В проходе захвата `FRONT_FACING` задаётся стороной
       захвата, а не winding развёртки.
 
