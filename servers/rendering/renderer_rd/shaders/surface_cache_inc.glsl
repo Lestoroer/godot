@@ -1,6 +1,7 @@
 // Fork(Lestoroer): instance/surface/primitive address, independent of the camera.
 struct SurfaceCacheTriangle { vec4 a; vec4 b; vec4 c; vec4 uv_ab; vec4 uv_c; vec4 light_uv_ab; vec4 light_uv_c; uvec4 material_tile; uvec4 lighting_tile; };
-struct SurfaceCacheMapping { uvec4 material; uvec4 lighting; };
+// sides.x: 1 — only the front side has cells, 2 — both sides.
+struct SurfaceCacheMapping { uvec4 material; uvec4 lighting; uvec4 sides; };
 layout(set=1,binding=37,std430) readonly buffer SurfaceCacheSurfaces { SurfaceCacheMapping data[]; } surface_cache_surfaces;
 layout(set=1,binding=38,std430) readonly buffer SurfaceCacheTriangles { SurfaceCacheTriangle data[]; } surface_cache_triangles;
 // Irradiance of a lighting cell; alpha marks a captured (owned) cell. Every triangle owns its tile,
@@ -20,7 +21,7 @@ vec3 surface_cache_irradiance(uint surface, uint primitive, vec3 position, vec3 
 	if(absolute_normal.z>absolute_normal[axis]) axis=2u;
 	vec2 barycentric=vec2(cross(ap,ac)[axis],cross(ab,ap)[axis])/geometric[axis];
 	vec2 uv=triangle.light_uv_ab.xy*(1.0-barycentric.x-barycentric.y)+triangle.light_uv_ab.zw*barycentric.x+triangle.light_uv_c.xy*barycentric.y;
-	uint side=dot(normal,cross(ab,ac)*triangle.a.w)<0.0?1u:0u;
+	uint side=surface_cache_surfaces.data[surface].sides.x==2u && dot(normal,cross(ab,ac)*triangle.a.w)<0.0?1u:0u;
 	ivec2 size=ivec2(mapping.zw);
 	vec2 pixel=uv*vec2(size)-0.5;
 	ivec2 base=ivec2(floor(pixel));
