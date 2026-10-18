@@ -1171,7 +1171,8 @@ void RendererSceneCull::instance_set_blend_shape_weight(RID p_instance, int p_sh
 		_surface_cache_queue(instance, 8); // Fork(Lestoroer)
 	}
 
-	_instance_queue_update(instance, false, false);
+	// Fork(Lestoroer): a blend shape weight is pose only; the material content stays.
+	_instance_queue_update(instance, false, false, false);
 }
 
 void RendererSceneCull::instance_set_surface_override_material(RID p_instance, int p_surface, RID p_material) {
