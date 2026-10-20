@@ -555,7 +555,8 @@ void RendererSceneCull::scenario_set_surface_cache_view_callback(RID p_scenario,
 void RendererSceneCull::scenario_set_surface_cache_buffers(RID p_scenario, const TypedArray<RID> &p_buffers) {
 	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
 	ERR_FAIL_NULL(scenario);
-	ERR_FAIL_COND(p_buffers.size() != 0 && p_buffers.size() != 3);
+	// Fork(Lestoroer): lookup records and rooms of the world cache, or none.
+	ERR_FAIL_COND(p_buffers.size() != 0 && p_buffers.size() != 2);
 	scenario->surface_cache_buffers.resize(p_buffers.size());
 	for (int i = 0; i < p_buffers.size(); i++) scenario->surface_cache_buffers.write[i] = p_buffers[i];
 }
@@ -1170,7 +1171,8 @@ void RendererSceneCull::instance_set_blend_shape_weight(RID p_instance, int p_sh
 		_surface_cache_queue(instance, 8); // Fork(Lestoroer)
 	}
 
-	_instance_queue_update(instance, false, false);
+	// Fork(Lestoroer): a blend shape weight is pose only; the material content stays.
+	_instance_queue_update(instance, false, false, false);
 }
 
 void RendererSceneCull::instance_set_surface_override_material(RID p_instance, int p_surface, RID p_material) {

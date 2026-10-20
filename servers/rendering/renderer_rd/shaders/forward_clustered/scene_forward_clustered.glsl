@@ -98,9 +98,6 @@ void axis_angle_to_tbn(vec3 axis, float angle, out vec3 tangent, out vec3 binorm
 /* Varyings */
 
 layout(location = 0) out vec3 vertex_interp;
-#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE) // Fork(Lestoroer): centroid position for primary visibility barycentrics.
-layout(location = 18) centroid out vec3 surface_cache_vertex_centroid;
-#endif
 
 #ifdef NORMAL_USED
 layout(location = 1) out vec3 normal_interp;
@@ -497,9 +494,6 @@ void vertex_shader(vec3 vertex_input,
 #endif
 
 	vertex_interp = vertex;
-#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE) // Fork(Lestoroer)
-	surface_cache_vertex_centroid = vertex;
-#endif
 
 	// Normalize TBN vectors before interpolation, per MikkTSpace.
 	// See: http://www.mikktspace.com/
@@ -919,9 +913,6 @@ void main() {
 /* Varyings */
 
 layout(location = 0) in vec3 vertex_interp;
-#if defined(MODE_RENDER_DEPTH) && defined(MODE_RENDER_SURFACE_CACHE) // Fork(Lestoroer)
-layout(location = 18) centroid in vec3 surface_cache_vertex_centroid;
-#endif
 
 #ifdef NORMAL_USED
 layout(location = 1) in vec3 normal_interp;
@@ -1098,9 +1089,6 @@ layout(location = 4) out vec4 depth_output_buffer; // Fork(Lestoroer): capture w
 
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
 layout(location = 0) out vec4 normal_roughness_output_buffer;
-#ifdef MODE_RENDER_SURFACE_CACHE // Fork(Lestoroer)
-layout(location = 1) out uvec4 surface_cache_primary_output;
-#endif
 
 #ifdef MODE_RENDER_VOXEL_GI
 layout(location = 1) out uvec2 voxel_gi_buffer;
@@ -1458,7 +1446,7 @@ void fragment_shader(in SceneData scene_data) {
 		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 		if (cache_surface > 0u) {
 			surface_cache_input.a = 1.0;
-			surface_cache_input.rgb = surface_cache_for_fragment(cache_surface - 1u, uint(gl_PrimitiveID), (inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal_highp), ivec2(gl_FragCoord.xy), -vertex.z, surface_cache_gather_used);
+			surface_cache_input.rgb = surface_cache_for_fragment((inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal_highp), inv_view_matrix[3].xyz, vec3(gl_FragCoord.xy, -vertex.z), surface_cache_gather_used);
 		}
 	}
 #endif
@@ -1887,7 +1875,7 @@ void fragment_shader(in SceneData scene_data) {
 		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 		if (cache_surface > 0u) {
 			bool gather_used;
-			ambient_light = surface_cache_for_fragment(cache_surface - 1u, uint(gl_PrimitiveID), (inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal), ivec2(gl_FragCoord.xy), -vertex.z, gather_used);
+			ambient_light = surface_cache_for_fragment((inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal), inv_view_matrix[3].xyz, vec3(gl_FragCoord.xy, -vertex.z), gather_used);
 		}
 	}
 #endif
@@ -2386,6 +2374,18 @@ void fragment_shader(in SceneData scene_data) {
 
 #ifndef AMBIENT_LIGHT_DISABLED
 	{
+		// Fork(Lestoroer): radiance traced along the reflection replaces the radiance map: it already
+		// includes visibility, and the environment BRDF below weights it like the map.
+		if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED) && instances.data[instance_index].compressed_aabb_position_pad.w > 0.0) {
+			vec3 reflected_radiance;
+			if (surface_cache_reflection_for_fragment(vec3(gl_FragCoord.xy, -vertex.z), reflected_radiance)) {
+#ifdef CUSTOM_RADIANCE_USED
+				indirect_specular_light = mix(reflected_radiance, indirect_specular_light, custom_radiance.a);
+#else
+				indirect_specular_light = reflected_radiance;
+#endif
+			}
+		}
 #if defined(DIFFUSE_TOON)
 		//simplify for toon, as
 		indirect_specular_light *= specular * metallic * albedo * 2.0;
@@ -2417,19 +2417,6 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 
 #endif // DIFFUSE_TOON
-	}
-
-	// Fork(Lestoroer): traced specular already includes visibility and the BRDF.
-	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
-		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
-		vec3 reflected_radiance;
-		if (cache_surface > 0u && surface_cache_reflection_for_fragment(cache_surface, uint(gl_PrimitiveID), ivec2(gl_FragCoord.xy), reflected_radiance)) {
-			#ifdef CUSTOM_RADIANCE_USED
-			indirect_specular_light = mix(reflected_radiance, indirect_specular_light, custom_radiance.a);
-#else
-			indirect_specular_light = reflected_radiance;
-#endif
-		}
 	}
 #endif // !AMBIENT_LIGHT_DISABLED
 #endif //GI !defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
@@ -3173,38 +3160,6 @@ void fragment_shader(in SceneData scene_data) {
 
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS
 	normal_roughness_output_buffer = vec4(encode24(normal) * 0.5 + 0.5, roughness);
-#ifdef MODE_RENDER_SURFACE_CACHE // Fork(Lestoroer): surface, primitive + 1 and centroid barycentrics.
-	uint surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
-	uint primitive = uint(gl_PrimitiveID);
-	surface_cache_primary_output = uvec4(0u);
-	if (surface > 0u && surface <= uint(surface_cache_surfaces.data.length())) {
-		SurfaceCacheMapping mapping = surface_cache_surfaces.data[surface - 1u];
-		uint triangle_index = mapping.material.x + primitive;
-		if (triangle_index < uint(surface_cache_triangles.data.length())) {
-			SurfaceCacheTriangle triangle = surface_cache_triangles.data[triangle_index];
-			vec3 ab = triangle.b.xyz - triangle.a.xyz;
-			vec3 ac = triangle.c.xyz - triangle.a.xyz;
-			vec3 normal = cross(ab, ac);
-			if (dot(normal, normal) > 1e-30) {
-				vec3 position = (inv_view_matrix * vec4(surface_cache_vertex_centroid, 1.0)).xyz;
-				vec3 offset = position - triangle.a.xyz;
-				vec3 major = abs(normal);
-				vec2 u = major.z >= max(major.x, major.y) ? ab.xy : (major.y >= major.x ? ab.xz : ab.yz);
-				vec2 v = major.z >= max(major.x, major.y) ? ac.xy : (major.y >= major.x ? ac.xz : ac.yz);
-				vec2 q = major.z >= max(major.x, major.y) ? offset.xy : (major.y >= major.x ? offset.xz : offset.yz);
-				float determinant = u.x * v.y - u.y * v.x;
-				if (abs(determinant) > 1e-15) {
-					float b = (q.x * v.y - q.y * v.x) / determinant;
-					float c = (u.x * q.y - u.y * q.x) / determinant;
-					vec3 bary = max(vec3(1.0 - b - c, b, c), vec3(1e-6));
-					bary /= bary.x + bary.y + bary.z;
-					surface_cache_primary_output = uvec4(surface, primitive + 1u, floatBitsToUint(bary.y), floatBitsToUint(bary.z));
-				}
-			}
-		}
-	}
-#endif
-
 	// We encode the dynamic static into roughness.
 	// Values over 0.5 are dynamic, under 0.5 are static.
 	normal_roughness_output_buffer.w = normal_roughness_output_buffer.w * (127.0 / 255.0);

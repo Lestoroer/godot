@@ -118,8 +118,10 @@ Interior Star» в `FORK_NOTES.md`. GI работает только на Vulkan
   не сообщает Surface Cache об изменении материала.
 - Scenario раз в кадр сообщает Surface Cache изменения мира и даёт доступ к GPU-буферу
   skin/morph без чтения на CPU.
-- Forward+ применяет из Surface Cache непрямой свет и трассированные отражения.
-  `CompositorEffect` получает callback `POST_TEMPORAL`.
+- Forward+ применяет из Surface Cache непрямой свет и трассированные отражения;
+  прозрачные фрагменты берут свет мирового кеша GI по позиции. Экземпляры GI рисуются с
+  mesh LOD. `CompositorEffect` получает callback
+  `POST_TEMPORAL`.
 - Язык шейдеров: render modes `surface_cache_global_invariant` и
   `surface_cache_presentation`, built-ins `IN_SURFACE_CACHE_PASS`,
   `SURFACE_CACHE_IRRADIANCE`, `SURFACE_CACHE_TRANSMISSION`, `SURFACE_CACHE_GATHER_USED`.
