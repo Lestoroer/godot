@@ -2265,7 +2265,7 @@ static void two_sum(float a, float b, float &r_x, float &r_y) {
 }
 
 static void grow_expansion(float *r_expansion, int &r_count, float p_value) {
-	float grown[16] = {};
+	float grown[16];
 	int grown_count = 0;
 	float accumulator = p_value;
 	for (int i = 0; i < r_count; i++) {
@@ -2279,8 +2279,8 @@ static void grow_expansion(float *r_expansion, int &r_count, float p_value) {
 	if (accumulator != 0.0f || grown_count == 0) {
 		grown[grown_count++] = accumulator;
 	}
-	for (int i = 0; i < 16; i++) {
-		r_expansion[i] = i < grown_count ? grown[i] : 0.0f;
+	for (int i = 0; i < grown_count; i++) {
+		r_expansion[i] = grown[i];
 	}
 	r_count = grown_count;
 }
@@ -2293,6 +2293,15 @@ static void add_product(float *r_expansion, int &r_count, float a, float b, floa
 }
 
 static int cross_differences_sign(float dx_hi, float dx_lo, float dy_hi, float dy_lo, float px_hi, float px_lo, float py_hi, float py_lo) {
+	// Axis-aligned edges are common in the chart projection. Their exact sign
+	// needs no products or expansion, including a point on the edge itself.
+	if (dx_hi == 0.0f && dx_lo == 0.0f) {
+		return -SIGN(dy_hi != 0.0f ? dy_hi : dy_lo) * SIGN(px_hi != 0.0f ? px_hi : px_lo);
+	}
+	if (dy_hi == 0.0f && dy_lo == 0.0f) {
+		return SIGN(dx_hi != 0.0f ? dx_hi : dx_lo) * SIGN(py_hi != 0.0f ? py_hi : py_lo);
+	}
+
 	const float left = dx_hi * py_hi;
 	const float right = dy_hi * px_hi;
 	const float determinant = left - right;
@@ -2545,15 +2554,13 @@ Dictionary Mesh::_surface_cache_prepare(const Mesh *p_resource, RID p_mesh, cons
 		uint64_t capture_start = OS::get_singleton()->get_ticks_usec();
 		Vector<int> capture_remap;
 		capture_remap.resize(corner_count);
-		Vector<int> capture_indices;
-		capture_indices.resize(corner_count);
+		int *remap_write = capture_remap.ptrw();
 		for (int corner = 0; corner < corner_count; corner++) {
-			capture_remap.write[corner] = source_vertices[indices[corner]];
-			capture_indices.write[corner] = corner;
+			remap_write[corner] = source_vertices[indices[corner]];
 		}
 		Array remapped;
 		ERR_FAIL_COND_V(!_surface_cache_remap_arrays(arrays, capture_remap, positions.size(), remapped), Dictionary());
-		remapped[ARRAY_INDEX] = capture_indices;
+		// Every triangle owns its corners; an identity index buffer is redundant.
 		TypedArray<Array> shapes;
 		BitField<ArrayFormat> flags = 0;
 		if (array_mesh || !p_resource) {
@@ -2586,9 +2593,11 @@ Dictionary Mesh::_surface_cache_prepare(const Mesh *p_resource, RID p_mesh, cons
 			corner_uv.resize(corner_count);
 			Vector<Vector2> capture_pixels;
 			capture_pixels.resize(corner_count);
+			Vector2 *uv_write = corner_uv.ptrw();
+			Vector2 *pixel_write = capture_pixels.ptrw();
 			for (int corner = 0; corner < corner_count; corner++) {
-				corner_uv.write[corner] = (uv[chart_indices[corner]] * chart_size + offset) / atlas;
-				capture_pixels.write[corner] = pixels[chart_indices[corner]] + offset;
+				uv_write[corner] = (uv[chart_indices[corner]] * chart_size + offset) / atlas;
+				pixel_write[corner] = pixels[chart_indices[corner]] + offset;
 			}
 			RS::get_singleton()->mesh_surface_set_capture_uv(capture_mesh->get_rid(), surface, layout_index, capture_pixels);
 			primitive_uv.write[layout_index] = corner_uv;
@@ -2622,13 +2631,23 @@ Dictionary Mesh::_surface_cache_prepare(const Mesh *p_resource, RID p_mesh, cons
 			{
 				const int *tile = material_tiles.ptr() + corner / 3 * 4;
 				const int width = tile[2] & 0xFFFF, area = width * (tile[2] >> 16);
-				const SurfaceCacheCoverage::Triangle triangle(material_pixels[corner], material_pixels[corner + 1], material_pixels[corner + 2]);
-				for (int cell = 0; cell < area; cell++) {
-					const Vector2 cell_min(tile[0] + cell % width, tile[1] + cell / width);
-					if (triangle.covers(cell_min)) {
-						for (int side = 0; side < sides; side++) {
-							const int address = tile[3] + side * area + cell;
-							coverage[address >> 5] |= int32_t(1u << (address & 31));
+				// A nondegenerate 1x1 chart is stretched to a unit base and unit height.
+				// Its only cell is always covered; avoid six SAT tests per tiny triangle.
+				if (area == 1 && material_charts[indices[corner]] != 0) {
+					for (int side = 0; side < sides; side++) {
+						const int address = tile[3] + side;
+						coverage[address >> 5] |= int32_t(1u << (address & 31));
+					}
+				} else {
+					const SurfaceCacheCoverage::Triangle triangle(material_pixels[corner], material_pixels[corner + 1], material_pixels[corner + 2]);
+					for (int y = 0; y < (tile[2] >> 16); y++) {
+						for (int x = 0; x < width; x++) {
+							if (triangle.covers(Vector2(tile[0] + x, tile[1] + y))) {
+								for (int side = 0; side < sides; side++) {
+									const int address = tile[3] + side * area + y * width + x;
+									coverage[address >> 5] |= int32_t(1u << (address & 31));
+								}
+							}
 						}
 					}
 				}
@@ -2736,8 +2755,9 @@ Dictionary Mesh::_surface_cache_prepare(const Mesh *p_resource, RID p_mesh, cons
 	PackedInt32Array material_coverage_ranks;
 	material_coverage_ranks.resize(material_coverage.size());
 	int covered = 0;
+	int32_t *rank_write = material_coverage_ranks.ptrw();
 	for (int word = 0; word < material_coverage.size(); word++) {
-		material_coverage_ranks.write[word] = covered;
+		rank_write[word] = covered;
 		for (uint32_t bits = uint32_t(material_coverage[word]); bits != 0; bits &= bits - 1) {
 			covered++;
 		}

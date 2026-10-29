@@ -85,6 +85,9 @@ private:
 
 		Vector<Vector<uint8_t>> variant_data;
 		Vector<RID> variants;
+		// Fork(Lestoroer): cached variants are materialized only when requested.
+		Vector<bool> variants_requested;
+		Vector<bool> variants_cached;
 
 		bool valid;
 		bool dirty;
@@ -100,6 +103,7 @@ private:
 	// Vector will have the size of SHADER_STAGE_MAX and unused stages will have empty strings.
 	void _compile_variant(uint32_t p_variant, CompileData p_data);
 
+	RID _materialize_cached_variant(Version *p_version, int p_variant);
 	void _initialize_version(Version *p_version);
 	void _clear_version(Version *p_version);
 	void _compile_version_start(Version *p_version, int p_group);
@@ -224,6 +228,10 @@ public:
 			return RID();
 		}
 
+		version->variants_requested.write[p_variant] = true;
+		if (version->variants_cached[p_variant]) {
+			return _materialize_cached_variant(version, p_variant);
+		}
 		return version->variants[p_variant];
 	}
 

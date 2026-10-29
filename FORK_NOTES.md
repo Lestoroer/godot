@@ -608,6 +608,25 @@ GI работает только на Vulkan с аппаратным ray query �
     на 600 предметов через `gi_timeline.gd`, кадры и движение через `gi_quick.gd`.
     Методика и результаты — `is-game/game/features/lighting/surface_cache/startup-performance.md`.
 
+16. **Устранение лишней работы при старте GI** | `shader_rd.*`, `mesh.cpp`,
+    `storage_rd/mesh_storage.*`, `surface_cache_world.cpp` |
+    Кеш ShaderRD сохраняет bytecode всех вариантов, но создаёт GPU-шейдер только по запросу.
+    Уже выданные placeholders заполняются при включении группы: существующие конвейеры
+    сохраняют свой RID. Флаги спроса и кеша принадлежат версии и сбрасываются при её смене.
+    При промахе кеша штатная компиляция группы сохраняется.
+    Нативная подготовка GI не читает неиспользуемые индексные буферы LOD с GPU;
+    обычный `mesh_get_surface` продолжает возвращать их. Меш захвата с отдельными
+    вершинами на каждый угол рисуется без тождественного индексного буфера.
+    Для невырожденного chart 1×1 покрытие известно из построения; остальные ячейки
+    сохраняют SAT. Осевые рёбра получают точный знак без расширения float.
+    `SURFACE_CACHE_PROFILE_STARTUP=1` включает разбивку захвата материалов по стадиям.
+    Проверки: `geometry_prepare`, `capture_coverage`, `material_updates`,
+    `runtime_lifecycle`, `profile_updates`, `shader_variants`; загрузка — `gi_startup.py`, картинка и
+    движение — `gi_quick.gd`. Методика и результаты находятся в документе игры
+    `features/lighting/surface_cache/startup-performance.md`.
+    При обновлении upstream проверить placeholders ShaderRD, сброс при смене исходника,
+    загрузку холодного/тёплого кеша и создание ранее не востребованного варианта.
+
 ### Чеклист обновления `interior-star/main`
 
 1. Перед merge записать число строк `Fork(Lestoroer)` в `interior-star/main` (команда из

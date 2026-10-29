@@ -4,6 +4,7 @@
 #include "core/io/json.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
 #include "servers/rendering/rendering_server.h"
 
 #include <cstring>
@@ -164,7 +165,7 @@ void SurfaceCacheWorldRD::update_world() {
 			ScopeTimer layout_timer(counters.layouts_ms);
 			Vector<RenderingServerTypes::SurfaceData> &surfaces = sources[base];
 			for (int surface = 0; surface < server->mesh_get_surface_count(base); ++surface) {
-				surfaces.push_back(server->mesh_get_surface(base, surface));
+				surfaces.push_back(RendererRD::MeshStorage::get_singleton()->mesh_get_surface(base, surface, false));
 			}
 		}
 	}
