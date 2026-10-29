@@ -27,6 +27,14 @@ inline double milliseconds(uint64_t p_start) {
 	return double(OS::get_singleton()->get_ticks_usec() - p_start) / 1000.0;
 }
 
+struct ScopeTimer {
+	double &elapsed;
+	uint64_t start = OS::get_singleton()->get_ticks_usec();
+	explicit ScopeTimer(double &p_elapsed) :
+			elapsed(p_elapsed) {}
+	~ScopeTimer() { elapsed += milliseconds(start); }
+};
+
 struct Kernel {
 	Ref<RefCounted> compiler;
 	RID shader;

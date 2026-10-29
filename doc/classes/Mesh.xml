@@ -165,6 +165,15 @@
 				Returns the number of surfaces that the [Mesh] holds. This is equivalent to [method MeshInstance3D.get_surface_override_material_count].
 			</description>
 		</method>
+		<method name="surface_cache_prepare_from_rid" qualifiers="static">
+			<return type="Dictionary" />
+			<param index="0" name="mesh" type="RID" />
+			<param index="1" name="texel_sizes" type="PackedFloat32Array" />
+			<param index="2" name="surface_sides" type="PackedInt32Array" />
+			<description>
+				Interior Star: готовит раскладки Surface Cache, меш захвата, геометрию лучей и покрытие прямо из RID меша. Вызывается на потоке рендера. Результат содержит время стадий CPU в [code]operation_ms[/code].
+			</description>
+		</method>
 		<method name="surface_get_arrays" qualifiers="const">
 			<return type="Array" />
 			<param index="0" name="surf_idx" type="int" />

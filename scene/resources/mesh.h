@@ -56,6 +56,9 @@ class Mesh : public Resource {
 	Size2i lightmap_size_hint;
 
 	Vector<Vector3> _get_faces() const;
+	// Fork(Lestoroer): one CPU snapshot serves layout and capture preparation.
+	static Dictionary _surface_cache_layout(const Array &p_arrays, float p_texel_size, int p_sides);
+	static Dictionary _surface_cache_prepare(const Mesh *p_resource, RID p_mesh, const Vector<float> &p_texel_sizes, const Vector<int32_t> &p_surface_sides, const Vector<RenderingServerTypes::SurfaceData> *p_source = nullptr);
 
 public:
 	enum PrimitiveType {
@@ -185,6 +188,8 @@ public:
 
 	Dictionary surface_cache_get_layout(int p_surface, float p_texel_size, int p_sides) const; // Fork(Lestoroer): non-destructive chart remap.
 	Dictionary surface_cache_prepare(const Vector<float> &p_texel_sizes, const Vector<int32_t> &p_surface_sides) const; // Fork(Lestoroer): capture meshes and ray triangles in one pass.
+	static Dictionary surface_cache_prepare_from_rid(RID p_mesh, const Vector<float> &p_texel_sizes, const Vector<int32_t> &p_surface_sides); // Fork(Lestoroer)
+	static Dictionary surface_cache_prepare_from_surfaces(RID p_mesh, const Vector<RenderingServerTypes::SurfaceData> &p_source, const Vector<float> &p_texel_sizes, const Vector<int32_t> &p_surface_sides); // Fork(Lestoroer): frame-local readback batch.
 	Vector<Face3> get_faces() const;
 	Vector<Face3> get_surface_faces(int p_surface) const;
 	Ref<TriangleMesh> generate_triangle_mesh() const;

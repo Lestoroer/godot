@@ -30,10 +30,11 @@
 
 #include "mesh.h"
 
-#include "core/math/convex_hull.h"
 #include "core/io/marshalls.h" // Fork(Lestoroer)
+#include "core/math/convex_hull.h"
 #include "core/math/geometry_2d.h" // Fork(Lestoroer)
 #include "core/object/class_db.h"
+#include "core/os/os.h"
 #include "core/templates/pair.h"
 #include "scene/resources/surface_tool.h"
 #include "servers/rendering/rendering_server.h"
@@ -818,6 +819,7 @@ Ref<Resource> Mesh::create_placeholder() const {
 void Mesh::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("surface_cache_get_layout", "surface", "texel_size", "sides"), &Mesh::surface_cache_get_layout); // Fork(Lestoroer)
 	ClassDB::bind_method(D_METHOD("surface_cache_prepare", "texel_sizes", "surface_sides"), &Mesh::surface_cache_prepare); // Fork(Lestoroer)
+	ClassDB::bind_static_method(get_class_static(), D_METHOD("surface_cache_prepare_from_rid", "mesh", "texel_sizes", "surface_sides"), &Mesh::surface_cache_prepare_from_rid); // Fork(Lestoroer)
 	ClassDB::bind_method(D_METHOD("set_lightmap_size_hint", "size"), &Mesh::set_lightmap_size_hint);
 	ClassDB::bind_method(D_METHOD("get_lightmap_size_hint"), &Mesh::get_lightmap_size_hint);
 	ClassDB::bind_method(D_METHOD("get_aabb"), &Mesh::get_aabb);
@@ -2077,11 +2079,14 @@ bool (*array_mesh_lightmap_unwrap_callback)(float p_texel_size, const float *p_v
 // Fork(Lestoroer): retain the source vertex/primitive identities instead of rebuilding
 // a mesh through SurfaceTool, which drops CUSTOM data and refuses blend shapes.
 Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size, int p_sides) const {
-	ERR_FAIL_COND_V(!Math::is_finite(p_texel_size) || p_texel_size <= 0, Dictionary());
-	ERR_FAIL_COND_V_MSG(p_sides != 1 && p_sides != 2, Dictionary(), "Surface Cache: a surface has one or two sides.");
 	ERR_FAIL_INDEX_V(p_surface, get_surface_count(), Dictionary());
 	ERR_FAIL_COND_V(surface_get_primitive_type(p_surface) != PRIMITIVE_TRIANGLES, Dictionary());
-	Array arrays = surface_get_arrays(p_surface);
+	return _surface_cache_layout(surface_get_arrays(p_surface), p_texel_size, p_sides);
+}
+
+Dictionary Mesh::_surface_cache_layout(const Array &arrays, float p_texel_size, int p_sides) {
+	ERR_FAIL_COND_V(!Math::is_finite(p_texel_size) || p_texel_size <= 0, Dictionary());
+	ERR_FAIL_COND_V_MSG(p_sides != 1 && p_sides != 2, Dictionary(), "Surface Cache: a surface has one or two sides.");
 	Vector<Vector3> positions = arrays[ARRAY_VERTEX];
 	Vector<int> indices = arrays[ARRAY_INDEX];
 	ERR_FAIL_COND_V(positions.is_empty(), Dictionary());
@@ -2099,6 +2104,9 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size, int
 	remapped_indices.resize(indices.size());
 	rectangles.resize(indices.size() / 3);
 	tiles.resize(indices.size() / 3 * 4);
+	Vector2 *coordinate = coordinates.ptrw();
+	int *chart_write = charts.ptrw(), *index_write = remapped_indices.ptrw(), *tile_write = tiles.ptrw();
+	Size2i *rectangle_write = rectangles.ptrw();
 	// Fork(Lestoroer): separate primitive domains prevent sub-texel triangles
 	// from overwriting each other's material or emission. Density along the
 	// longest edge is preserved; one sample across narrow charts ensures robust
@@ -2128,30 +2136,31 @@ Dictionary Mesh::surface_cache_get_layout(int p_surface, float p_texel_size, int
 		}
 		int width = chart != 0 ? rectangle.x - 4 : 1;
 		int height_pixels = chart != 0 ? rectangle.y - 4 : 1;
-		tiles.write[(tri / 3) * 4] = 2;
-		tiles.write[(tri / 3) * 4 + 1] = 2;
-		tiles.write[(tri / 3) * 4 + 2] = width | (height_pixels << 16);
-		tiles.write[(tri / 3) * 4 + 3] = sample_count;
+		tile_write[(tri / 3) * 4] = 2;
+		tile_write[(tri / 3) * 4 + 1] = 2;
+		tile_write[(tri / 3) * 4 + 2] = width | (height_pixels << 16);
+		tile_write[(tri / 3) * 4 + 3] = sample_count;
 		sample_count += width * height_pixels * p_sides;
-		rectangles.write[tri / 3] = rectangle;
+		rectangle_write[tri / 3] = rectangle;
 		for (int corner = 0; corner < 3; corner++) {
-			coordinates.write[tri + corner] = uv[corner];
-			charts.write[tri + corner] = chart;
-			remapped_indices.write[tri + corner] = tri + corner;
+			coordinate[tri + corner] = uv[corner];
+			chart_write[tri + corner] = chart;
+			index_write[tri + corner] = tri + corner;
 		}
 	}
 	Vector<Point2i> offsets;
 	Size2i size;
 	Geometry2D::make_atlas(rectangles, offsets, size);
 	for (int tri = 0; tri < rectangles.size(); tri++) {
-		tiles.write[tri * 4] += offsets[tri].x;
-		tiles.write[tri * 4 + 1] += offsets[tri].y;
+		tile_write[tri * 4] += offsets[tri].x;
+		tile_write[tri * 4 + 1] += offsets[tri].y;
 	}
 	Vector<Vector2> capture_pixels;
 	capture_pixels.resize(coordinates.size());
+	Vector2 *pixel_write = capture_pixels.ptrw();
 	for (int corner = 0; corner < coordinates.size(); corner++) {
-		capture_pixels.write[corner] = coordinates[corner] + Vector2(offsets[corner / 3]);
-		coordinates.write[corner] = capture_pixels[corner] / Vector2(size);
+		pixel_write[corner] = coordinates[corner] + Vector2(offsets[corner / 3]);
+		coordinate[corner] = capture_pixels[corner] / Vector2(size);
 	}
 	Dictionary result;
 	result["capture_pixels"] = capture_pixels;
@@ -2323,41 +2332,50 @@ static int orient_exact_sign(const Vector2 &a, const Vector2 &b, const Vector2 &
 	return orient_difference_sign(a, b, c, a);
 }
 
-static bool triangle_cell_covered(const Vector2 &a, const Vector2 &b, const Vector2 &c, const Vector2 &p_cell_min) {
-	const Vector2 cell_max = p_cell_min + Vector2(1.0f, 1.0f);
-	if (MAX(a.x, MAX(b.x, c.x)) <= p_cell_min.x || MIN(a.x, MIN(b.x, c.x)) >= cell_max.x || MAX(a.y, MAX(b.y, c.y)) <= p_cell_min.y || MIN(a.y, MIN(b.y, c.y)) >= cell_max.y) {
-		return false;
-	}
-	const int winding = orient_exact_sign(a, b, c);
-	if (winding == 0) {
-		return false;
-	}
-	const Vector2 corners[3] = { a, b, c };
-	for (int edge_index = 0; edge_index < 3; edge_index++) {
-		const Vector2 edge_a = corners[edge_index];
-		const Vector2 edge_b = corners[(edge_index + 1) % 3];
-		const Vector2 opposite = corners[(edge_index + 2) % 3];
-		const Vector2 edge = edge_b - edge_a;
-		Vector2 support_max = p_cell_min, support_min = p_cell_min;
-		if (-edge.y * float(winding) > 0.0f) {
-			support_max.x = cell_max.x;
-		} else {
-			support_min.x = cell_max.x;
+// Fork(Lestoroer): triangle invariants are shared by all its material cells.
+struct Triangle {
+	struct Edge {
+		Vector2 origin, opposite, support_max, support_min;
+		float dx_hi, dx_lo, dy_hi, dy_lo;
+		int sign(const Vector2 &point, const Vector2 &relative_to) const {
+			float px_hi, px_lo, py_hi, py_lo;
+			two_diff(point.x, relative_to.x, px_hi, px_lo);
+			two_diff(point.y, relative_to.y, py_hi, py_lo);
+			return cross_differences_sign(dx_hi, dx_lo, dy_hi, dy_lo, px_hi, px_lo, py_hi, py_lo);
 		}
-		if (edge.x * float(winding) > 0.0f) {
-			support_max.y = cell_max.y;
-		} else {
-			support_min.y = cell_max.y;
+	};
+	Edge edges[3];
+	Vector2 minimum, maximum;
+	int winding;
+	Triangle(const Vector2 &a, const Vector2 &b, const Vector2 &c) {
+		minimum = Vector2(MIN(a.x, MIN(b.x, c.x)), MIN(a.y, MIN(b.y, c.y)));
+		maximum = Vector2(MAX(a.x, MAX(b.x, c.x)), MAX(a.y, MAX(b.y, c.y)));
+		winding = orient_exact_sign(a, b, c);
+		const Vector2 corners[3] = { a, b, c };
+		for (int i = 0; i < 3; ++i) {
+			Edge &edge = edges[i];
+			edge.origin = corners[i];
+			const Vector2 end = corners[(i + 1) % 3];
+			edge.opposite = corners[(i + 2) % 3];
+			two_diff(end.x, edge.origin.x, edge.dx_hi, edge.dx_lo);
+			two_diff(end.y, edge.origin.y, edge.dy_hi, edge.dy_lo);
+			edge.support_max = Vector2(-edge.dy_hi * float(winding) > 0.0f ? 1.0f : 0.0f, edge.dx_hi * float(winding) > 0.0f ? 1.0f : 0.0f);
+			edge.support_min = Vector2(1.0f, 1.0f) - edge.support_max;
 		}
-		if (orient_exact_sign(edge_a, edge_b, support_max) * winding <= 0) {
+	}
+	bool covers(const Vector2 &cell_min) const {
+		const Vector2 cell_max = cell_min + Vector2(1.0f, 1.0f);
+		if (winding == 0 || maximum.x <= cell_min.x || minimum.x >= cell_max.x || maximum.y <= cell_min.y || minimum.y >= cell_max.y) {
 			return false;
 		}
-		if (orient_difference_sign(edge_a, edge_b, support_min, opposite) * winding >= 0) {
-			return false;
+		for (const Edge &edge : edges) {
+			if (edge.sign(cell_min + edge.support_max, edge.origin) * winding <= 0 || edge.sign(cell_min + edge.support_min, edge.opposite) * winding >= 0) {
+				return false;
+			}
 		}
+		return true;
 	}
-	return true;
-}
+};
 } // namespace SurfaceCacheCoverage
 
 // Fork(Lestoroer): key of a Surface Cache lighting cluster — the lighting texel of the local
@@ -2384,14 +2402,57 @@ static uint64_t _surface_cache_lighting_cluster_key(const Vector3 &p_center, con
 // and, for a second texel size, its chart coordinates and tiles as the lighting layout. Every
 // surface has one side (front only) or two; the caller takes them from its materials.
 Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes, const Vector<int32_t> &p_surface_sides) const {
+	return _surface_cache_prepare(this, RID(), p_texel_sizes, p_surface_sides);
+}
+
+Dictionary Mesh::surface_cache_prepare_from_rid(RID p_mesh, const Vector<float> &p_texel_sizes, const Vector<int32_t> &p_surface_sides) {
+	ERR_FAIL_COND_V(!p_mesh.is_valid(), Dictionary());
+	return _surface_cache_prepare(nullptr, p_mesh, p_texel_sizes, p_surface_sides);
+}
+
+Dictionary Mesh::surface_cache_prepare_from_surfaces(RID p_mesh, const Vector<RenderingServerTypes::SurfaceData> &p_source, const Vector<float> &p_texel_sizes, const Vector<int32_t> &p_surface_sides) {
+	return _surface_cache_prepare(nullptr, p_mesh, p_texel_sizes, p_surface_sides, &p_source);
+}
+
+Dictionary Mesh::_surface_cache_prepare(const Mesh *p_resource, RID p_mesh, const Vector<float> &p_texel_sizes, const Vector<int32_t> &p_surface_sides, const Vector<RenderingServerTypes::SurfaceData> *p_source) {
+	uint64_t stage_start = OS::get_singleton()->get_ticks_usec();
+	Dictionary operation_ms;
+	double capture_mesh_ms = 0;
 	static constexpr int TRIANGLE_BYTES = 144;
 	const int layout_count = p_texel_sizes.size();
 	ERR_FAIL_COND_V_MSG(layout_count < 1 || layout_count > 2, Dictionary(), "Surface Cache prepares a material layout and an optional lighting layout.");
-	const int surface_count = get_surface_count();
+	RenderingServer *server = RS::get_singleton();
+	const int surface_count = p_resource ? p_resource->get_surface_count() : server->mesh_get_surface_count(p_mesh);
 	ERR_FAIL_COND_V_MSG(surface_count == 0, Dictionary(), "Surface Cache: mesh has no surfaces.");
 	ERR_FAIL_COND_V_MSG(p_surface_sides.size() != surface_count, Dictionary(), "Surface Cache: sides are required for every surface.");
-	const ArrayMesh *array_mesh = Object::cast_to<ArrayMesh>(this);
+	ERR_FAIL_COND_V(p_source && p_source->size() != surface_count, Dictionary());
+	const ArrayMesh *array_mesh = Object::cast_to<ArrayMesh>(p_resource);
+	const int shape_count = array_mesh ? array_mesh->get_blend_shape_count() : (p_resource ? 0 : server->mesh_get_blend_shape_count(p_mesh));
+	Vector<Array> source_arrays;
+	Vector<uint64_t> source_formats;
+	Vector<TypedArray<Array>> source_shapes;
+	source_shapes.resize(surface_count);
+	source_arrays.resize(surface_count);
+	source_formats.resize(surface_count);
+	for (int surface = 0; surface < surface_count; ++surface) {
+		if (p_resource) {
+			ERR_FAIL_COND_V(p_resource->surface_get_primitive_type(surface) != PRIMITIVE_TRIANGLES, Dictionary());
+			source_arrays.write[surface] = p_resource->surface_get_arrays(surface);
+			source_formats.write[surface] = p_resource->surface_get_format(surface);
+		} else {
+			// Read the source once; rebuilding an intermediate ArrayMesh would upload and read it again.
+			RenderingServerTypes::SurfaceData data = p_source ? (*p_source)[surface] : server->mesh_get_surface(p_mesh, surface);
+			ERR_FAIL_COND_V(data.primitive != RSE::PRIMITIVE_TRIANGLES, Dictionary());
+			Array arrays = server->mesh_create_arrays_from_surface_data(data);
+			TypedArray<Array> shapes = shape_count == 0 ? TypedArray<Array>() : server->mesh_create_blend_shape_arrays_from_surface_data(data, shape_count);
+			source_arrays.write[surface] = arrays;
+			source_formats.write[surface] = data.format;
+			source_shapes.write[surface] = shapes;
+		}
+	}
 
+	operation_ms["mesh_read"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
+	stage_start = OS::get_singleton()->get_ticks_usec();
 	struct Layout {
 		Vector<Dictionary> surfaces;
 		Size2i size;
@@ -2402,8 +2463,8 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes, const
 	for (int layout_index = 0; layout_index < layout_count; layout_index++) {
 		Layout &layout = layouts.write[layout_index];
 		for (int surface = 0; surface < surface_count; surface++) {
-			Dictionary chart = surface_cache_get_layout(surface, p_texel_sizes[layout_index], p_surface_sides[surface]);
-			ERR_FAIL_COND_V_MSG(chart.is_empty(), Dictionary(), vformat("Surface Cache could not lay out surface %d of %s.", surface, get_path()));
+			Dictionary chart = _surface_cache_layout(source_arrays[surface], p_texel_sizes[layout_index], p_surface_sides[surface]);
+			ERR_FAIL_COND_V_MSG(chart.is_empty(), Dictionary(), vformat("Surface Cache could not lay out surface %d of %s.", surface, p_resource ? p_resource->get_path() : String("runtime mesh")));
 			// Surfaces stack vertically with a two-texel border.
 			const Vector2i offset(2, layout.size.y + 2);
 			const Size2i size = chart["size"];
@@ -2423,14 +2484,16 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes, const
 		}
 	}
 
+	operation_ms["mesh_layout"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
+	stage_start = OS::get_singleton()->get_ticks_usec();
 	// One capture mesh for all layouts: a capture binds the chart stream of its layout.
 	Ref<ArrayMesh> capture_mesh;
 	capture_mesh.instantiate();
-	if (array_mesh) {
-		for (int shape = 0; shape < array_mesh->get_blend_shape_count(); shape++) {
-			capture_mesh->add_blend_shape(array_mesh->get_blend_shape_name(shape));
-		}
-		capture_mesh->set_blend_shape_mode(array_mesh->get_blend_shape_mode());
+	for (int shape = 0; shape < shape_count; ++shape) {
+		capture_mesh->add_blend_shape(array_mesh ? array_mesh->get_blend_shape_name(shape) : StringName(vformat("shape_%d", shape)));
+	}
+	if (array_mesh || !p_resource) {
+		capture_mesh->set_blend_shape_mode(array_mesh ? array_mesh->get_blend_shape_mode() : BlendShapeMode(server->mesh_get_blend_shape_mode(p_mesh)));
 	}
 
 	// Lighting cells of a triangle smaller than a lighting texel (a 1x1 tile) join a cluster with
@@ -2474,11 +2537,12 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes, const
 		const Dictionary first_chart = layouts[0].surfaces[surface];
 		const Vector<int> indices = first_chart["indices"];
 		const Vector<int> source_vertices = first_chart["source_vertices"];
-		const Array arrays = surface_get_arrays(surface);
+		const Array arrays = source_arrays[surface];
 		const Vector<Vector3> positions = arrays[ARRAY_VERTEX];
 		const Vector<Vector3> normals = arrays[ARRAY_NORMAL];
 		const int corner_count = indices.size();
 
+		uint64_t capture_start = OS::get_singleton()->get_ticks_usec();
 		Vector<int> capture_remap;
 		capture_remap.resize(corner_count);
 		Vector<int> capture_indices;
@@ -2492,17 +2556,19 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes, const
 		remapped[ARRAY_INDEX] = capture_indices;
 		TypedArray<Array> shapes;
 		BitField<ArrayFormat> flags = 0;
-		if (array_mesh) {
-			const TypedArray<Array> shape_arrays = surface_get_blend_shape_arrays(surface);
+		if (array_mesh || !p_resource) {
+			const TypedArray<Array> shape_arrays = shape_count == 0 ? TypedArray<Array>() : (p_resource ? p_resource->surface_get_blend_shape_arrays(surface) : source_shapes[surface]);
 			for (int shape = 0; shape < shape_arrays.size(); shape++) {
 				Array remapped_shape;
 				ERR_FAIL_COND_V(!_surface_cache_remap_arrays(shape_arrays[shape], capture_remap, positions.size(), remapped_shape), Dictionary());
 				shapes.push_back(remapped_shape);
 			}
-			flags = uint64_t(surface_get_format(surface)) & ~uint64_t(ARRAY_FLAG_COMPRESS_ATTRIBUTES);
+			flags = source_formats[surface] & ~uint64_t(ARRAY_FLAG_COMPRESS_ATTRIBUTES);
 		}
 		capture_mesh->add_surface_from_arrays(PRIMITIVE_TRIANGLES, remapped, shapes, Dictionary(), flags);
-		capture_mesh->surface_set_material(surface, surface_get_material(surface));
+		if (p_resource) {
+			capture_mesh->surface_set_material(surface, p_resource->surface_get_material(surface));
+		}
 
 		// Chart coordinates per corner: capture pixels for the GPU capture, atlas UV for rays.
 		Vector<Vector<Vector2>> primitive_uv;
@@ -2531,6 +2597,7 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes, const
 			}
 		}
 
+		capture_mesh_ms += (OS::get_singleton()->get_ticks_usec() - capture_start) / 1000.0;
 		const Vector<int> material_charts = first_chart["charts"];
 		const Vector<int> material_tiles = first_chart["tiles"];
 		Vector<int> lighting_charts;
@@ -2555,9 +2622,10 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes, const
 			{
 				const int *tile = material_tiles.ptr() + corner / 3 * 4;
 				const int width = tile[2] & 0xFFFF, area = width * (tile[2] >> 16);
+				const SurfaceCacheCoverage::Triangle triangle(material_pixels[corner], material_pixels[corner + 1], material_pixels[corner + 2]);
 				for (int cell = 0; cell < area; cell++) {
 					const Vector2 cell_min(tile[0] + cell % width, tile[1] + cell / width);
-					if (SurfaceCacheCoverage::triangle_cell_covered(material_pixels[corner], material_pixels[corner + 1], material_pixels[corner + 2], cell_min)) {
+					if (triangle.covers(cell_min)) {
 						for (int side = 0; side < sides; side++) {
 							const int address = tile[3] + side * area + cell;
 							coverage[address >> 5] |= int32_t(1u << (address & 31));
@@ -2676,6 +2744,9 @@ Dictionary Mesh::surface_cache_prepare(const Vector<float> &p_texel_sizes, const
 	}
 
 	Dictionary result;
+	operation_ms["mesh_pack"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0 - capture_mesh_ms;
+	operation_ms["capture_mesh"] = capture_mesh_ms;
+	result["operation_ms"] = operation_ms;
 	result["layouts"] = result_layouts;
 	result["mesh"] = capture_mesh;
 	result["material_coverage"] = material_coverage;

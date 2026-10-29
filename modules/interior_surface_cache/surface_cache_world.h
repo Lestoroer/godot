@@ -73,6 +73,8 @@ class SurfaceCacheWorldRD : public RefCounted {
 	struct Counters {
 		int64_t captures = 0, moves = 0, poses = 0, geometry_updates = 0, blas_builds = 0, tlas_builds = 0, layouts = 0;
 		double frame_ms = 0, layouts_ms = 0, captures_ms = 0, tlas_ms = 0, gather_ms = 0;
+		double initialize_ms = 0, mesh_prepare_ms = 0, blas_ms = 0, capacity_ms = 0, geometry_ms = 0;
+		double mesh_read_ms = 0, mesh_layout_ms = 0, mesh_pack_ms = 0, capture_mesh_ms = 0, capture_allocate_ms = 0, capture_draw_ms = 0;
 	} counters;
 	RID scenario;
 	Ref<Resource> profile;
@@ -119,7 +121,7 @@ class SurfaceCacheWorldRD : public RefCounted {
 	Array take_changes(int p_capture_limit);
 	ChangeKind change_kind(const Dictionary &p_change) const;
 	bool initialize_gpu();
-	bool add_instance(const Dictionary &p_change);
+	bool add_instance(const Dictionary &p_change, const HashMap<RID, Vector<RenderingServerTypes::SurfaceData>> &p_sources);
 	void remove_instance(RID p_source);
 	void release_geometry(Geometry *p_geometry);
 	LocalVector<RID> vertex_buffers(const Geometry &p_geometry);
