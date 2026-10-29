@@ -31,6 +31,7 @@
 #include "render_forward_clustered.h"
 
 #include "core/config/project_settings.h"
+#include "core/os/os.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
@@ -3054,6 +3055,17 @@ void RenderForwardClustered::_render_material(const Transform3D &p_cam_transform
 
 // Fork(Lestoroer): source material is rasterized on chart streams, entirely on GPU.
 void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side, int p_layout) {
+	const bool profiling = OS::get_singleton()->get_environment("SURFACE_CACHE_PROFILE_STARTUP") == "1";
+	uint64_t started = profiling ? OS::get_singleton()->get_ticks_usec() : 0, stage = started;
+	Dictionary stages;
+	auto stamp = [&](const char *name) {
+		if (profiling) {
+			uint64_t now = OS::get_singleton()->get_ticks_usec();
+			stages[name] = double(stages.get(name, 0.0)) + (now - stage) / 1000.0;
+			stage = now;
+		}
+	};
+
 	ERR_FAIL_NULL(p_source);
 	ERR_FAIL_NULL(p_chart);
 	ERR_FAIL_COND(p_region.size.x <= 0 || p_region.size.y <= 0);
@@ -3090,28 +3102,40 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	render_data.cluster_size = 1;
 	render_data.cluster_max_elements = 32;
 	render_data.instances = &cull_argument;
+	stamp("setup");
 	scene_shader.enable_advanced_shader_group();
+	stamp("enable_shaders");
 	_update_render_base_uniform_set();
+	stamp("base_uniform");
 	for (int capture_pass = 0; capture_pass < 2; capture_pass++) {
 		scene_data.surface_cache_coverage = capture_pass == 0;
 		uint32_t uniform_buffer_index = _setup_environment(&render_data, true, RD::get_singleton()->framebuffer_get_size(p_framebuffer), p_region.size, Color());
-	_fill_render_list(RENDER_LIST_SURFACE_CACHE_CAPTURE, &render_data, PASS_MODE_DEPTH_MATERIAL);
-	render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].sort_by_key();
-	_fill_instance_data(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, 0, -1, true, chart);
-	RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, RID(), RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default(), uniform_buffer_index);
-	RenderListParameters params(render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].element_info.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
-	params.capture_geometry = chart;
-	params.capture_layout = p_layout;
-	Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
-	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, capture_pass == 0 ? RD::DRAW_CLEAR_ALL : RD::DRAW_DEFAULT_ALL, clear, 0.0f, 0, p_region);
-	// Fork(Lestoroer): vertex shader expands triangle coverage; material samples
-	// are analytically reconstructed inside the original triangle per texel.
-	params.force_wireframe = false;
-	params.uv_offset = Vector2();
-	_render_list(draw_list, RD::get_singleton()->framebuffer_get_format(p_framebuffer), &params, 0, params.element_count);
-	RD::get_singleton()->draw_list_end();
+		stamp("environment");
+		_fill_render_list(RENDER_LIST_SURFACE_CACHE_CAPTURE, &render_data, PASS_MODE_DEPTH_MATERIAL);
+		render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].sort_by_key();
+		stamp("list");
+		_fill_instance_data(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, 0, -1, true, chart);
+		stamp("instance_data");
+		RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, RID(), RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default(), uniform_buffer_index);
+		RenderListParameters params(render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].element_info.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
+		params.capture_geometry = chart;
+		params.capture_layout = p_layout;
+		Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
+		RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, capture_pass == 0 ? RD::DRAW_CLEAR_ALL : RD::DRAW_DEFAULT_ALL, clear, 0.0f, 0, p_region);
+		// Fork(Lestoroer): vertex shader expands triangle coverage; material samples
+		// are analytically reconstructed inside the original triangle per texel.
+		params.force_wireframe = false;
+		params.uv_offset = Vector2();
+		stamp("draw_setup");
+		_render_list(draw_list, RD::get_singleton()->framebuffer_get_format(p_framebuffer), &params, 0, params.element_count);
+		stamp("draw");
+		RD::get_singleton()->draw_list_end();
+		stamp("end");
 	}
 	cull_argument[0] = nullptr;
+	if (profiling && OS::get_singleton()->get_ticks_usec() - started > 5000) {
+		print_line("GI_CAPTURE_STAGES " + String(Variant(stages)));
+	}
 }
 
 void RenderForwardClustered::_render_uv2(const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) {

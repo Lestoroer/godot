@@ -697,6 +697,10 @@ RID MeshStorage::mesh_surface_get_material(RID p_mesh, int p_surface) const {
 }
 
 RenderingServerTypes::SurfaceData MeshStorage::mesh_get_surface(RID p_mesh, int p_surface) const {
+	return mesh_get_surface(p_mesh, p_surface, true);
+}
+
+RenderingServerTypes::SurfaceData MeshStorage::mesh_get_surface(RID p_mesh, int p_surface, bool p_include_lods) const {
 	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL_V(mesh, RenderingServerTypes::SurfaceData());
 	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_surface, mesh->surface_count, RenderingServerTypes::SurfaceData());
@@ -727,7 +731,7 @@ RenderingServerTypes::SurfaceData MeshStorage::mesh_get_surface(RID p_mesh, int 
 	}
 	sd.aabb = s.aabb;
 	sd.uv_scale = s.uv_scale;
-	for (uint32_t i = 0; i < s.lod_count; i++) {
+	for (uint32_t i = 0; p_include_lods && i < s.lod_count; i++) {
 		RenderingServerTypes::SurfaceData::LOD lod;
 		lod.edge_length = s.lods[i].edge_length;
 		lod.index_data = RD::get_singleton()->buffer_get_data(s.lods[i].index_buffer);

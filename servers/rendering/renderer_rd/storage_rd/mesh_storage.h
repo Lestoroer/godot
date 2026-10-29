@@ -400,6 +400,7 @@ public:
 	virtual RID mesh_surface_get_material(RID p_mesh, int p_surface) const override;
 
 	virtual RenderingServerTypes::SurfaceData mesh_get_surface(RID p_mesh, int p_surface) const override;
+	RenderingServerTypes::SurfaceData mesh_get_surface(RID p_mesh, int p_surface, bool p_include_lods) const; // Fork(Lestoroer)
 
 	virtual int mesh_get_surface_count(RID p_mesh) const override;
 
