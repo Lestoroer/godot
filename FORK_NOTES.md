@@ -572,6 +572,24 @@ GI работает только на Vulkan с аппаратным ray query �
     SceneTree до дерева скрипта. Так проверка открывает настоящий редактор без утечки
     первого дерева (`editor_lifecycle.gd`).
 
+14. **Нативный цикл Surface Cache** | `modules/interior_surface_cache/` |
+    `SurfaceCacheWorldRD` владеет экземплярами, диапазонами материала, GPU-буферами,
+    очередью захватов и TLAS; `SurfaceCacheGatherRD` — проходами и историей видов.
+    Оба работают в callback потока рендера. GDScript игры оставляет синхронную диагностику,
+    профиль, подготовку геометрии/захвата и `world_hash_cache.gd`; шейдерные алгоритмы не меняются.
+    Модуль загружает эти помощники из `res://features/lighting/surface_cache/` только при
+    создании рендера игры. Константы раскладки экспортируются нативными классами;
+    размер GatherView вычисляется из C++-структуры и проверен `static_assert`.
+    Диагностические словари формируются по запросу, ёмкости пересчитываются при изменениях;
+    движения и TLAS передаются типизированными массивами без RD-обёрток GDScript.
+    Vulkan собирает `VkAccelerationStructureInstanceKHR` в обычной памяти и копирует целиком
+    в mapped upload buffer: запись битовых полей не должна читать эту память.
+    Проверки: `runtime_lifecycle`, `material_updates`, `profile_updates`, `temporal_motion`,
+    `temporal_reprojection`, `temporal_jitter`, `change_areas`, `reflection_contract`,
+    `world_cache_fragments`; эталонная комната и активные сценарии стенда на 600 предметов.
+    При обновлении upstream проверить native RD API, lifetime callback и порядок проходов,
+    а при смене раскладки шейдеров — `Parameters` и проверки смещений в temporal_reprojection.
+
 ### Чеклист обновления `interior-star/main`
 
 1. Перед merge записать число строк `Fork(Lestoroer)` в `interior-star/main` (команда из

@@ -6439,20 +6439,22 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::tlas_create(uint32_t p
 
 void RenderingDeviceDriverVulkan::acceleration_structure_instance_write(uint8_t *r_driver_instance, const AccelerationStructureInstance &p_instance) {
 #if VULKAN_RAYTRACING_ENABLED
-	VkAccelerationStructureInstanceKHR *vk_instance = (VkAccelerationStructureInstanceKHR *)r_driver_instance;
-	_store_transform_transposed_3x4(p_instance.transform, vk_instance->transform);
-	vk_instance->instanceCustomIndex = p_instance.id;
-	vk_instance->mask = p_instance.mask;
-	vk_instance->instanceShaderBindingTableRecordOffset = p_instance.hit_sbt_offset;
-	vk_instance->flags = p_instance.flags;
+	// Fork(Lestoroer): build bitfields in CPU memory; mapped upload memory must only be written.
+	VkAccelerationStructureInstanceKHR vk_instance = {};
+	_store_transform_transposed_3x4(p_instance.transform, vk_instance.transform);
+	vk_instance.instanceCustomIndex = p_instance.id;
+	vk_instance.mask = p_instance.mask;
+	vk_instance.instanceShaderBindingTableRecordOffset = p_instance.hit_sbt_offset;
+	vk_instance.flags = p_instance.flags;
 
 	if (p_instance.blas) {
 		const AccelerationStructureInfo *blas_info = (const AccelerationStructureInfo *)p_instance.blas.id;
 		// Fork(Lestoroer): an AS address is not necessarily its backing buffer address.
-		vk_instance->accelerationStructureReference = blas_info->device_address;
+		vk_instance.accelerationStructureReference = blas_info->device_address;
 	} else {
-		vk_instance->accelerationStructureReference = 0;
+		vk_instance.accelerationStructureReference = 0;
 	}
+	memcpy(r_driver_instance, &vk_instance, sizeof(vk_instance));
 #endif
 }
 
