@@ -1756,7 +1756,11 @@ Dictionary RenderingServer::mesh_surface_get_lods(RID p_mesh, int p_surface) con
 }
 
 TypedArray<Array> RenderingServer::mesh_surface_get_blend_shape_arrays(RID p_mesh, int p_surface) const {
-	RenderingServerTypes::SurfaceData sd = mesh_get_surface(p_mesh, p_surface);
+	return mesh_create_blend_shape_arrays_from_surface_data(mesh_get_surface(p_mesh, p_surface), mesh_get_blend_shape_count(p_mesh));
+}
+
+// Fork(Lestoroer): reuse an existing CPU snapshot without reading the mesh again.
+TypedArray<Array> RenderingServer::mesh_create_blend_shape_arrays_from_surface_data(const RenderingServerTypes::SurfaceData &sd, int p_shape_count) const {
 	ERR_FAIL_COND_V(sd.vertex_count == 0, Array());
 
 	Vector<uint8_t> blend_shape_data = sd.blend_shape_data;
@@ -1776,10 +1780,10 @@ TypedArray<Array> RenderingServer::mesh_surface_get_blend_shape_arrays(RID p_mes
 
 		uint32_t blend_shape_count = blend_shape_data.size() / divisor;
 
-		ERR_FAIL_COND_V(blend_shape_count != (uint32_t)mesh_get_blend_shape_count(p_mesh), Array());
+		ERR_FAIL_COND_V(blend_shape_count != (uint32_t)p_shape_count, Array());
 
 		TypedArray<Array> blend_shape_array;
-		blend_shape_array.resize(mesh_get_blend_shape_count(p_mesh));
+		blend_shape_array.resize(p_shape_count);
 		for (uint32_t i = 0; i < blend_shape_count; i++) {
 			Vector<uint8_t> bs_data = blend_shape_data.slice(i * divisor, (i + 1) * divisor);
 			Vector<uint8_t> unused;

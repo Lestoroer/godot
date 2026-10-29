@@ -43,6 +43,7 @@ bool SurfaceCacheGatherRD::initialize(RenderingDevice *p_device, const Ref<RefCo
 }
 
 void SurfaceCacheGatherRD::create_resources(View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, Vector2i p_size) {
+	ScopeTimer timer(resource_ms);
 	p_buffers->clear_context(SNAME("surface_cache"));
 	const char *textures[] = { "light_0", "light_1", "depth_0", "depth_1", "normal_0", "normal_1", "diffuse_raw", "rough_radiance", "contact_raw", "contact_0", "contact_1", "contact_light_0", "contact_light_1", "gi", "reflection_raw", "reflection_0", "reflection_1", "reflection_material_0", "reflection_material_1", "reflection", "fast_0", "fast_1" };
 	for (const char *name : textures) {

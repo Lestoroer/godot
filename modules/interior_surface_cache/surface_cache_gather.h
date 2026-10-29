@@ -73,6 +73,7 @@ private:
 	SurfaceCache::Kernel kernels[PASS_COUNT];
 	RID sampler, pass_stats[3];
 	String error;
+	double resource_ms = 0;
 	void free_view(View *p_view);
 	void create_resources(View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, Vector2i p_size);
 	void build_sets(Sets &r_sets, View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, int p_current, Span<RID> p_resources, RID p_flags, RID p_ranks, RID p_tlas, RID p_changes, bool p_diagnostics);
@@ -90,4 +91,5 @@ public:
 	void dispose();
 	String get_error() const { return error; }
 	Array get_probe_views() const;
+	double get_resource_ms() const { return resource_ms; }
 };
