@@ -408,49 +408,41 @@ GI работает только на Vulkan с аппаратным ray query �
 
    Проверки: `hardware_rt.gd`, `main_rd_query.gd`, `krylov_gpu.gd`.
 
-8. **Charts и GPU-захват материала** | `scene/resources/mesh.{h,cpp}`,
+8. **Charts и GPU-захват материала** | `modules/interior_surface_cache/surface_cache_geometry.{h,cpp}`,
    `renderer_rd/storage_rd/mesh_storage.{h,cpp}`, `storage/mesh_storage.h`,
    `renderer_rd/shaders/surface_cache_capture_inc.glsl`,
+   `renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl`,
+   `renderer_rd/forward_clustered/render_forward_clustered.{h,cpp}`,
    `renderer_rd/storage_rd/material_storage.{h,cpp}`,
    `renderer_rd/storage_rd/texture_storage.{h,cpp}`, `renderer_rd/storage_rd/light_storage.cpp`,
    `storage/material_storage.h`, `storage/utilities.h` |
-   - `Mesh.surface_cache_get_layout(surface, texel_size, sides)` строит собственную развёртку, не
-     xatlas: каждый треугольник — отдельный прямоугольник в texel с отступом 2 texel,
-     плотность по длинному ребру, по короткой оси минимум один texel. `sides` — 2, если у
-     ячеек есть обратная сторона, или 1 — только лицевая. Вырожденный
-     треугольник получает chart 0 и один texel. Прямоугольники пакуются
-     `Geometry2D::make_atlas`. Результат: `capture_pixels`, `uv`, `source_vertices`,
-     `charts`, `indices`, `size`, `tiles`, `sample_count`. Авторские UV/UV2/CUSTOM,
-     порядок треугольников, skin и morph не меняются.
-   - `Mesh.surface_cache_prepare(texel_sizes, surface_sides)` — вся подготовка меша за один
-     проход для одного размера texel (раскладка материала) или двух (материала и освещения);
-     `surface_sides` — число сторон каждой поверхности, его берут из её материала.
-     Поверхности складываются в атлас столбиком с отступом 2 texel. Один `ArrayMesh` захвата
-     на все размеры (`mesh`): вершины повторены по углам треугольников, материалы
-     поверхностей и blend shapes исходного `ArrayMesh`, координаты захвата каждой раскладки
-     заданы `mesh_surface_set_capture_uv`. Записи треугольников по 144 байта повторяют
-     `CacheTriangle` игры (`cache_types`): вершины с исходными индексами,
-     UV и chart раскладки материала, знак ориентации по нормали, тайл; при втором размере —
-     UV, chart и тайл раскладки освещения. Результат: `mesh`, `layouts` (`size`, `sample_count`,
-     `surfaces` с `offset`, `size`, `tiles`, `charts`, `sample_count`),
-     `triangle_data`, `vertex_data` (float3 на угол), а при двух размерах — узлы переноса
-     раскладки освещения: `lighting_nodes` (узел каждой ячейки) и `lighting_node_cells` (ячейка-
-     представитель каждого узла, узлы пронумерованы по возрастанию представителя). Ячейки
-     треугольника с тайлом 1×1 объединяются в один узел по ячейке освещения локального центра
-     треугольника, стороне треугольника и одному из 26 направлений стороны; представитель — член,
-     ближайший к среднему центру. Лицевая и обратная стороны в один узел не попадают: обратная
-     сторона рядом с лицевой того же направления — обычно изнанка тонкой стенки, и её свет не
-     годится видимой поверхности. Остальные ячейки — каждая свой узел. Ещё — покрытие раскладки материала:
-     `material_coverage` (бит на ячейку каждой стороны) и `material_coverage_ranks` (число покрытых
-     ячеек до каждого слова из 32). Его считает тот же строгий SAT, что захват, теми же точными
-     знаками во float (`SurfaceCacheCoverage` в `mesh.cpp`): захват покрывает только ячейки маски,
-     и игра хранит только их.
-   - `RenderingServer.mesh_surface_set_capture_uv(mesh, surface, layout, uv)` задаёт частному
-     capture-мешу неизменяемый поток координат (в texel) раскладки `layout` (0 — материал,
-     1 — освещение) до создания экземпляров. Раскладки делят потоки вершин меша.
+   - `SurfaceCacheGeometry.prepare(mesh, texel_size, surface_sides)` и
+     `prepare_from_rid(mesh, texel_size, surface_sides)` (модуль, не патч upstream) — вся
+     подготовка меша за один проход. Развёртка собственная, не xatlas: каждый треугольник —
+     отдельный прямоугольник в texel с рамкой 1 texel, плотность по длинному ребру, по короткой
+     оси минимум один texel; вырожденный треугольник получает chart 0 и один texel.
+     Прямоугольники пакуются полками по убыванию высоты за один проход, поверхности складываются
+     в атлас столбиком. `surface_sides` — 2, если у ячеек есть обратная сторона, или 1; его берут
+     из материала поверхности. Меш захвата (`mesh`): вершины повторены по углам треугольников
+     побайтовым копированием исходных потоков в их кодировке, со сжатием; материалы поверхностей
+     и blend shapes — исходного меша. Записи треугольников по 96 байт повторяют `CacheTriangle`
+     игры (`cache_types`): вершины с исходными индексами, UV и chart, знак ориентации по нормали,
+     тайл. Результат: `mesh`, `layout` (`size`, `sample_count`, `surfaces` с `offset`, `size`,
+     `sample_count`), `triangle_data`, лучевая геометрия `vertex_data` (float3 на исходную вершину)
+     и `index_data` (uint32 на угол), покрытие `material_coverage` (бит на ячейку каждой стороны) и
+     `material_coverage_ranks` (число покрытых ячеек до каждого слова из 32). Покрытие считает тот
+     же строгий SAT, что захват, теми же точными знаками во float (`SurfaceCacheCoverage`): захват
+     покрывает только ячейки маски, и игра хранит только их. Авторские UV/UV2/CUSTOM, порядок
+     треугольников, skin и morph не меняются.
+   - `RenderingServer.mesh_set_surface_cache_corners(mesh, corners)` задаёт частному capture-мешу
+     углы его треугольников в texel, по три на треугольник, поверхности по порядку, одним
+     storage-буфером. Шейдер сцены читает их в проходе захвата по номеру треугольника
+     (render pass set, binding 39; объявлен во всех вариантах, чтобы раскладка набора не
+     различалась); первый треугольник поверхности приходит в padding-полосе
+     `compressed_aabb_size.w` данных экземпляра.
    - `RenderingServer.instance_surface_cache_capture(instance, chart_instance, framebuffer,
-     region, back_side, layout)` исполняет на GPU настоящий spatial material исходного
-     экземпляра на геометрии chart-экземпляра с координатами раскладки `layout`. Transform,
+     region, back_side)` исполняет на GPU настоящий spatial material исходного
+     экземпляра на геометрии chart-экземпляра. Transform,
      overrides, instance uniforms и поза skin/morph берутся у исходного. Результат остаётся
      в framebuffer вызывающего: пять targets — albedo/alpha, нормаль RGBA16F (alpha — доля
      пропускания), AO/roughness/metallic/specular, emission, канонические barycentrics и
@@ -590,26 +582,30 @@ GI работает только на Vulkan с аппаратным ray query �
     При обновлении upstream проверить native RD API, lifetime callback и порядок проходов,
     а при смене раскладки шейдеров — `Parameters` и проверки смещений в temporal_reprojection.
 
-15. **Загрузка Surface Cache** | `scene/resources/mesh.*`, `core/math/geometry_2d.cpp`,
-    `modules/interior_surface_cache/`, `servers/rendering/rendering_server.*` |
-    `Mesh.surface_cache_prepare_from_rid` готовит геометрию без промежуточного GPU-меша.
-    Один снимок данных обслуживает раскладку и меш захвата. Декодирование blend shapes выделено в
-    `mesh_create_blend_shape_arrays_from_surface_data`, чтобы повторно использовать снимок.
-    Нативный мир сначала читает новые исходники выбранной порции изменений, затем создаёт
-    GPU-ресурсы. Снимки ограничены одним обновлением; последующие изменения читаются заново.
-    Порядок экземпляров, лимиты захватов, плотность и история света сохранены.
-    Упаковка атласа отделяет COW-массивы один раз перед циклом; проверка покрытия выносит
-    инварианты треугольника из цикла ячеек, сохраняя точные предикаты на границах.
+15. **Загрузка Surface Cache** | `modules/interior_surface_cache/`, `servers/rendering/rendering_server.*`,
+    `servers/rendering/rendering_device.cpp` |
+    `SurfaceCacheGeometry` готовит меш из одного снимка `SurfaceData`: для раскладки и записей
+    декодируются только позиции, нормали и индексы, потоки меша захвата копируются байтами.
+    Раскладка и записи строятся двумя проходами по простым массивам. Декодирование blend shapes
+    выделено в `mesh_create_blend_shape_arrays_from_surface_data`.
+    Нативный мир берёт новые экземпляры ближними к камере первыми, пока оценка подготовки —
+    треугольники на измеренную цену треугольника — укладывается в бюджет кадра: 33 мс до первого
+    кадра мира, затем 4 мс и не больше 4 захватов. Оценка позволяет сначала прочитать исходники
+    всей порции, затем создавать GPU-ресурсы. Когда начальная очередь разобрана, буферы мира
+    ужимаются до занятого. Записи треугольников и лучевые вершины после загрузки на GPU не
+    остаются в памяти процессора: новый экземпляр той же геометрии копирует записи с экземпляра
+    в мире через временный буфер. BLAS строится по исходным вершинам и индексному буферу; для
+    ядра геометрии `rendering_device.cpp` принимает индексный буфер с флагом storage как
+    storage-uniform (как уже принимал вершинный).
     `get_operation_ms()` дополняется стадиями инициализации, чтения/раскладки/упаковки мешей,
     создания меша захвата, его ресурсов и draw, BLAS, ёмкостей, геометрии и ресурсов вида.
     Таймеры вложены: их нельзя суммировать с родительскими `layouts`, `captures`, `frame`.
     Проверки: `geometry_prepare` (включая атрибуты меша захвата), `capture_coverage`,
-    `material_updates`, `runtime_lifecycle`, `profile_updates`; загрузка спальни и стенда
-    на 600 предметов через `gi_timeline.gd`, кадры и движение через `gi_quick.gd`.
+    `material_capture`, `material_updates`, `runtime_lifecycle`, `profile_updates`.
     Методика и результаты — `is-game/game/features/lighting/surface_cache/startup-performance.md`.
 
-16. **Устранение лишней работы при старте GI** | `shader_rd.*`, `mesh.cpp`,
-    `storage_rd/mesh_storage.*`, `surface_cache_world.cpp` |
+16. **Устранение лишней работы при старте GI** | `shader_rd.*`, `storage_rd/mesh_storage.*`,
+    `surface_cache_world.cpp`, `surface_cache_geometry.cpp` |
     Кеш ShaderRD сохраняет bytecode всех вариантов, но создаёт GPU-шейдер только по запросу.
     Уже выданные placeholders заполняются при включении группы: существующие конвейеры
     сохраняют свой RID. Флаги спроса и кеша принадлежат версии и сбрасываются при её смене.

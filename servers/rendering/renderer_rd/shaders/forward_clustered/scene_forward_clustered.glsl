@@ -31,10 +31,11 @@ layout(location = 1) in vec4 axis_tangent_attrib;
 #endif
 
 // Location 2 is unused.
+// Fork(Lestoroer): exact original corners of every triangle of a deindexed capture mesh, three per
+// triangle; a surface starts at the triangle given by its instance data (capture pass only). Declared
+// for every variant: the render pass set must keep one layout.
+layout(set = 1, binding = 39, std430) readonly buffer SurfaceCacheCaptureCorners { vec2 data[]; } surface_cache_capture_corners;
 #ifdef MODE_RENDER_MATERIAL
-// Fork(Lestoroer): deindexed capture stream, exact original triangle coordinates.
-layout(location = 15) in vec4 surface_cache_ab_attrib;
-layout(location = 16) in vec2 surface_cache_c_attrib;
 layout(location = 15) out flat vec4 surface_cache_ab_interp;
 layout(location = 16) out flat vec2 surface_cache_c_interp;
 layout(location = 17) out vec2 surface_cache_uv_interp;
@@ -702,10 +703,11 @@ void vertex_shader(vec3 vertex_input,
 
 		// Fork(Lestoroer): conservative raster of the deindexed capture triangle.
 		if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)) {
-			vec2 corners[3] = vec2[](surface_cache_ab_attrib.xy, surface_cache_ab_attrib.zw, surface_cache_c_attrib);
+			uint first = (floatBitsToUint(instances.data[instance_index].compressed_aabb_size_pad.w) + uint(gl_VertexIndex) / 3u) * 3u;
+			vec2 corners[3] = vec2[](surface_cache_capture_corners.data[first], surface_cache_capture_corners.data[first + 1u], surface_cache_capture_corners.data[first + 2u]);
 			int corner = gl_VertexIndex % 3;
-			surface_cache_ab_interp = surface_cache_ab_attrib;
-			surface_cache_c_interp = surface_cache_c_attrib;
+			surface_cache_ab_interp = vec4(corners[0], corners[1]);
+			surface_cache_c_interp = corners[2];
 			surface_cache_uv_interp = corners[corner];
 			vec2 p = corners[corner];
 			vec2 previous = corners[(corner + 2) % 3];

@@ -29,6 +29,7 @@ class SurfaceCacheWorldRD : public RefCounted {
 		MOVE_INSTANCE,
 		POSE_INSTANCE,
 		RECAPTURE };
+	struct Instance;
 	struct Geometry {
 		String key;
 		int references = 0;
@@ -38,11 +39,14 @@ class SurfaceCacheWorldRD : public RefCounted {
 		struct Surface {
 			Vector2i offset, size;
 			int triangles = 0;
+			int vertices = 0; // Source vertices of the ray geometry.
 		};
 		LocalVector<Surface> surfaces;
-		TypedArray<PackedByteArray> triangles, vertex_data;
+		// Triangle records until their first upload; then an instance in the world holds them.
+		TypedArray<PackedByteArray> triangles;
+		Instance *holder = nullptr;
 		PackedInt32Array coverage, coverage_ranks;
-		LocalVector<RID> vertices, local;
+		LocalVector<RID> vertices, indices, local;
 		RID blas, coverage_buffer, ranks_buffer;
 	};
 	struct Instance {
@@ -110,6 +114,12 @@ class SurfaceCacheWorldRD : public RefCounted {
 	bool initialized = false, disposed = false, opacity_pending = false, opacity_requested = false;
 	uint64_t capture_serial = 0, next_generation = 0;
 	int64_t frame = 0;
+	// Nearest captures first; the camera of the last rendered view.
+	Vector3 view_origin;
+	bool has_view = false;
+	// Preparation cost measured so far, for the per-frame estimate.
+	int64_t prepared_triangles = 0;
+	double prepare_ms_per_triangle = 0.0003;
 	double cpu_submit_ms = 0;
 	String error;
 	static bool measure_gpu_time;
@@ -118,15 +128,23 @@ class SurfaceCacheWorldRD : public RefCounted {
 	void render_frame();
 	void update_world();
 	String render_view(RenderData *p_data);
-	Array take_changes(int p_capture_limit);
+	Array take_changes();
+	int triangle_count(RID p_base) const;
 	ChangeKind change_kind(const Dictionary &p_change) const;
 	bool initialize_gpu();
 	bool add_instance(const Dictionary &p_change, const HashMap<RID, Vector<RenderingServerTypes::SurfaceData>> &p_sources);
 	void remove_instance(RID p_source);
 	void release_geometry(Geometry *p_geometry);
-	LocalVector<RID> vertex_buffers(const Geometry &p_geometry);
+	LocalVector<RID> vertex_buffers(const TypedArray<PackedByteArray> &p_vertex_data);
+	LocalVector<RID> index_buffers(const TypedArray<PackedByteArray> &p_index_data);
+	LocalVector<RID> copy_vertex_buffers(const Geometry &p_geometry);
+	void upload_triangles(Instance &r_state);
 	RID create_blas(const LocalVector<RID> &p_vertices, const Geometry &p_geometry, bool p_build = true);
 	bool ensure_capacity();
+	int required_material_cells() const;
+	int required_material_storage() const;
+	void required_sizes(int p_material_cells, int p_material_storage, uint32_t *r_sizes) const;
+	void fit_capacity();
 	void allocate_storage(Instance &r_state);
 	void release_storage(Instance &r_state);
 	void write_ranks(Instance &r_state);
