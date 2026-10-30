@@ -153,10 +153,9 @@ void Geometry2D::make_atlas(const Vector<Size2i> &p_rects, Vector<Point2i> &r_re
 
 	Vector<_AtlasWorkRect> wrects;
 	wrects.resize(p_rects.size());
-	_AtlasWorkRect *rect_write = wrects.ptrw(); // Fork(Lestoroer): detach once per packing attempt.
 	for (int i = 0; i < p_rects.size(); i++) {
-		rect_write[i].s = p_rects[i];
-		rect_write[i].idx = i;
+		wrects.write[i].s = p_rects[i];
+		wrects.write[i].idx = i;
 	}
 	wrects.sort();
 	int widest = wrects[0].s.width;
@@ -173,35 +172,35 @@ void Geometry2D::make_atlas(const Vector<Size2i> &p_rects, Vector<Point2i> &r_re
 
 		Vector<int> hmax;
 		hmax.resize(w);
-		hmax.fill(0);
-		int *height = hmax.ptrw();
-		rect_write = wrects.ptrw();
+		for (int j = 0; j < w; j++) {
+			hmax.write[j] = 0;
+		}
 
 		// Place them.
 		int ofs = 0;
 		int limit_h = 0;
 		for (int j = 0; j < wrects.size(); j++) {
-			if (ofs + rect_write[j].s.width > w) {
+			if (ofs + wrects[j].s.width > w) {
 				ofs = 0;
 			}
 
 			int from_y = 0;
-			for (int k = 0; k < rect_write[j].s.width; k++) {
-				if (height[ofs + k] > from_y) {
-					from_y = height[ofs + k];
+			for (int k = 0; k < wrects[j].s.width; k++) {
+				if (hmax[ofs + k] > from_y) {
+					from_y = hmax[ofs + k];
 				}
 			}
 
-			rect_write[j].p.x = ofs;
-			rect_write[j].p.y = from_y;
-			int end_h = from_y + rect_write[j].s.height;
-			int end_w = ofs + rect_write[j].s.width;
+			wrects.write[j].p.x = ofs;
+			wrects.write[j].p.y = from_y;
+			int end_h = from_y + wrects[j].s.height;
+			int end_w = ofs + wrects[j].s.width;
 			if (ofs == 0) {
 				limit_h = end_h;
 			}
 
-			for (int k = 0; k < rect_write[j].s.width; k++) {
-				height[ofs + k] = end_h;
+			for (int k = 0; k < wrects[j].s.width; k++) {
+				hmax.write[ofs + k] = end_h;
 			}
 
 			if (end_h > max_h) {
@@ -213,7 +212,7 @@ void Geometry2D::make_atlas(const Vector<Size2i> &p_rects, Vector<Point2i> &r_re
 			}
 
 			if (ofs == 0 || end_h > limit_h) { // While h limit not reached, keep stacking.
-				ofs += rect_write[j].s.width;
+				ofs += wrects[j].s.width;
 			}
 		}
 

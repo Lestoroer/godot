@@ -507,9 +507,9 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 			uint64_t input_mask = shader->get_vertex_input_mask(pipeline_key.version, pipeline_key.color_pass_flags, pipeline_key.ubershader);
 			RID geometry_mesh_instance = p_params->capture_geometry ? p_params->capture_geometry->mesh_instance : surf->owner->mesh_instance; // Fork(Lestoroer)
 			if (geometry_mesh_instance.is_valid()) {
-				mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(geometry_mesh_instance, surf->surface_index, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format, p_params->capture_layout);
+				mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(geometry_mesh_instance, surf->surface_index, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
 			} else {
-				mesh_storage->mesh_surface_get_vertex_arrays_and_format(mesh_surface, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format, p_params->capture_layout);
+				mesh_storage->mesh_surface_get_vertex_arrays_and_format(mesh_surface, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
 			}
 
 			pipeline_key.vertex_format_id = vertex_format;
@@ -883,6 +883,11 @@ void RenderForwardClustered::_fill_instance_data(RenderListType p_render_list, i
 		instance_data.set_uv_scale(uv_scale);
 		// Fork(Lestoroer): unused padding lane carries the Surface Cache id + 1 (0 = none).
 		instance_data.compressed_aabb_position[3] = float(surface->surface_index < inst->surface_cache_ids.size() ? inst->surface_cache_ids[surface->surface_index] + 1 : 0);
+		if (p_capture_geometry) {
+			// Fork(Lestoroer): the other padding lane carries the first capture triangle of the surface.
+			const uint32_t first_triangle = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_surface_cache_first_triangle(geometry_surface);
+			memcpy(&instance_data.compressed_aabb_size[3], &first_triangle, sizeof(first_triangle));
+		}
 
 		scene_state.curr_gpu_ptr[p_render_list][i + p_offset] = instance_data;
 
@@ -3054,7 +3059,7 @@ void RenderForwardClustered::_render_material(const Transform3D &p_cam_transform
 }
 
 // Fork(Lestoroer): source material is rasterized on chart streams, entirely on GPU.
-void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side, int p_layout) {
+void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side) {
 	const bool profiling = OS::get_singleton()->get_environment("SURFACE_CACHE_PROFILE_STARTUP") == "1";
 	uint64_t started = profiling ? OS::get_singleton()->get_ticks_usec() : 0, stage = started;
 	Dictionary stages;
@@ -3073,9 +3078,8 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	RenderGeometryInstanceBase *chart = static_cast<RenderGeometryInstanceBase *>(p_chart);
 	ERR_FAIL_COND(RSG::mesh_storage->mesh_get_surface_count(source->data->base) != RSG::mesh_storage->mesh_get_surface_count(chart->data->base));
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
-	for (uint32_t surface = 0; surface < uint32_t(RSG::mesh_storage->mesh_get_surface_count(chart->data->base)); surface++) {
-		ERR_FAIL_COND_MSG(!mesh_storage->mesh_surface_has_capture_uv(mesh_storage->mesh_get_surface(chart->data->base, surface), p_layout), "Surface Cache capture mesh has no chart stream for this layout.");
-	}
+	surface_cache_capture_corners = mesh_storage->mesh_get_surface_cache_corners(chart->data->base);
+	ERR_FAIL_COND_MSG(!surface_cache_capture_corners.is_valid(), "Surface Cache capture mesh has no capture corners.");
 	if (chart->mesh_instance.is_valid()) {
 		mesh_storage->mesh_instance_copy_pose(source->mesh_instance, chart->mesh_instance);
 		mesh_storage->mesh_instance_check_for_update(chart->mesh_instance);
@@ -3119,7 +3123,6 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 		RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, RID(), RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default(), uniform_buffer_index);
 		RenderListParameters params(render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].element_info.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
 		params.capture_geometry = chart;
-		params.capture_layout = p_layout;
 		Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
 		RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, capture_pass == 0 ? RD::DRAW_CLEAR_ALL : RD::DRAW_DEFAULT_ALL, clear, 0.0f, 0, p_region);
 		// Fork(Lestoroer): vertex shader expands triangle coverage; material samples
@@ -3133,6 +3136,7 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 		stamp("end");
 	}
 	cull_argument[0] = nullptr;
+	surface_cache_capture_corners = RID();
 	if (profiling && OS::get_singleton()->get_ticks_usec() - started > 5000) {
 		print_line("GI_CAPTURE_STAGES " + String(Variant(stages)));
 	}
@@ -3891,6 +3895,14 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		u.binding = 37 + i;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		u.append_id(p_render_data && surface_cache_buffers.size() == 2 ? surface_cache_buffers[i] : scene_shader.default_vec4_xform_buffer);
+		uniforms.push_back(u);
+	}
+	{
+		// Fork(Lestoroer): corners of the chart a Surface Cache capture draws.
+		RD::Uniform u;
+		u.binding = 39;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(p_render_list == RENDER_LIST_SURFACE_CACHE_CAPTURE && surface_cache_capture_corners.is_valid() ? surface_cache_capture_corners : scene_shader.default_vec4_xform_buffer);
 		uniforms.push_back(u);
 	}
 	// Fork(Lestoroer): viewport-owned diffuse gather and reflection, produced after depth. Without them
