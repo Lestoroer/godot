@@ -79,7 +79,7 @@ void SurfaceCacheGatherRD::create_resources(View &r_view, const Ref<RenderSceneB
 	}
 }
 
-void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSceneBuffersRD> &buffers, int current, Span<RID> resources, RID flags, RID ranks, RID tlas, RID material_changes, bool diagnostics) {
+void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSceneBuffersRD> &buffers, int current, Span<RID> resources, RID tlas, RID material_changes, bool diagnostics) {
 	const String cur = itos(current);
 	const String prev = itos(1 - current);
 	auto texture = [&](const String &name) { return buffers->get_texture(SNAME("surface_cache"), name); };
@@ -102,8 +102,6 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 		scene.push_back(uniform(10 + i, RD::UNIFORM_TYPE_IMAGE, texture(outputs[i])));
 	}
 	scene.push_back(uniform(14, RD::UNIFORM_TYPE_STORAGE_BUFFER, diagnostics ? v.stats : pass_stats[0]));
-	scene.push_back(uniform(18, RD::UNIFORM_TYPE_STORAGE_BUFFER, flags));
-	scene.push_back(uniform(21, RD::UNIFORM_TYPE_STORAGE_BUFFER, ranks));
 	TypedArray<RDUniform> hash_uniforms = world_hash->call("uniforms");
 	for (int i = 0; i < hash_uniforms.size(); ++i) {
 		Ref<RDUniform> entry = hash_uniforms[i];
@@ -279,7 +277,7 @@ void SurfaceCacheGatherRD::mark(const char *name, ObjectID view, bool enabled) {
 	}
 }
 
-String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID flags, RID ranks, RID tlas, const Ref<Resource> &settings, int light_count, RID material_changes, const LocalVector<Motion> &moves) {
+String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID tlas, const Ref<Resource> &settings, int light_count, RID material_changes, const LocalVector<Motion> &moves) {
 	ERR_FAIL_COND_V(!data || !device || settings.is_null() || resources.size() != 4, String());
 	Ref<RenderSceneBuffersRD> buffers = data->get_render_scene_buffers();
 	if (buffers.is_null()) {
@@ -367,14 +365,14 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID f
 	p.limits[3] = settings->get("reflection_filter_radius");
 	device->buffer_update(v.camera, 0, sizeof(p), &p);
 	Sets &sets = v.sets[v.frame % 2];
-	RID key[] = { resources[0], resources[1], resources[2], resources[3], flags, ranks, tlas, material_changes, buffers->get_depth_texture(0), buffers->get_texture(SNAME("forward_clustered"), SNAME("normal_roughness")) };
+	RID key[] = { resources[0], resources[1], resources[2], resources[3], tlas, material_changes, buffers->get_depth_texture(0), buffers->get_texture(SNAME("forward_clustered"), SNAME("normal_roughness")) };
 	bool changed = sets.diagnostics != diagnostics;
-	for (int i = 0; i < 10; ++i) {
+	for (int i = 0; i < 8; ++i) {
 		changed |= sets.resources[i] != key[i];
 	}
 	if (changed || !sets_valid(sets)) {
-		build_sets(sets, v, buffers, v.frame % 2, resources, flags, ranks, tlas, material_changes, diagnostics);
-		for (int i = 0; i < 10; ++i) {
+		build_sets(sets, v, buffers, v.frame % 2, resources, tlas, material_changes, diagnostics);
+		for (int i = 0; i < 8; ++i) {
 			sets.resources[i] = key[i];
 		}
 		sets.diagnostics = diagnostics;
