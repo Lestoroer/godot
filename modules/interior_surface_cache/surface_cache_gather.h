@@ -28,7 +28,7 @@ private:
 	struct Sets {
 		RID passes[PASS_COUNT];
 		Dictionary hash;
-		RID resources[10];
+		RID resources[8];
 		bool diagnostics = false;
 		bool ready = false;
 	};
@@ -75,7 +75,7 @@ private:
 	double resource_ms = 0;
 	void free_view(View *p_view);
 	void create_resources(View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, Vector2i p_size);
-	void build_sets(Sets &r_sets, View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, int p_current, Span<RID> p_resources, RID p_flags, RID p_ranks, RID p_tlas, RID p_changes, bool p_diagnostics);
+	void build_sets(Sets &r_sets, View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, int p_current, Span<RID> p_resources, RID p_tlas, RID p_changes, bool p_diagnostics);
 	bool sets_valid(const Sets &p_sets) const;
 	void take_changes(int64_t p_frame);
 	void write_changes(Parameters &r_parameters);
@@ -86,7 +86,7 @@ private:
 public:
 	static constexpr int VIEW_BYTES = sizeof(Parameters);
 	bool initialize(RenderingDevice *p_device, const Ref<RefCounted> &p_world_hash);
-	String render(RenderData *p_data, Span<RID> p_resources, RID p_flags, RID p_ranks, RID p_tlas, const Ref<Resource> &p_settings, int p_light_count, RID p_material_changes, const LocalVector<Motion> &p_moves);
+	String render(RenderData *p_data, Span<RID> p_resources, RID p_tlas, const Ref<Resource> &p_settings, int p_light_count, RID p_material_changes, const LocalVector<Motion> &p_moves);
 	void dispose();
 	String get_error() const { return error; }
 	Array get_probe_views() const;

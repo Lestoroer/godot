@@ -9,35 +9,27 @@ class SurfaceCacheWorldRD : public RefCounted {
 	enum Buffer { SURFACES,
 		TRIANGLES,
 		MATERIALS,
-		MATERIAL_RANKS,
-		MATERIAL_FLAGS,
 		LIGHTS,
 		MATERIAL_CHANGES,
 		SURFACE_FLAGS,
 		BUFFER_COUNT };
 	enum Pass { GEOMETRY,
 		MATERIAL,
-		MOVE,
-		POSE,
-		CLEAR_FLAGS,
-		RANKS,
 		PASS_COUNT };
 	enum ChangeKind { REMOVE,
 		LIGHT,
 		ADD,
 		REPLACE,
-		MOVE_INSTANCE,
-		POSE_INSTANCE,
+		MOVE_OR_POSE,
 		RECAPTURE };
 	struct Instance;
 	struct Geometry {
 		String key;
 		int references = 0;
 		Ref<ArrayMesh> mesh;
-		Vector2i size;
-		int sample_count = 0;
+		Vector2i size; // Capture atlas of the surface materials: columns of squares with a one-texel border.
+		int square = 0, columns = 0;
 		struct Surface {
-			Vector2i offset, size;
 			int triangles = 0;
 			int vertices = 0; // Source vertices of the ray geometry.
 		};
@@ -45,9 +37,8 @@ class SurfaceCacheWorldRD : public RefCounted {
 		// Triangle records until their first upload; then an instance in the world holds them.
 		TypedArray<PackedByteArray> triangles;
 		Instance *holder = nullptr;
-		PackedInt32Array coverage, coverage_ranks;
-		LocalVector<RID> vertices, indices, local;
-		RID blas, coverage_buffer, ranks_buffer;
+		LocalVector<RID> vertices, indices;
+		RID blas;
 	};
 	struct Instance {
 		uint64_t generation = 0;
@@ -55,27 +46,19 @@ class SurfaceCacheWorldRD : public RefCounted {
 		int64_t mesh_revision = 0;
 		Geometry *shared = nullptr;
 		AABB bounds;
-		Transform3D transform, move_from;
+		Transform3D transform;
 		PackedInt32Array sides;
 		bool deformed = false;
 		bool triangles_uploaded = false, geometry_dirty = true, pose_dirty = true, capture_dirty = true;
-		bool has_move = false, ranks_written = false;
 		uint64_t capture_serial = 0, opacity_serial = 0;
 		PackedByteArray opaque;
-		int node_offset = 0, node_count = 0, first_surface = 0, first_triangle = 0, triangle_count = 0;
-		int whole_first = 0, whole_count = 0, storage_rank = 0, storage_count = 0, storage_offset = 0;
-		LocalVector<int> chunks;
+		int first_surface = 0, first_triangle = 0, triangle_count = 0;
 		LocalVector<RID> vertices, geometry_sets;
-		RID blas, pose_cells;
+		RID blas;
 		int tlas_index = -1;
 	};
-	struct RankChunk {
-		int offset = 0;
-		int references = 0;
-		bool written = false;
-	};
 	struct Counters {
-		int64_t captures = 0, moves = 0, poses = 0, geometry_updates = 0, blas_builds = 0, tlas_builds = 0, layouts = 0;
+		int64_t captures = 0, geometry_updates = 0, blas_builds = 0, tlas_builds = 0, layouts = 0;
 		double frame_ms = 0, layouts_ms = 0, captures_ms = 0, tlas_ms = 0, gather_ms = 0;
 		double initialize_ms = 0, mesh_prepare_ms = 0, blas_ms = 0, capacity_ms = 0, geometry_ms = 0;
 		double mesh_read_ms = 0, mesh_layout_ms = 0, mesh_pack_ms = 0, capture_mesh_ms = 0, capture_allocate_ms = 0, capture_draw_ms = 0;
@@ -86,13 +69,11 @@ class SurfaceCacheWorldRD : public RefCounted {
 	HashMap<RID, Instance *> instances;
 	HashMap<String, Geometry *> geometries;
 	HashMap<RID, PackedByteArray> lights;
-	SurfaceCache::Ranges surface_ranges, triangle_ranges, node_ranges, storage_ranges;
-	HashMap<int, RankChunk> rank_chunks;
+	SurfaceCache::Ranges surface_ranges, triangle_ranges;
 	RID buffers[BUFFER_COUNT];
 	uint32_t capacities[BUFFER_COUNT] = {};
 	uint64_t buffer_memory_bytes = 0;
 	bool capacity_dirty = true;
-	int material_cells = 0, material_storage = 0;
 	Ref<SurfaceCacheGatherRD> gather;
 	Ref<RefCounted> capture, world_hash;
 	SurfaceCache::Kernel kernels[PASS_COUNT];
@@ -102,12 +83,12 @@ class SurfaceCacheWorldRD : public RefCounted {
 	bool rooms_dirty = false, lights_dirty = true, sun_changed = false, sky_changed = false;
 	TypedArray<PackedByteArray> light_changes;
 	TypedArray<AABB> dirty_bounds;
-	RID tlas, dummy, move_set;
+	RID tlas, dummy;
 	int tlas_capacity = 0;
 	LocalVector<RD::AccelerationStructureInstance> tlas_instances;
 	LocalVector<Instance *> tlas_owners;
 	LocalVector<RID> tlas_added;
-	HashMap<RID, bool> tlas_updates, moved;
+	HashMap<RID, bool> tlas_updates;
 	HashMap<RID, Dictionary> deferred_changes;
 	LocalVector<SurfaceCacheGatherRD::Motion> frame_moves;
 	Array opacity_states;
@@ -141,19 +122,10 @@ class SurfaceCacheWorldRD : public RefCounted {
 	void upload_triangles(Instance &r_state);
 	RID create_blas(const LocalVector<RID> &p_vertices, const Geometry &p_geometry, bool p_build = true);
 	bool ensure_capacity();
-	int required_material_cells() const;
-	int required_material_storage() const;
-	void required_sizes(int p_material_cells, int p_material_storage, uint32_t *r_sizes) const;
+	void required_sizes(uint32_t *r_sizes) const;
 	void fit_capacity();
-	void allocate_storage(Instance &r_state);
-	void release_storage(Instance &r_state);
-	void write_ranks(Instance &r_state);
-	static int coverage_rank(const Geometry &p_geometry, int p_local);
-	void clear_flags(int p_first, int p_count);
 	void update_geometry(Instance &r_state);
 	void capture_material(Instance &r_state);
-	void move_material(Instance &r_state);
-	void pose_material(Instance &r_state);
 	void rebuild_tlas();
 	void write_tlas_instance(Instance &r_state);
 	void remove_tlas_instance(Instance &r_state);
@@ -168,7 +140,6 @@ class SurfaceCacheWorldRD : public RefCounted {
 	void read_gpu_time();
 
 public:
-	static constexpr uint32_t MATERIAL_RANK_CHUNK = 0x80000000u;
 	static constexpr int CAPTURE_TEXEL_BYTES = 52;
 	void attach(RID p_world, const Ref<Resource> &p_settings);
 	void update_profile(const Ref<Resource> &p_settings);
