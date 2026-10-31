@@ -16,7 +16,6 @@ public:
 
 private:
 	enum Pass { PLACE,
-		ADAPTIVE,
 		TRACE,
 		FILTER,
 		INTEGRATE,
@@ -35,7 +34,7 @@ private:
 	};
 	struct View {
 		RID camera, emission_change, stats;
-		RID meta[2], slots[2], probe_count, light, filtered;
+		RID meta[2], light, filtered;
 		Vector2i size, grid;
 		int frame = 0;
 		int reflection_divisor = 1;
@@ -54,7 +53,7 @@ private:
 		float sky[4];
 		int32_t history[4];
 		int32_t reflection[4];
-		int32_t features[2];
+		int32_t probe_settings[2];
 		float roughness, reflection_history;
 		int32_t probes[4];
 		int32_t change_count[4];
