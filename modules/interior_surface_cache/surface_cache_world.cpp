@@ -850,7 +850,7 @@ void SurfaceCacheWorldRD::update_geometry(Instance &state) {
 		push.pose[2] = state.deformed;
 		kernels[GEOMETRY].elements(set, &push, sizeof(push), triangles);
 		if (!state.triangles_uploaded) {
-			int32_t mapping[] = { first, state.node_offset, geometry.size.x, geometry.size.y, state.sides[surface], 0, 0, 0 };
+			int32_t mapping[] = { first, state.node_offset, geometry.size.x, geometry.size.y, state.sides[surface], triangles, 0, 0 };
 			device->buffer_update(buffers[SURFACES], (state.first_surface + surface) * SURFACE_BYTES, sizeof(mapping), mapping);
 		}
 		first += triangles;
