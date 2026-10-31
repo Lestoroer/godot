@@ -143,6 +143,7 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	bindings.push_back(uniform(3, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.filtered));
 	images(bindings, { "depth_" + cur, "normal_" + cur, "diffuse_raw", "rough_radiance" });
 	bindings.push_back(uniform(8, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.slots[current]));
+	bindings.push_back(uniform(9, RD::UNIFORM_TYPE_IMAGE, texture("contact_" + cur)));
 	r_sets.passes[INTEGRATE] = cached(kernels[INTEGRATE], bindings);
 	bindings.clear();
 	bindings.push_back(uniform(0, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.camera));
