@@ -106,13 +106,13 @@ ShapeCast. Для них ожидается поведение официаль�
 Interior Star» в `FORK_NOTES.md`. GI работает только на Vulkan с аппаратным ray query
 в Forward+.
 
-- RenderingDevice поддерживает Vulkan ray query: включение расширения, видимость
+- RenderingDevice поддерживает Vulkan ray query и position fetch: включение расширений, видимость
   descriptors для RT, адреса BLAS, несколько сборок TLAS за кадр, TLAS без SBT для
   queries и синхронизацию чтения acceleration structures (с обходом драйвера
   NVIDIA 610.88). Из GDScript доступны лимиты subgroup.
 - `RenderingServer.instance_surface_cache_capture` даёт GPU-захват настоящего материала
   экземпляра. `SurfaceCacheGeometry.prepare` модуля за один проход строит для меша атлас
-  захвата материалов поверхностей, меш захвата и записи треугольников для лучей;
+  захвата материалов поверхностей, меш захвата, геометрию BLAS и знаки сторон треугольников;
   `prepare_from_rid` делает ту же подготовку напрямую из RID; нативный мир читает исходники
   порцией перед GPU-записями. Счётчики времени GI показывают стадии загрузки.
 - Варианты ShaderRD из кеша создаются на GPU по запросу; выданные placeholders

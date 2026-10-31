@@ -586,6 +586,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	_register_requested_device_extension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false);
 	// Fork(Lestoroer): request and enable the optional ray-query capability.
 	_register_requested_device_extension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false);
+	_register_requested_device_extension(VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, false);
 
@@ -922,6 +923,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features = {};
 		VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracing_pipeline_features = {};
 		VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {}; // Fork(Lestoroer)
+		VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR position_fetch_features = {}; // Fork(Lestoroer)
 		VkPhysicalDeviceSynchronization2FeaturesKHR sync_2_features = {};
 		VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
 
@@ -1008,6 +1010,11 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			ray_query_features.pNext = next_features;
 			next_features = &ray_query_features;
 		}
+		if (enabled_device_extension_names.has(VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME)) {
+			position_fetch_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR;
+			position_fetch_features.pNext = next_features;
+			next_features = &position_fetch_features;
+		}
 
 		if (enabled_device_extension_names.has(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME)) {
 			raytracing_validation_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV;
@@ -1026,6 +1033,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		device_features_2.pNext = next_features;
 		functions.GetPhysicalDeviceFeatures2(physical_device, &device_features_2);
 		ray_query_support = ray_query_features.rayQuery; // Fork(Lestoroer)
+		ray_tracing_position_fetch_support = position_fetch_features.rayTracingPositionFetch; // Fork(Lestoroer)
 
 		if (use_1_2_features) {
 #ifdef MACOS_ENABLED
@@ -1456,6 +1464,13 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		ray_query_features.pNext = create_info_next;
 		ray_query_features.rayQuery = true;
 		create_info_next = &ray_query_features;
+	}
+	VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR position_fetch_features = {};
+	if (ray_tracing_position_fetch_support) {
+		position_fetch_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR;
+		position_fetch_features.pNext = create_info_next;
+		position_fetch_features.rayTracingPositionFetch = true;
+		create_info_next = &position_fetch_features;
 	}
 
 	VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
@@ -6321,6 +6336,7 @@ static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BI
 static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR));
 static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR));
 static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_LOW_MEMORY_BIT, VK_BUILD_ACCELERATION_STRUCTURE_LOW_MEMORY_BIT_KHR));
+static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT, VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT_KHR));
 
 // RDD::AccelerationStructureGeometryBits == VkGeometryFlagsKHR.
 static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT, VK_GEOMETRY_OPAQUE_BIT_KHR));
@@ -7462,6 +7478,8 @@ bool RenderingDeviceDriverVulkan::has_feature(Features p_feature) {
 			return acceleration_structure_capabilities.acceleration_structure_support && ray_query_support;
 		case SUPPORTS_RAYTRACING_PIPELINE:
 			return acceleration_structure_capabilities.acceleration_structure_support && raytracing_capabilities.raytracing_pipeline_support;
+		case SUPPORTS_RAY_TRACING_POSITION_FETCH:
+			return acceleration_structure_capabilities.acceleration_structure_support && ray_query_support && ray_tracing_position_fetch_support;
 		case SUPPORTS_HDR_OUTPUT:
 #if defined(WINDOWS_ENABLED)
 			// When using a Vulkan swapchain on Windows, some configurations

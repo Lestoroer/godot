@@ -56,7 +56,6 @@ Dictionary SurfaceCacheGeometry::prepare_from_surfaces(RID p_mesh, const Vector<
 Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, const Vector<int32_t> &p_surface_sides, const Vector<RenderingServerTypes::SurfaceData> *p_source) {
 	uint64_t stage_start = OS::get_singleton()->get_ticks_usec();
 	Dictionary operation_ms;
-	static constexpr int TRIANGLE_BYTES = 48;
 	RenderingServer *server = RS::get_singleton();
 	const int surface_count = p_resource ? p_resource->get_surface_count() : server->mesh_get_surface_count(p_mesh);
 	ERR_FAIL_COND_V_MSG(surface_count == 0, Dictionary(), "Surface Cache: mesh has no surfaces.");
@@ -108,9 +107,9 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	const Size2i atlas_size(columns * SURFACE_CAPTURE_CELL, ((surface_count + columns - 1) / columns) * SURFACE_CAPTURE_CELL);
 	operation_ms["mesh_layout"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
 
-	// Ray records and capture corners in one pass over the triangles.
+	// Orientations and capture corners in one pass over the triangles.
 	stage_start = OS::get_singleton()->get_ticks_usec();
-	Array triangle_data;
+	Array orientation_data;
 	Array vertex_data;
 	Array index_data;
 	Array result_surfaces;
@@ -134,9 +133,14 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 		for (int i = 1; i < positions[surface].size(); i++) {
 			bounds.expand_to(position[i]);
 		}
-		Vector<uint8_t> packed;
-		packed.resize(corner_count / 3 * TRIANGLE_BYTES);
-		uint8_t *write = packed.ptrw();
+		// Godot's authored winding is clockwise; vertex normals establish the semantic front: bit 1 — the
+		// front is along the winding normal. Surfaces of one orientation keep only its sign.
+		const int triangle_count = corner_count / 3;
+		Vector<uint32_t> bits;
+		bits.resize((triangle_count + 31) / 32);
+		bits.fill(0);
+		uint32_t *bit_write = bits.ptrw();
+		int along = 0;
 		for (int corner = 0; corner < corner_count; corner += 3) {
 			const int triangle = corner / 3;
 			Vector3 vertex[3];
@@ -146,25 +150,24 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 			const Vector3 face = (vertex[1] - vertex[0]).cross(vertex[2] - vertex[0]);
 			const int axis = face.abs().max_axis_index();
 			const int u = (axis + 1) % 3, v = (axis + 2) % 3;
-			// CacheTriangle of the game: local corners and the orientation; the geometry pass makes the
-			// world record (cache_types).
-			float record[TRIANGLE_BYTES / 4] = {};
 			for (int c = 0; c < 3; c++) {
-				memcpy(&record[c * 4], &vertex[c], 12);
 				const Vector2 square((vertex[c][u] - bounds.position[u]) / MAX(bounds.size[u], real_t(1e-6)), (vertex[c][v] - bounds.position[v]) / MAX(bounds.size[v], real_t(1e-6)));
 				pixel_write[corner + c] = Vector2(offset) + square * SURFACE_CAPTURE_SIZE;
 			}
-			// Godot's authored winding is clockwise; normals establish the semantic front.
-			float orientation = normal ? SIGN(normal[index[corner]].dot(face)) : -1.0f;
-			if (orientation == 0.0f) {
-				orientation = -1.0f;
+			if (normal && normal[index[corner]].dot(face) > 0) {
+				bit_write[triangle >> 5] |= 1u << (triangle & 31);
+				++along;
 			}
-			record[11] = orientation;
-			memcpy(write + triangle * TRIANGLE_BYTES, record, TRIANGLE_BYTES);
 		}
 		pixel_write += corner_count;
-		triangle_data.push_back(packed);
-		// Ray geometry: the source vertices and triangles, in the order of the records.
+		PackedByteArray orientation_bits;
+		int orientation = along == triangle_count ? 1 : (along == 0 ? -1 : 0);
+		if (orientation == 0) {
+			orientation_bits.resize(bits.size() * 4);
+			memcpy(orientation_bits.ptrw(), bits.ptr(), orientation_bits.size());
+		}
+		orientation_data.push_back(orientation_bits);
+		// Ray geometry: the source vertices and triangles; ray hits read the corners back from the BLAS.
 		Vector<uint8_t> ray_vertices;
 		ray_vertices.resize(positions[surface].size() * 12);
 		memcpy(ray_vertices.ptrw(), positions[surface].ptr(), ray_vertices.size());
@@ -175,6 +178,7 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 		index_data.push_back(ray_indices);
 		Dictionary result_surface;
 		result_surface["offset"] = offset;
+		result_surface["orientation"] = orientation;
 		result_surfaces.push_back(result_surface);
 	}
 	operation_ms["mesh_pack"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
@@ -235,7 +239,7 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	result["operation_ms"] = operation_ms;
 	result["layout"] = layout;
 	result["mesh"] = capture_mesh;
-	result["triangle_data"] = triangle_data;
+	result["orientation_data"] = orientation_data;
 	result["vertex_data"] = vertex_data;
 	result["index_data"] = index_data;
 	return result;
