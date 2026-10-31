@@ -3059,7 +3059,7 @@ void RenderForwardClustered::_render_material(const Transform3D &p_cam_transform
 }
 
 // Fork(Lestoroer): source material is rasterized on chart streams, entirely on GPU.
-void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region, bool p_back_side) {
+void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region) {
 	const bool profiling = OS::get_singleton()->get_environment("SURFACE_CACHE_PROFILE_STARTUP") == "1";
 	uint64_t started = profiling ? OS::get_singleton()->get_ticks_usec() : 0, stage = started;
 	Dictionary stages;
@@ -3097,7 +3097,6 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	scene_data.cam_projection.set_orthogonal(-1.0, 1.0, -1.0, 1.0, 0.1, 100.0);
 	scene_data.view_projection[0] = scene_data.cam_projection;
 	scene_data.surface_cache_capture = true;
-	scene_data.surface_cache_back_side = p_back_side;
 	scene_data.time = time;
 	scene_data.time_step = time_step;
 	scene_data.emissive_exposure_normalization = -1.0;

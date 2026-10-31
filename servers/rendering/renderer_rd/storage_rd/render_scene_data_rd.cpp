@@ -157,7 +157,6 @@ void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RSE::ViewportDebugDraw 
 	ubo.flags |= surface_cache_enabled ? SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED : 0;
 	ubo.flags |= surface_cache_coverage ? SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE : 0;
 	ubo.flags |= surface_cache_capture ? SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE : 0; // Fork(Lestoroer)
-	ubo.flags |= surface_cache_back_side ? SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE : 0;
 	ubo.flags |= shadow_pass ? SCENE_DATA_FLAGS_IN_SHADOW_PASS : 0;
 
 	if (p_debug_mode == RSE::VIEWPORT_DEBUG_DRAW_UNSHADED) {

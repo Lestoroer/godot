@@ -437,8 +437,9 @@ GI работает только на Vulkan с аппаратным ray query �
      различалась); первый треугольник поверхности приходит в padding-полосе
      `compressed_aabb_size.w` данных экземпляра.
    - `RenderingServer.instance_surface_cache_capture(instance, chart_instance, framebuffer,
-     region, back_side)` исполняет на GPU настоящий spatial material исходного
-     экземпляра на геометрии chart-экземпляра. Transform,
+     region)` исполняет на GPU настоящий spatial material исходного
+     экземпляра на геометрии chart-экземпляра, лицевой стороной при любом обходе треугольника
+     в атласе: `FRONT_FACING` в захвате истинен. Transform,
      overrides, instance uniforms и поза skin/morph берутся у исходного. Результат остаётся
      в framebuffer вызывающего: пять targets — albedo/alpha, нормаль RGBA16F (alpha — доля
      пропускания), AO/roughness/metallic/specular, emission, канонические barycentrics и
