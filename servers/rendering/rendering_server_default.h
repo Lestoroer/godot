@@ -977,7 +977,7 @@ public:
 	FUNC2RC(Variant, instance_geometry_get_shader_parameter_default_value, RID, const StringName &)
 	FUNC2SC(instance_geometry_get_shader_parameter_list, RID, List<PropertyInfo> *)
 
-	FUNC5(instance_surface_cache_capture, RID, RID, RID, const Rect2i &, bool) // Fork(Lestoroer)
+	FUNC4(instance_surface_cache_capture, RID, RID, RID, const Rect2i &) // Fork(Lestoroer)
 	FUNC2(scenario_set_surface_cache_callback, RID, const Callable &)
 	FUNC2(scenario_set_surface_cache_view_callback, RID, const Callable &)
 	FUNC1R(Array, scenario_surface_cache_poll, RID)

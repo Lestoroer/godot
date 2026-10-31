@@ -76,7 +76,6 @@ public:
 	bool surface_cache_enabled = false;
 	bool surface_cache_coverage = false;
 	bool surface_cache_capture = false; // Fork(Lestoroer)
-	bool surface_cache_back_side = false;
 	float emissive_exposure_normalization = 0.0;
 	bool shadow_pass = false;
 
@@ -116,7 +115,6 @@ private:
 		SCENE_DATA_FLAGS_USE_PANCAKE_SHADOWS = 1 << 6,
 		SCENE_DATA_FLAGS_IN_SHADOW_PASS = 1 << 7, // Only used by Forward+ renderer.
 		SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE = 1 << 8, // Fork(Lestoroer)
-		SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE = 1 << 9,
 		SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED = 1 << 10,
 		SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE = 1 << 11,
 		SCENE_DATA_FLAGS_MAX

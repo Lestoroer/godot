@@ -1353,7 +1353,7 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef NORMAL_USED
 	vec3 normal_highp = surface_cache_sample(normal_interp); // Fork(Lestoroer)
 #if defined(DO_SIDE_CHECK)
-	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE) : !gl_FrontFacing) { // Fork(Lestoroer): capture side replaces gl_FrontFacing.
+	if (!bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) && !gl_FrontFacing) { // Fork(Lestoroer): the capture renders the front side whatever the chart winding.
 		normal_highp = -normal_highp;
 	}
 #endif // DO_SIDE_CHECK

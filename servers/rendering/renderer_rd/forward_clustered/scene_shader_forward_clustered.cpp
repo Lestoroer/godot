@@ -751,7 +751,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["VIEWPORT_SIZE"] = "read_viewport_size";
 
 		actions.renames["FRAGCOORD"] = "gl_FragCoord";
-		actions.renames["FRONT_FACING"] = "(bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? !bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_BACK_SIDE) : gl_FrontFacing)"; // Fork(Lestoroer)
+		actions.renames["FRONT_FACING"] = "(bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) || gl_FrontFacing)"; // Fork(Lestoroer)
 		actions.renames["NORMAL_MAP"] = "normal_map";
 		actions.renames["NORMAL_MAP_DEPTH"] = "normal_map_depth";
 		actions.renames["BENT_NORMAL_MAP"] = "bent_normal_map";
