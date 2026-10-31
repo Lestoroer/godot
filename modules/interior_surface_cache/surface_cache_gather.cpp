@@ -20,11 +20,11 @@ void SurfaceCacheGatherRD::_bind_methods() {
 bool SurfaceCacheGatherRD::initialize(RenderingDevice *p_device, const Ref<RefCounted> &p_world_hash) {
 	device = p_device;
 	world_hash = p_world_hash;
-	const char *names[PASS_COUNT] = { "screen_probe_place", "screen_probe_adaptive", "screen_probe_trace", "screen_probe_filter", "screen_probe_integrate", "screen_contact", "screen_contact_temporal", "gather_temporal", "reflection_gather", "reflection_temporal" };
+	const char *names[PASS_COUNT] = { "screen_probe_place", "screen_probe_trace", "screen_probe_filter", "screen_probe_integrate", "screen_contact", "screen_contact_temporal", "gather_temporal", "reflection_gather", "reflection_temporal" };
 	PackedStringArray reader = world_hash->call("reader_defines");
 	for (int i = 0; i < PASS_COUNT; ++i) {
 		PackedStringArray defines;
-		if (i == PLACE || i == ADAPTIVE || i == TRACE || i == CONTACT || i == REFLECTION) {
+		if (i == PLACE || i == TRACE || i == CONTACT || i == REFLECTION) {
 			defines = reader;
 		}
 		if (i == REFLECTION) {
@@ -65,11 +65,10 @@ void SurfaceCacheGatherRD::create_resources(View &r_view, const Ref<RenderSceneB
 	r_view.sets[1] = Sets();
 	Vector2i grid((p_size.x + 15) / 16, (p_size.y + 15) / 16);
 	if (grid != r_view.grid) {
-		int cells = grid.x * grid.y;
-		int count = cells + cells / 2;
-		RID *buffers[] = { &r_view.meta[0], &r_view.meta[1], &r_view.probe_count, &r_view.slots[0], &r_view.slots[1], &r_view.light, &r_view.filtered };
-		uint32_t sizes[] = { uint32_t(count * 32), uint32_t(count * 32), 16, uint32_t(cells * 16), uint32_t(cells * 16), uint32_t(count * 144), uint32_t(count * 144) };
-		for (int i = 0; i < 7; ++i) {
+		int count = grid.x * grid.y;
+		RID *buffers[] = { &r_view.meta[0], &r_view.meta[1], &r_view.light, &r_view.filtered };
+		uint32_t sizes[] = { uint32_t(count * 32), uint32_t(count * 32), uint32_t(count * 144), uint32_t(count * 144) };
+		for (int i = 0; i < 4; ++i) {
 			if (buffers[i]->is_valid()) {
 				device->free_rid(*buffers[i]);
 			}
@@ -122,10 +121,8 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	LocalVector<RD::Uniform> probe(scene);
 	probe.push_back(uniform(39, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.meta[current]));
 	probe.push_back(uniform(40, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.light));
-	probe.push_back(uniform(43, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.probe_count));
-	probe.push_back(uniform(44, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.slots[current]));
 	probe.push_back(uniform(42, RD::UNIFORM_TYPE_IMAGE, texture("contact_" + cur)));
-	for (Pass pass : { PLACE, ADAPTIVE, TRACE }) {
+	for (Pass pass : { PLACE, TRACE }) {
 		r_sets.passes[pass] = cached(kernels[pass], probe);
 	}
 	LocalVector<RD::Uniform> contact(scene);
@@ -135,14 +132,13 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	bindings.push_back(uniform(0, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.camera));
 	images(bindings, { "contact_raw", "depth_" + cur, "normal_" + cur, "depth_" + prev, "normal_" + prev, "contact_" + prev, "contact_" + cur, "contact_light_" + prev, "contact_light_" + cur });
 	r_sets.passes[CONTACT_TEMPORAL] = cached(kernels[CONTACT_TEMPORAL], bindings);
-	r_sets.passes[FILTER] = cached_buffers(kernels[FILTER], { v.camera, v.meta[current], v.light, v.filtered, v.probe_count });
+	r_sets.passes[FILTER] = cached_buffers(kernels[FILTER], { v.camera, v.meta[current], v.light, v.filtered });
 	bindings.clear();
 	bindings.push_back(uniform(0, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.camera));
 	bindings.push_back(sampled(1, sampler, normals));
 	bindings.push_back(uniform(2, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.meta[current]));
 	bindings.push_back(uniform(3, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.filtered));
 	images(bindings, { "depth_" + cur, "normal_" + cur, "diffuse_raw", "rough_radiance" });
-	bindings.push_back(uniform(8, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.slots[current]));
 	bindings.push_back(uniform(9, RD::UNIFORM_TYPE_IMAGE, texture("contact_" + cur)));
 	r_sets.passes[INTEGRATE] = cached(kernels[INTEGRATE], bindings);
 	bindings.clear();
@@ -274,7 +270,7 @@ bool SurfaceCacheGatherRD::sets_valid(const Sets &sets) const {
 			return false;
 		}
 	}
-	return device->uniform_set_is_valid(sets.hash["update"]) && device->uniform_set_is_valid(sets.hash["cells"]);
+	return device->uniform_set_is_valid(sets.hash["update"]);
 }
 
 void SurfaceCacheGatherRD::mark(const char *name, ObjectID view, bool enabled) {
@@ -354,8 +350,7 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID f
 	p.reflection[1] = settings->get("reflection_samples");
 	p.reflection[2] = settings->get("reflection_bounces");
 	p.reflection[3] = camera_moved;
-	p.features[0] = bool(settings->get("adaptive_probes"));
-	p.features[1] = settings->get("probe_ray_passes");
+	p.probe_settings[0] = settings->get("probe_ray_passes");
 	p.roughness = settings->get("reflection_ray_roughness");
 	p.reflection_history = reflection_history;
 	p.probes[0] = 16;
@@ -396,9 +391,8 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID f
 	world_hash->call("resolve");
 	mark("hash resolve end", id, markers);
 	kernels[PLACE].pixels(sets.passes[PLACE], v.grid);
-	kernels[ADAPTIVE].pixels(sets.passes[ADAPTIVE], v.grid * 2);
 	mark("probe place end", id, markers);
-	int probe_count = v.grid.x * v.grid.y + v.grid.x * v.grid.y / 2;
+	int probe_count = v.grid.x * v.grid.y;
 	kernels[TRACE].dispatch(sets.passes[TRACE], nullptr, 0, Vector3i(probe_count, 1, 1));
 	mark("probe trace end", id, markers);
 	kernels[FILTER].elements(sets.passes[FILTER], nullptr, 0, probe_count);
@@ -420,7 +414,7 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID f
 }
 
 void SurfaceCacheGatherRD::free_view(View *view) {
-	for (RID rid : { view->camera, view->emission_change, view->stats, view->meta[0], view->meta[1], view->slots[0], view->slots[1], view->probe_count, view->light, view->filtered }) {
+	for (RID rid : { view->camera, view->emission_change, view->stats, view->meta[0], view->meta[1], view->light, view->filtered }) {
 		if (rid.is_valid()) {
 			device->free_rid(rid);
 		}
