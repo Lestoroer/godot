@@ -7,13 +7,13 @@
 class SurfaceCacheWorldRD : public RefCounted {
 	GDCLASS(SurfaceCacheWorldRD, RefCounted);
 	enum Buffer { SURFACES,
-		TRIANGLES,
+		ORIENTATIONS,
 		MATERIALS,
 		LIGHTS,
 		MATERIAL_CHANGES,
 		SURFACE_FLAGS,
 		BUFFER_COUNT };
-	enum Pass { GEOMETRY,
+	enum Pass { POSE,
 		MATERIAL,
 		PASS_COUNT };
 	enum ChangeKind { REMOVE,
@@ -32,11 +32,14 @@ class SurfaceCacheWorldRD : public RefCounted {
 		struct Surface {
 			int triangles = 0;
 			int vertices = 0; // Source vertices of the ray geometry.
+			// Orientation of every triangle, 1 or -1, or 0: each triangle has its bit from orientation_bit on.
+			int orientation = 0;
+			int orientation_bit = 0;
 		};
 		LocalVector<Surface> surfaces;
-		// Triangle records until their first upload; then an instance in the world holds them.
-		TypedArray<PackedByteArray> triangles;
-		Instance *holder = nullptr;
+		// Orientation bits of the mixed surfaces until their upload, in words from orientation_offset on.
+		TypedArray<PackedByteArray> orientation_bits;
+		int orientation_offset = 0, orientation_words = 0;
 		LocalVector<RID> vertices, indices;
 		RID blas;
 	};
@@ -49,11 +52,11 @@ class SurfaceCacheWorldRD : public RefCounted {
 		Transform3D transform;
 		PackedInt32Array sides;
 		bool deformed = false;
-		bool triangles_uploaded = false, geometry_dirty = true, pose_dirty = true, capture_dirty = true;
+		bool surfaces_written = false, geometry_dirty = true, pose_dirty = true, capture_dirty = true;
 		uint64_t capture_serial = 0, opacity_serial = 0;
 		PackedByteArray opaque;
-		int first_surface = 0, first_triangle = 0, triangle_count = 0;
-		LocalVector<RID> vertices, geometry_sets;
+		int first_surface = 0, triangle_count = 0;
+		LocalVector<RID> vertices;
 		RID blas;
 		int tlas_index = -1;
 	};
@@ -69,7 +72,8 @@ class SurfaceCacheWorldRD : public RefCounted {
 	HashMap<RID, Instance *> instances;
 	HashMap<String, Geometry *> geometries;
 	HashMap<RID, PackedByteArray> lights;
-	SurfaceCache::Ranges surface_ranges, triangle_ranges;
+	SurfaceCache::Ranges surface_ranges, orientation_ranges;
+	int64_t triangle_total = 0;
 	RID buffers[BUFFER_COUNT];
 	uint32_t capacities[BUFFER_COUNT] = {};
 	uint64_t buffer_memory_bytes = 0;
@@ -119,12 +123,12 @@ class SurfaceCacheWorldRD : public RefCounted {
 	LocalVector<RID> vertex_buffers(const TypedArray<PackedByteArray> &p_vertex_data);
 	LocalVector<RID> index_buffers(const TypedArray<PackedByteArray> &p_index_data);
 	LocalVector<RID> copy_vertex_buffers(const Geometry &p_geometry);
-	void upload_triangles(Instance &r_state);
 	RID create_blas(const LocalVector<RID> &p_vertices, const Geometry &p_geometry, bool p_build = true);
 	bool ensure_capacity();
 	void required_sizes(uint32_t *r_sizes) const;
 	void fit_capacity();
 	void update_geometry(Instance &r_state);
+	void write_surfaces(Instance &r_state);
 	void capture_material(Instance &r_state);
 	void rebuild_tlas();
 	void write_tlas_instance(Instance &r_state);

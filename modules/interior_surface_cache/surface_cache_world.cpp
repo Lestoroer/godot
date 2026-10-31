@@ -13,20 +13,23 @@
 using namespace SurfaceCache;
 bool SurfaceCacheWorldRD::measure_gpu_time = false;
 double SurfaceCacheWorldRD::gpu_time_ms = 0;
-// "materials" holds one SurfaceMaterial of the game (cache_types) per surface.
-static const char *buffer_names[] = { "surfaces", "triangles", "materials", "lights", "material_changes", "surface_flags" };
-static constexpr uint32_t MATERIAL_BYTES = 64, TRIANGLE_BYTES = 48, SURFACE_BYTES = 32, LIGHT_BYTES = 64;
+// "materials" holds one SurfaceMaterial of the game (cache_types) per surface, "orientations" the triangle
+// orientation bits of the surfaces of mixed orientation.
+static const char *buffer_names[] = { "surfaces", "orientations", "materials", "lights", "material_changes", "surface_flags" };
+static constexpr uint32_t MATERIAL_BYTES = 64, SURFACE_BYTES = 32, LIGHT_BYTES = 64;
 static constexpr uint32_t PAGE_BYTES = 2097152;
 // Preparation of new geometry per frame. While the scene loads the frame may wait longer, a smaller
 // budget would only stretch the wait; afterwards it must not disturb the game.
 static constexpr double STARTUP_BUDGET_MS = 33.0, UPDATE_BUDGET_MS = 4.0;
 // Material captures per frame once the world is ready: each one draws and resolves on the GPU.
 static constexpr int UPDATE_CAPTURE_LIMIT = 4;
-static uint32_t page_size(uint32_t size) {
-	return size > PAGE_BYTES ? ((size + PAGE_BYTES - 1) / PAGE_BYTES) * PAGE_BYTES : size;
-}
 static uint32_t round_up(uint32_t value, uint32_t step) {
 	return ((value + step - 1) / step) * step;
+}
+// Small buffers keep 16-byte sizes: growth by half again would otherwise reach sizes the buffer clear
+// of the new part rejects.
+static uint32_t page_size(uint32_t size) {
+	return round_up(size, size > PAGE_BYTES ? PAGE_BYTES : 16);
 }
 
 void SurfaceCacheWorldRD::_bind_methods() {
@@ -77,7 +80,10 @@ bool SurfaceCacheWorldRD::initialize_gpu() {
 	if (!device || !device->has_feature(RD::SUPPORTS_RAY_QUERY)) {
 		return fail("Surface Cache requires hardware ray tracing in the isolated Forward+ renderer");
 	}
-	const char *names[] = { "geometry_update", "material_resolve" };
+	if (!device->has_feature(RD::SUPPORTS_RAY_TRACING_POSITION_FETCH)) {
+		return fail("Surface Cache requires ray tracing position fetch (VK_KHR_ray_tracing_position_fetch)");
+	}
+	const char *names[] = { "pose_vertices", "material_resolve" };
 	for (int i = 0; i < PASS_COUNT; ++i) {
 		if (!kernels[i].initialize(device, names[i])) {
 			return fail(String("Surface Cache shader compilation failed: ") + names[i] + ": " + kernels[i].error);
@@ -288,6 +294,9 @@ void SurfaceCacheWorldRD::update_world() {
 	}
 	mark("SurfaceCache update begin", true);
 	for (Instance *state : dirty) {
+		if (!state->surfaces_written) {
+			write_surfaces(*state);
+		}
 		if (state->geometry_dirty) {
 			update_geometry(*state);
 		}
@@ -401,7 +410,7 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 	String suffix = " " + itos(int64_t(view->get_instance_id()));
 	mark("SurfaceCache gather begin" + suffix, true);
 	uint64_t start = OS::get_singleton()->get_ticks_usec();
-	RID resources[] = { buffers[SURFACES], buffers[TRIANGLES], buffers[MATERIALS], buffers[LIGHTS] };
+	RID resources[] = { buffers[SURFACES], buffers[ORIENTATIONS], buffers[MATERIALS], buffers[LIGHTS] };
 	String result = gather->render(data, resources, tlas, profile, lights.size(), buffers[MATERIAL_CHANGES], frame_moves);
 	counters.gather_ms += milliseconds(start);
 	mark("SurfaceCache gather end" + suffix, true);
@@ -412,13 +421,15 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 	return result;
 }
 
-static constexpr uint32_t RAY_VERTEX_BUFFER_BITS = RD::BUFFER_CREATION_AS_STORAGE_BIT | RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT;
+// Ray geometry only feeds BLAS builds; posed vertices are also written by the pose pass.
+static constexpr uint32_t RAY_GEOMETRY_BITS = RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT;
+static constexpr uint32_t POSED_VERTEX_BITS = RD::BUFFER_CREATION_AS_STORAGE_BIT | RAY_GEOMETRY_BITS;
 
 LocalVector<RID> SurfaceCacheWorldRD::vertex_buffers(const TypedArray<PackedByteArray> &p_vertex_data) {
 	LocalVector<RID> result;
 	for (int i = 0; i < p_vertex_data.size(); ++i) {
 		PackedByteArray data = p_vertex_data[i];
-		result.push_back(device->vertex_buffer_create(data.size(), data, RAY_VERTEX_BUFFER_BITS));
+		result.push_back(device->vertex_buffer_create(data.size(), data, RAY_GEOMETRY_BITS));
 	}
 	return result;
 }
@@ -427,7 +438,7 @@ LocalVector<RID> SurfaceCacheWorldRD::index_buffers(const TypedArray<PackedByteA
 	LocalVector<RID> result;
 	for (int i = 0; i < p_index_data.size(); ++i) {
 		PackedByteArray data = p_index_data[i];
-		result.push_back(device->index_buffer_create(data.size() / 4, RD::INDEX_BUFFER_FORMAT_UINT32, data, false, RAY_VERTEX_BUFFER_BITS));
+		result.push_back(device->index_buffer_create(data.size() / 4, RD::INDEX_BUFFER_FORMAT_UINT32, data, false, RAY_GEOMETRY_BITS));
 	}
 	return result;
 }
@@ -437,7 +448,7 @@ LocalVector<RID> SurfaceCacheWorldRD::copy_vertex_buffers(const Geometry &geomet
 	LocalVector<RID> result;
 	for (uint32_t i = 0; i < geometry.surfaces.size(); ++i) {
 		const uint32_t size = geometry.surfaces[i].vertices * 12;
-		RID copy = device->vertex_buffer_create(size, Span<uint8_t>(), RAY_VERTEX_BUFFER_BITS);
+		RID copy = device->vertex_buffer_create(size, Span<uint8_t>(), POSED_VERTEX_BITS);
 		device->buffer_copy(geometry.vertices[i], copy, 0, 0, size);
 		result.push_back(copy);
 	}
@@ -458,7 +469,9 @@ RID SurfaceCacheWorldRD::create_blas(const LocalVector<RID> &vertices, const Geo
 		description.index_count = geometry.surfaces[i].triangles * 3;
 		descriptions.push_back(description);
 	}
-	RID blas = device->blas_create(descriptions, RD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT);
+	// Ray hits read the triangle corners back from the BLAS (position fetch); the flag costs no memory on
+	// the high-poly stand.
+	RID blas = device->blas_create(descriptions, RD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT | RD::ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT);
 	if (!blas.is_valid() || (build && device->blas_build(blas, false) != OK)) {
 		fail("Surface Cache BLAS creation failed");
 	}
@@ -492,13 +505,23 @@ bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<R
 		geometry->size = layout["size"];
 		geometry->square = layout["capture_size"];
 		geometry->columns = geometry->size.x / (geometry->square + 2);
-		geometry->triangles = prepared["triangle_data"];
+		Array layout_surfaces = layout["surfaces"];
 		TypedArray<PackedByteArray> vertex_data = prepared["vertex_data"];
+		TypedArray<PackedByteArray> index_data = prepared["index_data"];
+		geometry->orientation_bits = prepared["orientation_data"];
 		for (int i = 0; i < vertex_data.size(); ++i) {
-			geometry->surfaces.push_back({ int(PackedByteArray(geometry->triangles[i]).size() / TRIANGLE_BYTES), int(PackedByteArray(vertex_data[i]).size() / 12) });
+			const Dictionary surface = layout_surfaces[i];
+			geometry->surfaces.push_back({ int(PackedByteArray(index_data[i]).size() / 12), int(PackedByteArray(vertex_data[i]).size() / 12), int(surface["orientation"]), geometry->orientation_words * 32 });
+			geometry->orientation_words += PackedByteArray(geometry->orientation_bits[i]).size() / 4;
+		}
+		if (geometry->orientation_words > 0) {
+			geometry->orientation_offset = orientation_ranges.allocate(geometry->orientation_words);
+			for (Geometry::Surface &surface : geometry->surfaces) {
+				surface.orientation_bit += geometry->orientation_offset * 32;
+			}
 		}
 		geometry->vertices = vertex_buffers(vertex_data);
-		geometry->indices = index_buffers(prepared["index_data"]);
+		geometry->indices = index_buffers(index_data);
 		geometry->blas = create_blas(geometry->vertices, *geometry);
 		capture_dimensions = capture_dimensions.max(geometry->size);
 		geometries.insert(key, geometry);
@@ -520,7 +543,7 @@ bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<R
 	for (const Geometry::Surface &surface : geometry.surfaces) {
 		state->triangle_count += surface.triangles;
 	}
-	state->first_triangle = triangle_ranges.allocate(state->triangle_count);
+	triangle_total += state->triangle_count;
 	state->chart = RenderingServer::get_singleton()->instance_create();
 	RenderingServer::get_singleton()->instance_set_base(state->chart, geometry.mesh->get_rid());
 	PackedInt32Array ids;
@@ -598,7 +621,7 @@ void SurfaceCacheWorldRD::required_sizes(uint32_t *r_sizes) const {
 	const uint32_t surfaces = Math::nearest_power_of_2_templated(MAX(1u, uint32_t(surface_ranges.extent)));
 	const uint32_t sizes[BUFFER_COUNT] = {
 		surfaces * SURFACE_BYTES,
-		MAX(1u, round_up(triangle_ranges.extent, 16384) / 16384) * 16384 * TRIANGLE_BYTES,
+		MAX(16u, uint32_t(orientation_ranges.extent) * 4),
 		surfaces * MATERIAL_BYTES,
 		MAX(LIGHT_BYTES, Math::nearest_power_of_2_templated(uint32_t(lights.size())) * LIGHT_BYTES), 16,
 		MAX(16u, surfaces * 4)
@@ -633,80 +656,49 @@ void SurfaceCacheWorldRD::fit_capacity() {
 	}
 }
 
+// A transform moves the instance in the TLAS only: ray hits take the triangle corners from the BLAS. A pose
+// writes the posed vertices into the instance's own ray vertices and rebuilds its BLAS.
 void SurfaceCacheWorldRD::update_geometry(Instance &state) {
 	ScopeTimer timer(counters.geometry_ms);
 	++counters.geometry_updates;
-	Geometry &geometry = *state.shared;
-	if (!state.triangles_uploaded) {
-		upload_triangles(state);
-	}
-	int first = state.first_triangle;
-	for (uint32_t surface = 0; surface < geometry.surfaces.size(); ++surface) {
-		int triangles = geometry.surfaces[surface].triangles;
-		Dictionary pose = state.deformed ? RenderingServer::get_singleton()->instance_get_deformed_surface(state.source, surface) : Dictionary();
-		RID vertices = state.deformed ? state.vertices[surface] : geometry.vertices[surface];
-		RID set;
-		if (!state.deformed && uint32_t(surface) < state.geometry_sets.size() && device->uniform_set_is_valid(state.geometry_sets[surface])) {
-			set = state.geometry_sets[surface];
-		} else {
-			set = cached_buffers(kernels[GEOMETRY], { pose.get("vertex_buffer", dummy), buffers[TRIANGLES], vertices, geometry.indices[surface] });
-			if (!state.deformed) {
-				state.geometry_sets.resize(MAX(state.geometry_sets.size(), uint32_t(surface + 1)));
-				state.geometry_sets[surface] = set;
-			}
-		}
-		struct Push {
-			int32_t header[4];
-			float transform[16];
-			int32_t pose[4];
-		} push = {};
-		push.header[0] = triangles;
-		push.header[1] = first;
-		matrix(push.transform, Projection(state.transform));
-		push.pose[0] = !pose.is_empty();
-		push.pose[1] = int(pose.get("vertex_stride_words", 0));
-		kernels[GEOMETRY].elements(set, &push, sizeof(push), triangles);
-		if (!state.triangles_uploaded) {
-			int32_t mapping[] = { first, 0, 0, 0, state.sides[surface], triangles, 0, 0 };
-			device->buffer_update(buffers[SURFACES], (state.first_surface + surface) * SURFACE_BYTES, sizeof(mapping), mapping);
-		}
-		first += triangles;
-	}
-	if (state.deformed && state.pose_dirty) {
-		device->blas_build(state.blas);
-		++counters.blas_builds;
-	}
-	state.triangles_uploaded = true;
 	state.geometry_dirty = false;
+	if (!state.deformed || !state.pose_dirty) {
+		return;
+	}
+	Geometry &geometry = *state.shared;
+	for (uint32_t surface = 0; surface < geometry.surfaces.size(); ++surface) {
+		Dictionary pose = RenderingServer::get_singleton()->instance_get_deformed_surface(state.source, surface);
+		if (pose.is_empty()) {
+			continue;
+		}
+		RID set = cached_buffers(kernels[POSE], { RID(pose["vertex_buffer"]), state.vertices[surface] });
+		const int32_t push[] = { geometry.surfaces[surface].vertices, int(pose["vertex_stride_words"]), 0, 0 };
+		kernels[POSE].elements(set, push, sizeof(push), geometry.surfaces[surface].vertices);
+	}
+	device->blas_build(state.blas);
+	++counters.blas_builds;
 	state.pose_dirty = false;
 }
 
-// The records of a geometry are uploaded from its CPU copy once; that copy is then dropped. Later
-// instances take them from an instance already in the world: only the corners differ, and the
-// geometry pass rewrites those. A temporary buffer carries the copy, as one buffer is not both
-// source and destination of a copy.
-void SurfaceCacheWorldRD::upload_triangles(Instance &state) {
+// Surface records of the instance (CacheSurface of the game): the orientation of their triangles and the
+// number of sides. The orientation bits of a geometry go to the GPU with its first instance.
+void SurfaceCacheWorldRD::write_surfaces(Instance &state) {
 	Geometry &geometry = *state.shared;
-	const uint32_t offset = state.first_triangle * TRIANGLE_BYTES;
-	if (!geometry.triangles.is_empty()) {
-		uint32_t written = 0;
-		for (int surface = 0; surface < geometry.triangles.size(); ++surface) {
-			PackedByteArray data = geometry.triangles[surface];
-			device->buffer_update(buffers[TRIANGLES], offset + written, data.size(), data.ptr());
-			written += data.size();
+	if (!geometry.orientation_bits.is_empty()) {
+		int written = 0;
+		for (int surface = 0; surface < geometry.orientation_bits.size(); ++surface) {
+			PackedByteArray bits = geometry.orientation_bits[surface];
+			device->buffer_update(buffers[ORIENTATIONS], (geometry.orientation_offset + written) * 4, bits.size(), bits.ptr());
+			written += bits.size() / 4;
 		}
-		geometry.triangles.clear();
-	} else {
-		ERR_FAIL_NULL_MSG(geometry.holder, "Surface Cache lost the records of a geometry in use.");
-		const uint32_t size = state.triangle_count * TRIANGLE_BYTES;
-		RID transfer = device->storage_buffer_create(size);
-		device->buffer_copy(buffers[TRIANGLES], transfer, geometry.holder->first_triangle * TRIANGLE_BYTES, 0, size);
-		device->buffer_copy(transfer, buffers[TRIANGLES], 0, offset, size);
-		device->free_rid(transfer);
+		geometry.orientation_bits.clear();
 	}
-	if (!geometry.holder) {
-		geometry.holder = &state;
+	for (uint32_t surface = 0; surface < geometry.surfaces.size(); ++surface) {
+		const Geometry::Surface &record = geometry.surfaces[surface];
+		const int32_t mapping[] = { record.orientation, record.orientation_bit, 0, 0, state.sides[surface], 0, 0, 0 };
+		device->buffer_update(buffers[SURFACES], (state.first_surface + surface) * SURFACE_BYTES, sizeof(mapping), mapping);
 	}
+	state.surfaces_written = true;
 }
 
 // The capture draws the instance's materials into one square per surface (surface_cache_geometry) and the
@@ -928,7 +920,7 @@ void SurfaceCacheWorldRD::remove_instance(RID source) {
 	tlas_updates.erase(source);
 	note_dirty(state->bounds);
 	RenderingServer::get_singleton()->instance_set_surface_cache_ids(source, PackedInt32Array());
-	triangle_ranges.release(state->first_triangle, state->triangle_count);
+	triangle_total -= state->triangle_count;
 	surface_ranges.release(state->first_surface, state->shared->surfaces.size());
 	if (state->blas.is_valid()) {
 		device->free_rid(state->blas);
@@ -938,15 +930,6 @@ void SurfaceCacheWorldRD::remove_instance(RID source) {
 	}
 	RenderingServer::get_singleton()->free_rid(state->chart);
 	instances.erase(source);
-	if (state->shared->holder == state) {
-		state->shared->holder = nullptr;
-		for (const KeyValue<RID, Instance *> &entry : instances) {
-			if (entry.value->shared == state->shared && entry.value->triangles_uploaded) {
-				state->shared->holder = entry.value;
-				break;
-			}
-		}
-	}
 	if (--state->shared->references == 0) {
 		release_geometry(state->shared);
 	}
@@ -964,6 +947,9 @@ void SurfaceCacheWorldRD::release_geometry(Geometry *geometry) {
 	}
 	for (RID rid : geometry->indices) {
 		device->free_rid(rid);
+	}
+	if (geometry->orientation_words > 0) {
+		orientation_ranges.release(geometry->orientation_offset, geometry->orientation_words);
 	}
 	geometries.erase(geometry->key);
 	memdelete(geometry);
@@ -1009,7 +995,7 @@ Dictionary SurfaceCacheWorldRD::get_metrics() const {
 	}
 	result["instances"] = instances.size();
 	result["surfaces"] = surface_ranges.extent;
-	result["triangles"] = triangle_ranges.extent;
+	result["triangles"] = triangle_total;
 	result["world_frames"] = frame;
 	result["cpu_submit_ms"] = cpu_submit_ms;
 	result["gpu_buffer_bytes"] = buffer_memory_bytes;
@@ -1064,6 +1050,7 @@ Dictionary SurfaceCacheWorldRD::get_probe_resources() const {
 		resources[buffer_names[i]] = buffers[i];
 	}
 	result["buffers"] = resources;
+	result["tlas"] = tlas;
 	result["hash"] = world_hash;
 	result["gather"] = gather;
 	return result;

@@ -5,9 +5,9 @@
 #include "scene/resources/mesh.h"
 #include "servers/rendering/rendering_server_types.h"
 
-// Preparation of a mesh for the Surface Cache: the capture mesh of its surface materials and the ray
-// triangle records (CacheTriangle of the game's Surface Cache cache_types). Every surface has one
-// side (front only) or two; the caller takes them from its materials.
+// Preparation of a mesh for the Surface Cache: the capture mesh of its surface materials, the ray
+// geometry of its BLAS and the orientation of its triangles (CacheSurface of the game's Surface Cache
+// cache_types). Every surface has one side (front only) or two; the caller takes them from its materials.
 class SurfaceCacheGeometry : public Object {
 	GDCLASS(SurfaceCacheGeometry, Object);
 

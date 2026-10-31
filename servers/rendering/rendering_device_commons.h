@@ -921,6 +921,7 @@ public:
 		ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT = (1 << 2),
 		ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT = (1 << 3),
 		ACCELERATION_STRUCTURE_LOW_MEMORY_BIT = (1 << 4),
+		ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT = (1 << 11), // Fork(Lestoroer): triangle positions for ray queries.
 	};
 
 	enum AccelerationStructureGeometryFlagBits {
@@ -1036,6 +1037,7 @@ public:
 		SUPPORTS_RAY_QUERY,
 		SUPPORTS_RAYTRACING_PIPELINE,
 		SUPPORTS_HDR_OUTPUT,
+		SUPPORTS_RAY_TRACING_POSITION_FETCH, // Fork(Lestoroer)
 	};
 
 	enum SubgroupOperations {
