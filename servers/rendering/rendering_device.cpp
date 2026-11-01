@@ -443,6 +443,7 @@ RID RenderingDevice::tlas_create(uint32_t p_max_instance_count, BitField<Acceler
 	return id;
 }
 
+// Fork(Lestoroer)
 Error RenderingDevice::blas_build(RID p_blas, bool p_keep_build_memory) {
 	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
 
@@ -8363,6 +8364,7 @@ void RenderingDevice::_flush_and_stall_for_all_frames(bool p_begin_frame) {
 	}
 }
 
+// Fork(Lestoroer)
 Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServerEnums::WindowID p_main_window, bool p_main_instance_without_window) {
 	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
 
@@ -8423,6 +8425,7 @@ Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServ
 	ERR_FAIL_COND_V_MSG(err != OK, FAILED, "Failed to initialize driver for device.");
 
 	if (is_main_instance) {
+		// Fork(Lestoroer)
 		// Only the singleton instance should print this information.
 		String rendering_method;
 		if (OS::get_singleton()->get_current_rendering_method() == "mobile") {

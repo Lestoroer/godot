@@ -225,6 +225,7 @@ public:
 				h = hash_murmur3_one_32(render_pass, h);
 				h = hash_murmur3_one_32(wireframe, h);
 				h = hash_murmur3_one_32(ubershader, h);
+				// Fork(Lestoroer)
 				h = hash_murmur3_one_32(highlight_alpha_mode, h);
 				return hash_fmix32(h);
 			}

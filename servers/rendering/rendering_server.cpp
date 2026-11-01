@@ -1780,6 +1780,7 @@ TypedArray<Array> RenderingServer::mesh_create_blend_shape_arrays_from_surface_d
 
 		uint32_t blend_shape_count = blend_shape_data.size() / divisor;
 
+		// Fork(Lestoroer)
 		ERR_FAIL_COND_V(blend_shape_count != (uint32_t)p_shape_count, Array());
 
 		TypedArray<Array> blend_shape_array;

@@ -700,6 +700,7 @@ public:
 				uint32_t use_separate_post_pass : 1;
 				uint32_t use_hdr_render_target : 1;
 				uint32_t use_ldr_render_target : 1;
+				// Fork(Lestoroer)
 				uint32_t use_highlight_outline : 1;
 			};
 		};

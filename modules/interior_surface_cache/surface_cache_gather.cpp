@@ -1,4 +1,4 @@
-// Fork(Lestoroer): native Surface Cache view orchestration. Shader algorithms are unchanged.
+// Fork(Lestoroer)
 #include "surface_cache_gather.h"
 
 #include "core/object/class_db.h"
