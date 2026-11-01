@@ -10,7 +10,9 @@ public:
 		Transform3D from, to;
 		AABB bounds;
 	};
-	enum { VIEW_CHANGES = 16,
+	// Each pixel of three passes tests every view change: 16 records cost the moving bed of the stand 0.5 ms a
+	// frame. A moving object's records overlap, and merging them by the smallest union keeps their newest time.
+	enum { VIEW_CHANGES = 4,
 		VIEW_MOVED = 8,
 		CHANGE_FRAMES = 120 };
 	// Seconds a view keeps a world change: screen histories react to it in time, not in frames.
