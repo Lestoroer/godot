@@ -1475,6 +1475,7 @@ void SkyRD::update_res_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, RID p
 	RD::get_singleton()->draw_command_end_label(); // Setup Sky resolution buffers
 }
 
+// Fork(Lestoroer)
 void SkyRD::draw_sky(RD::DrawListID p_draw_list, Ref<RenderSceneBuffersRD> p_render_buffers, RID p_env, RID p_fb, double p_time, float p_luminance_multiplier, float p_brightness_multiplier, bool p_preserve_highlight_alpha) {
 	ERR_FAIL_COND(p_render_buffers.is_null());
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
@@ -1524,6 +1525,7 @@ void SkyRD::draw_sky(RD::DrawListID p_draw_list, Ref<RenderSceneBuffersRD> p_ren
 
 	sky_transform = sky_transform * sky_scene_state.cam_transform.basis;
 
+	// Fork(Lestoroer)
 	SkyVersion version;
 	if (p_preserve_highlight_alpha) {
 		version = sky_scene_state.view_count > 1 ? SKY_VERSION_BACKGROUND_MULTIVIEW_HIGHLIGHT_ALPHA : SKY_VERSION_BACKGROUND_HIGHLIGHT_ALPHA;

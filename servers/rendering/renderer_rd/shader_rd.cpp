@@ -256,6 +256,7 @@ void ShaderRD::_initialize_version(Version *p_version) {
 	p_version->dirty = false;
 
 	p_version->variants.resize_initialized(variant_defines.size());
+	// Fork(Lestoroer)
 	p_version->variants_requested.resize_initialized(variant_defines.size());
 	p_version->variants_cached.resize_initialized(variant_defines.size());
 	p_version->variant_data.resize(variant_defines.size());
@@ -275,6 +276,7 @@ void ShaderRD::_clear_version(Version *p_version) {
 
 		p_version->variants.clear();
 		p_version->variant_data.clear();
+		// Fork(Lestoroer)
 		p_version->variants_requested.clear();
 		p_version->variants_cached.clear();
 	}
@@ -670,6 +672,7 @@ bool ShaderRD::_load_from_cache(Version *p_version, int p_group) {
 	for (uint32_t i = 0; i < variant_count; i++) {
 		int variant_id = group_to_variant_map[p_group][i];
 		if (!variants_enabled[variant_id]) {
+			// Fork(Lestoroer)
 			continue;
 		}
 		p_version->variants_cached.write[variant_id] = true;
@@ -683,6 +686,7 @@ bool ShaderRD::_load_from_cache(Version *p_version, int p_group) {
 	return true;
 }
 
+// Fork(Lestoroer)
 RID ShaderRD::_materialize_cached_variant(Version *p_version, int p_variant) {
 	RID shader = RD::get_singleton()->shader_create_from_bytecode_with_samplers(p_version->variant_data[p_variant], p_version->variants[p_variant], immutable_samplers);
 	ERR_FAIL_COND_V(shader.is_null(), RID());
@@ -731,6 +735,7 @@ void ShaderRD::_compile_version_start(Version *p_version, int p_group) {
 	}
 #endif
 
+	// Fork(Lestoroer)
 	for (int variant : group_to_variant_map[p_group]) {
 		p_version->variants_cached.write[variant] = false;
 	}
@@ -777,6 +782,7 @@ void ShaderRD::_compile_version_end(Version *p_version, int p_group) {
 
 		p_version->variants.clear();
 		p_version->variant_data.clear();
+		// Fork(Lestoroer)
 		p_version->variants_requested.clear();
 		p_version->variants_cached.clear();
 		return;

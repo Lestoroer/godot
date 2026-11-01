@@ -165,6 +165,7 @@
 				Returns the number of surfaces that the [Mesh] holds. This is equivalent to [method MeshInstance3D.get_surface_override_material_count].
 			</description>
 		</method>
+		<!-- Fork(Lestoroer) -->
 		<method name="surface_cache_prepare_from_rid" qualifiers="static">
 			<return type="Dictionary" />
 			<param index="0" name="mesh" type="RID" />

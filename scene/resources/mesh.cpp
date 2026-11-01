@@ -32,7 +32,6 @@
 
 #include "core/math/convex_hull.h"
 #include "core/object/class_db.h"
-#include "core/os/os.h"
 #include "core/templates/pair.h"
 #include "scene/resources/surface_tool.h"
 #include "servers/rendering/rendering_server.h"

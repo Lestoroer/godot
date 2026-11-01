@@ -10,8 +10,8 @@ public:
 		Transform3D from, to;
 		AABB bounds;
 	};
-	// Each pixel of three passes tests every view change: 16 records cost the moving bed of the stand 0.5 ms a
-	// frame. A moving object's records overlap, and merging them by the smallest union keeps their newest time.
+	// Пиксель проверяет каждую область. При переполнении объединяются ближайшие
+	// области с сохранением времени самого свежего изменения.
 	enum { VIEW_CHANGES = 4,
 		VIEW_MOVED = 8,
 		CHANGE_FRAMES = 120 };

@@ -9,6 +9,7 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<!-- Fork(Lestoroer) -->
 		<method name="filter_shadow_sample_coverage" qualifiers="const">
 			<return type="PackedInt32Array" />
 			<param index="0" name="vertices" type="PackedVector3Array" />

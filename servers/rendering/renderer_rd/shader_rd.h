@@ -103,6 +103,7 @@ private:
 	// Vector will have the size of SHADER_STAGE_MAX and unused stages will have empty strings.
 	void _compile_variant(uint32_t p_variant, CompileData p_data);
 
+	// Fork(Lestoroer)
 	RID _materialize_cached_variant(Version *p_version, int p_variant);
 	void _initialize_version(Version *p_version);
 	void _clear_version(Version *p_version);
@@ -228,6 +229,7 @@ public:
 			return RID();
 		}
 
+		// Fork(Lestoroer)
 		version->variants_requested.write[p_variant] = true;
 		if (version->variants_cached[p_variant]) {
 			return _materialize_cached_variant(version, p_variant);

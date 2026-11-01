@@ -75,6 +75,7 @@
 #include "servers/camera/camera_server.h"
 #include "servers/display/accessibility_server.h"
 #include "servers/display/display_server.h"
+// Fork(Lestoroer)
 #include "servers/display/display_server_offscreen.h"
 #include "servers/movie_writer/movie_writer.h"
 #include "servers/register_server_types.h"
@@ -203,6 +204,7 @@ static bool _start_success = false;
 // Drivers
 
 String display_driver = "";
+// Fork(Lestoroer)
 static bool offscreen_mode_requested = false;
 String tablet_driver = "";
 String text_driver = "";
@@ -626,6 +628,7 @@ void Main::print_help(const char *p_binary) {
 	print_help_option("--text-driver <driver>", "Text driver (used for font rendering, bidirectional support and shaping).\n");
 	print_help_option("--tablet-driver <driver>", "Pen tablet input driver.\n");
 	print_help_option("--headless", "Enable headless mode (--display-driver headless --audio-driver Dummy). Useful for servers and with --script.\n");
+// Fork(Lestoroer)
 #if defined(WINDOWS_ENABLED) && defined(RD_ENABLED) && defined(VULKAN_ENABLED)
 	print_help_option("--offscreen", "Enable real Vulkan rendering without an OS window, audio, or XR. Useful for unattended visual tests.\n");
 #endif
@@ -1039,6 +1042,7 @@ int Main::test_entrypoint(int argc, char *argv[], bool &tests_need_run) {
 
 Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_phase) {
 	GodotProfileZone("setup");
+	// Fork(Lestoroer)
 	offscreen_mode_requested = false;
 	Thread::make_main_thread();
 	set_current_thread_safe_for_nodes(true);
@@ -2325,6 +2329,7 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 	ResourceUID::get_singleton()->load_from_cache(true); // Load UUIDs from cache.
 	ProjectSettings::get_singleton()->fix_autoload_paths(); // Handles autoloads saved as UID.
 
+	// Fork(Lestoroer)
 	if (ProjectSettings::get_singleton()->has_custom_feature("dedicated_server") && !offscreen_mode_requested) {
 		audio_driver = NULL_AUDIO_DRIVER;
 		display_driver = NULL_DISPLAY_DRIVER;
@@ -2983,6 +2988,7 @@ error:
 
 	text_driver = "";
 	display_driver = "";
+	// Fork(Lestoroer)
 	offscreen_mode_requested = false;
 	audio_driver = "";
 	tablet_driver = "";
@@ -3302,6 +3308,7 @@ Error Main::setup2(bool p_show_boot_logo) {
 	{
 		OS::get_singleton()->benchmark_begin_measure("Servers", "Display");
 
+		// Fork(Lestoroer)
 		int display_driver_idx = -1;
 
 		if (display_driver.is_empty() || display_driver == "default") {
@@ -3374,6 +3381,7 @@ Error Main::setup2(bool p_show_boot_logo) {
 				accessibility_driver_name = "accesskit";
 			}
 		}
+		// Fork(Lestoroer)
 		if (display_driver == NULL_DISPLAY_DRIVER || display_driver == DisplayServerOffscreen::DRIVER_NAME || display_driver == EMBEDDED_DISPLAY_DRIVER || accessibility_mode == AccessibilityServerEnums::AccessibilityMode::ACCESSIBILITY_DISABLED) {
 			accessibility_driver_name = "dummy";
 		}
@@ -3419,6 +3427,7 @@ Error Main::setup2(bool p_show_boot_logo) {
 
 		String rendering_driver = OS::get_singleton()->get_current_rendering_driver_name();
 		display_server = DisplayServer::create(display_driver_idx, rendering_driver, window_mode, window_vsync_mode, window_flags, window_position, window_size, init_screen, context, init_embed_parent_window_id, err);
+		// Fork(Lestoroer)
 		if ((err != OK || display_server == nullptr) && display_driver != DisplayServerOffscreen::DRIVER_NAME) {
 			String last_name = DisplayServer::get_create_function_name(display_driver_idx);
 

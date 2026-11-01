@@ -330,6 +330,7 @@ RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(Framebuffe
 		vrs_texture = render_buffers->get_texture(RB_SCOPE_VRS, RB_TEXTURE);
 	}
 
+	// Fork(Lestoroer)
 	const bool use_post_pass = p_config_type == FB_CONFIG_RENDER_AND_POST_PASS;
 	if (use_post_pass) {
 		Size2i target_size = render_buffers->get_target_size();
@@ -994,6 +995,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 	_fill_instance_data(RENDER_LIST_OPAQUE);
 	_fill_instance_data(RENDER_LIST_ALPHA);
 
+	// Fork(Lestoroer)
 	if (use_highlight_outline) {
 		using_subpass_post_process = false;
 	}
@@ -1310,6 +1312,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 			}
 		}
 
+		// Fork(Lestoroer)
 		BitField<RD::DrawFlags> draw_flags = load_color ? BitField<RD::DrawFlags>(RD::DRAW_CLEAR_DEPTH) : BitField<RD::DrawFlags>(RD::DRAW_CLEAR_COLOR_0 | RD::DRAW_CLEAR_DEPTH);
 		RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(framebuffer, draw_flags, c, 0.0f, 0, p_render_data->render_region, breadcrumb);
 		RD::FramebufferFormatID fb_format = RD::get_singleton()->framebuffer_get_format(framebuffer);
@@ -1329,6 +1332,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 			RenderListParameters render_list_params(render_list[RENDER_LIST_OPAQUE].elements.ptr(), render_list[RENDER_LIST_OPAQUE].element_info.ptr(), render_list[RENDER_LIST_OPAQUE].elements.size(), reverse_cull, PASS_MODE_COLOR, rp_uniform_set, base_specialization, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count);
 			render_list_params.framebuffer_format = fb_format;
 			render_list_params.subpass = RD::get_singleton()->draw_list_get_current_pass(); // Should now always be 0.
+			// Fork(Lestoroer)
 			render_list_params.use_highlight_alpha = use_highlight_outline;
 
 			_render_list(draw_list, fb_format, &render_list_params, 0, render_list_params.element_count);
@@ -1341,6 +1345,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 
 			// Note, sky.setup should have been called up above and setup stuff we need.
 
+			// Fork(Lestoroer)
 			sky.draw_sky(draw_list, rb, p_render_data->environment, framebuffer, time, inverse_luminance_multiplier, sky_brightness_multiplier, use_highlight_outline);
 
 			RD::get_singleton()->draw_command_end_label(); // Draw Sky
@@ -1357,6 +1362,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 				RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR_TRANSPARENT, rp_uniform_set, base_specialization, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count);
 				render_list_params.framebuffer_format = fb_format;
 				render_list_params.subpass = RD::get_singleton()->draw_list_get_current_pass(); // Should now always be 0.
+				// Fork(Lestoroer)
 				render_list_params.use_highlight_alpha = use_highlight_outline;
 
 				_render_list(draw_list, fb_format, &render_list_params, 0, render_list_params.element_count);
@@ -1427,6 +1433,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 				RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, rp_uniform_set, base_specialization, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count);
 				render_list_params.framebuffer_format = fb_format;
 				render_list_params.subpass = RD::get_singleton()->draw_list_get_current_pass(); // Should now always be 0.
+				// Fork(Lestoroer)
 				render_list_params.use_highlight_alpha = use_highlight_outline;
 
 				draw_list = RD::get_singleton()->draw_list_begin(framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 1.0f, 0, p_render_data->render_region, breadcrumb);
@@ -2595,6 +2602,7 @@ void RenderForwardMobile::_render_list_template(RenderingDevice::DrawListID p_dr
 		pipeline_key.primitive_type = surf->primitive;
 		RID xforms_uniform_set = surf->owner->transforms_uniform_set;
 
+		// Fork(Lestoroer)
 		pipeline_key.highlight_alpha_mode = SceneShaderForwardMobile::ShaderData::HIGHLIGHT_ALPHA_DISABLED;
 		switch (p_params->pass_mode) {
 			case PASS_MODE_COLOR:
@@ -2604,6 +2612,7 @@ void RenderForwardMobile::_render_list_template(RenderingDevice::DrawListID p_dr
 				} else {
 					pipeline_key.version = p_params->view_count > 1 ? SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS_MULTIVIEW : SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS;
 				}
+				// Fork(Lestoroer)
 				if (p_params->use_highlight_alpha) {
 					pipeline_key.highlight_alpha_mode = surf->owner->highlighted ? SceneShaderForwardMobile::ShaderData::HIGHLIGHT_ALPHA_WRITE : SceneShaderForwardMobile::ShaderData::HIGHLIGHT_ALPHA_PRESERVE;
 				}
@@ -3292,6 +3301,7 @@ void RenderForwardMobile::_geometry_instance_update(RenderGeometryInstance *p_ge
 
 static RD::FramebufferFormatID _get_color_framebuffer_format_for_pipeline(RD::DataFormat p_color_format, bool p_can_be_storage, RD::TextureSamples p_samples, RD::TextureSamples p_target_samples, bool p_vrs, bool p_post_pass, bool p_hdr, uint32_t p_view_count) {
 	const bool multisampling = p_samples > RD::TEXTURE_SAMPLES_1;
+	// Fork(Lestoroer)
 	MobileColorFramebufferLayout layout = _build_mobile_color_framebuffer_layout(multisampling, false, p_vrs, p_post_pass);
 	thread_local Vector<RD::AttachmentFormat> attachments;
 	attachments.clear();

@@ -78,6 +78,7 @@ layout(constant_id = 14) const bool glow_mode_screen = false;
 layout(constant_id = 15) const bool glow_mode_softlight = false;
 layout(constant_id = 16) const bool glow_mode_replace = false;
 layout(constant_id = 17) const bool glow_mode_mix = false;
+// Fork(Lestoroer)
 layout(constant_id = 18) const bool use_highlight_outline = false;
 
 layout(push_constant, std430) uniform Params {
