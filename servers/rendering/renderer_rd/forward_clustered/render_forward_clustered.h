@@ -72,8 +72,9 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 		MAX_VOXEL_GI_INSTANCESS = 8,
 		MAX_LIGHTMAPS = 8,
 		MAX_VOXEL_GI_INSTANCESS_PER_INSTANCE = 2,
+		// lestoroer#gi
 		INSTANCE_DATA_BUFFER_MIN_SIZE = 4096,
-		SURFACE_CACHE_CAPTURE_INSTANCE_DATA_MIN_SIZE = 16 // Fork(Lestoroer)
+		SURFACE_CACHE_CAPTURE_INSTANCE_DATA_MIN_SIZE = 16
 	};
 
 	enum RenderListType {
@@ -81,13 +82,12 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 		RENDER_LIST_MOTION, //used for opaque objects with motion
 		RENDER_LIST_ALPHA, //used for transparent objects
 		RENDER_LIST_SECONDARY, //used for shadows and other objects
-		// Fork(Lestoroer): one Surface Cache capture draws the few surfaces of one instance; the
-		// shared lists would keep a 4096-element instance buffer for each capture pass of a frame.
+		// lestoroer#gi: Отдельный список не резервирует по 4096 экземпляров на каждый захват одного объекта.
 		RENDER_LIST_SURFACE_CACHE_CAPTURE,
 		RENDER_LIST_MAX
 	};
 
-	// Fork(Lestoroer)
+	// lestoroer#gi
 	static constexpr uint32_t instance_data_min_size(RenderListType p_render_list) {
 		return p_render_list == RENDER_LIST_SURFACE_CACHE_CAPTURE ? SURFACE_CACHE_CAPTURE_INSTANCE_DATA_MIN_SIZE : INSTANCE_DATA_BUFFER_MIN_SIZE;
 	}
@@ -240,7 +240,7 @@ private:
 		RID render_pass_uniform_set;
 		bool force_wireframe = false;
 		Vector2 uv_offset;
-		RenderGeometryInstanceBase *capture_geometry = nullptr; // Fork(Lestoroer): vertex/index streams only.
+		RenderGeometryInstanceBase *capture_geometry = nullptr; // lestoroer#gi
 		float lod_distance_multiplier = 0.0;
 		float screen_mesh_lod_threshold = 0.0;
 		RD::FramebufferFormatID framebuffer_format = 0;
@@ -416,7 +416,7 @@ private:
 		uint32_t max_lightmaps;
 		RID lightmap_buffer;
 
-		MultiUmaBuffer<1u> instance_buffer[RENDER_LIST_MAX] = { MultiUmaBuffer<1u>("RENDER_LIST_OPAQUE"), MultiUmaBuffer<1u>("RENDER_LIST_MOTION"), MultiUmaBuffer<1u>("RENDER_LIST_ALPHA"), MultiUmaBuffer<1u>("RENDER_LIST_SECONDARY"), MultiUmaBuffer<1u>("RENDER_LIST_SURFACE_CACHE_CAPTURE") }; // Fork(Lestoroer): capture list added.
+		MultiUmaBuffer<1u> instance_buffer[RENDER_LIST_MAX] = { MultiUmaBuffer<1u>("RENDER_LIST_OPAQUE"), MultiUmaBuffer<1u>("RENDER_LIST_MOTION"), MultiUmaBuffer<1u>("RENDER_LIST_ALPHA"), MultiUmaBuffer<1u>("RENDER_LIST_SECONDARY"), MultiUmaBuffer<1u>("RENDER_LIST_SURFACE_CACHE_CAPTURE") }; // lestoroer#gi
 		InstanceData *curr_gpu_ptr[RENDER_LIST_MAX] = {};
 
 		LightmapCaptureData *lightmap_captures = nullptr;
@@ -484,7 +484,7 @@ private:
 	void _render_list(RenderingDevice::DrawListID p_draw_list, RenderingDevice::FramebufferFormatID p_framebuffer_Format, RenderListParameters *p_params, uint32_t p_from_element, uint32_t p_to_element);
 	void _render_list_with_draw_list(RenderListParameters *p_params, RID p_framebuffer, BitField<RD::DrawFlags> p_draw_flags = RD::DRAW_DEFAULT_ALL, const Vector<Color> &p_clear_color_values = Vector<Color>(), float p_clear_depth_value = 0.0, uint32_t p_clear_stencil_value = 0, const Rect2 &p_region = Rect2());
 
-	void _fill_instance_data(RenderListType p_render_list, int *p_render_info = nullptr, uint32_t p_offset = 0, int32_t p_max_elements = -1, bool p_update_buffer = true, RenderGeometryInstanceBase *p_capture_geometry = nullptr); // Fork(Lestoroer): p_capture_geometry added.
+	void _fill_instance_data(RenderListType p_render_list, int *p_render_info = nullptr, uint32_t p_offset = 0, int32_t p_max_elements = -1, bool p_update_buffer = true, RenderGeometryInstanceBase *p_capture_geometry = nullptr); // lestoroer#gi
 	void _fill_render_list(RenderListType p_render_list, const RenderDataRD *p_render_data, PassMode p_pass_mode, bool p_using_sdfgi = false, bool p_using_opaque_gi = false, bool p_using_motion_pass = false, bool p_append = false);
 
 	HashMap<Size2i, RID> sdfgi_framebuffer_size_cache;
@@ -566,7 +566,7 @@ private:
 
 	class GeometryInstanceForwardClustered : public RenderGeometryInstanceBase {
 	public:
-		// Fork(Lestoroer): Surface Cache id per mesh surface.
+		// lestoroer#gi
 		Vector<int32_t> surface_cache_ids;
 		virtual void set_surface_cache_ids(const Vector<int32_t> &p_ids) override { surface_cache_ids = p_ids; }
 		// lightmap
@@ -816,14 +816,13 @@ protected:
 	virtual void _render_buffers_debug_draw(const RenderDataRD *p_render_data) override;
 
 	virtual void _render_material(const Transform3D &p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region, float p_exposure_normalization) override;
-	// Fork(Lestoroer): Surface Cache GI context, set by RendererSceneCull.
+	// lestoroer#gi
 	Vector<RID> surface_cache_buffers;
 	Callable surface_cache_view_callback;
-	// Fork(Lestoroer): surface_cache texture with this viewport's diffuse gather, named by the view callback.
 	StringName surface_cache_gather_texture = SNAME("gather");
 	void surface_cache_set_context(const Vector<RID> &p_buffers, const Callable &p_view_callback) override { surface_cache_buffers = p_buffers; surface_cache_view_callback = p_view_callback; }
-	void surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region) override; // Fork(Lestoroer)
-	RID surface_cache_capture_corners; // Fork(Lestoroer): corners of the chart being captured (render pass binding 39).
+	void surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region) override;
+	RID surface_cache_capture_corners;
 	virtual void _render_uv2(const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) override;
 	virtual void _render_sdfgi(Ref<RenderSceneBuffersRD> p_render_buffers, const Vector3i &p_from, const Vector3i &p_size, const AABB &p_bounds, const PagedArray<RenderGeometryInstance *> &p_instances, const RID &p_albedo_texture, const RID &p_emission_texture, const RID &p_emission_aniso_texture, const RID &p_geom_facing_texture, float p_exposure_normalization) override;
 	virtual void _render_particle_collider_heightfield(RID p_fb, const Transform3D &p_cam_transform, const Projection &p_cam_projection, const PagedArray<RenderGeometryInstance *> &p_instances) override;

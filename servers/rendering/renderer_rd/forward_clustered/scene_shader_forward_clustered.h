@@ -255,7 +255,7 @@ public:
 		bool wireframe = false;
 
 		bool unshaded = false;
-		// Fork(Lestoroer): Surface Cache render modes.
+		// lestoroer#gi
 		bool surface_cache_global_invariant = false;
 		bool surface_cache_presentation = false;
 		bool uses_vertex = false;
@@ -306,7 +306,7 @@ public:
 		virtual void set_code(const String &p_Code);
 
 		virtual bool is_animated() const;
-		// Fork(Lestoroer): Surface Cache material queries reported to the GI registry.
+		// lestoroer#gi
 		bool has_shader_displacement() const override { return uses_vertex || uses_position || writes_modelview_or_projection; }
 		bool is_surface_cache_global_invariant() const override { return surface_cache_global_invariant; }
 		bool is_surface_cache_presentation() const override { return surface_cache_presentation; }

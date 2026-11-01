@@ -1,12 +1,7 @@
-// Fork(Lestoroer): Surface Cache GI of Forward+ fragments.
-// The screen gather and the reflection of a pixel belong to the surface whose view depth (distance
-// along the view axis) they carry in alpha: the pre-pass surface of the pixel. Other fragments,
-// transparent ones above all, read the world cache at their position.
+// lestoroer#gi
+// Alpha экранного GI хранит глубину поверхности pre-pass; другие поверхности читают мировой кеш.
 
-// World cache of the game GI: lookup records of its hash grid (fingerprint, light) and room volumes.
-// surface_cache_world_irradiance repeats hash_irradiance_smooth of the game (world_hash_layout and
-// world_hash_access in features/lighting/surface_cache); its probe world_cache_fragments.gd checks
-// that both agree.
+// Хеширование и выборка должны совпадать с world_hash_layout/world_hash_access игры; это проверяет world_cache_fragments.gd.
 layout(set = 1, binding = 37, std430) readonly buffer SurfaceCacheHashLookup { uvec4 data[]; } surface_cache_hash_lookup;
 layout(set = 1, binding = 38, std430) readonly buffer SurfaceCacheHashRooms { uvec4 header; vec4 data[]; } surface_cache_hash_rooms;
 
@@ -17,7 +12,7 @@ const float SURFACE_CACHE_HASH_CELL = 0.08;
 const float SURFACE_CACHE_HASH_NEAR = 12.0;
 const float SURFACE_CACHE_HASH_ROOM_PROBE = 0.05;
 const uint SURFACE_CACHE_HASH_PROBES = 8u;
-// View depth in a half-float alpha keeps about 5e-4 of itself.
+// Относительная погрешность глубины в half-float alpha — около 5e-4.
 const float SURFACE_CACHE_DEPTH_TOLERANCE = 2e-3;
 
 uint surface_cache_hash(uint x) {
@@ -41,7 +36,6 @@ uint surface_cache_hash_room(vec3 position) {
 	return 0u;
 }
 
-// Key of a cell of the level by its integer coordinates; tag holds the normal face and the room.
 uvec2 surface_cache_hash_key(ivec3 cell, uint tag, uint level) {
 	uvec3 wrapped = uvec3(cell + ivec3(32768)) & 65535u;
 	return uvec2(wrapped.x | (wrapped.y << 16u), wrapped.z | tag | (level << 19u));
@@ -65,9 +59,6 @@ bool surface_cache_hash_light(uvec2 key, out vec3 light) {
 	return false;
 }
 
-// Light of the level at a surface point, bilinear over the four cells around it in the plane of
-// its normal face (axis): one cell gave transparent surfaces hard 8 cm edges and its own noise.
-// Missing cells are left out; false — none of the four exists.
 bool surface_cache_hash_smooth(vec3 position, uint axis, uint tag, uint level, out vec3 light) {
 	vec3 scaled = position / (SURFACE_CACHE_HASH_CELL * float(1u << level));
 	ivec3 cell = ivec3(floor(scaled));
@@ -93,8 +84,6 @@ bool surface_cache_hash_smooth(vec3 position, uint axis, uint tag, uint level, o
 	return total > 1e-4;
 }
 
-// Incident light of the world cache at a surface point; the other level when the own one has no
-// cells there yet, black without both.
 vec3 surface_cache_world_irradiance(vec3 position, vec3 normal, vec3 camera) {
 	vec3 magnitude = abs(normal);
 	uint axis = magnitude.x >= magnitude.y && magnitude.x >= magnitude.z ? 0u : (magnitude.y >= magnitude.z ? 1u : 2u);
@@ -108,13 +97,10 @@ vec3 surface_cache_world_irradiance(vec3 position, vec3 normal, vec3 camera) {
 	return vec3(0.0);
 }
 
-// The GI texel belongs to the fragment at its view depth; zero — the GI has no value there.
 bool surface_cache_texel_owned(float texel_depth, float fragment_depth) {
 	return texel_depth > 0.0 && abs(texel_depth - fragment_depth) <= texel_depth * SURFACE_CACHE_DEPTH_TOLERANCE;
 }
 
-// Diffuse irradiance of a GI fragment: the screen gather of its pixel or the world cache. fragment —
-// pixel coordinates and view depth of the fragment.
 vec3 surface_cache_for_fragment(vec3 position, vec3 normal, vec3 camera, vec3 fragment, out bool gather_used) {
 	ivec2 pixel = ivec2(fragment.xy);
 	ivec2 size = textureSize(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), 0);
@@ -129,7 +115,6 @@ vec3 surface_cache_for_fragment(vec3 position, vec3 normal, vec3 camera, vec3 fr
 	return surface_cache_world_irradiance(position, normal, camera);
 }
 
-// Radiance along the reflection of the fragment, before the environment BRDF.
 bool surface_cache_reflection_for_fragment(vec3 fragment, out vec3 radiance) {
 	ivec2 pixel = ivec2(fragment.xy);
 	ivec2 size = textureSize(sampler2D(surface_cache_reflection, SAMPLER_NEAREST_CLAMP), 0);

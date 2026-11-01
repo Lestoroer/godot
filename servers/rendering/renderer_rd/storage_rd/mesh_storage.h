@@ -75,8 +75,9 @@ private:
 	struct MeshInstance;
 
 	struct Mesh {
-		uint64_t geometry_revision = 1; // Fork(Lestoroer)
-		RID surface_cache_corners; // Fork(Lestoroer): capture corners of every triangle, all surfaces.
+		// lestoroer#gi
+		uint64_t geometry_revision = 1;
+		RID surface_cache_corners;
 		struct Surface {
 			RSE::PrimitiveType primitive = RSE::PRIMITIVE_POINTS;
 			uint64_t format = 0;
@@ -85,7 +86,7 @@ private:
 			RID vertex_buffer;
 			uint32_t vertex_buffer_size = 0;
 
-			uint32_t surface_cache_first_triangle = 0; // Fork(Lestoroer): in the mesh's capture corners.
+			uint32_t surface_cache_first_triangle = 0; // lestoroer#gi
 			RID attribute_buffer;
 			uint32_t attribute_buffer_size = 0;
 
@@ -203,7 +204,7 @@ private:
 
 		RID blend_weights_buffer;
 		List<MeshInstance *>::Element *I = nullptr; //used to erase itself
-		uint64_t deformation_version = 0; // Fork(Lestoroer)
+		uint64_t deformation_version = 0; // lestoroer#gi
 		uint64_t skeleton_version = 0;
 		bool dirty = false;
 		bool weights_dirty = false;
@@ -387,8 +388,9 @@ public:
 	virtual RSE::BlendShapeMode mesh_get_blend_shape_mode(RID p_mesh) const override;
 
 	virtual void mesh_surface_update_vertex_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) override;
-	void mesh_set_surface_cache_corners(RID p_mesh, const Vector<Vector2> &p_corners) override; // Fork(Lestoroer)
-	void mesh_instance_copy_pose(RID p_source, RID p_target); // Fork(Lestoroer)
+	// lestoroer#gi
+	void mesh_set_surface_cache_corners(RID p_mesh, const Vector<Vector2> &p_corners) override;
+	void mesh_instance_copy_pose(RID p_source, RID p_target);
 	virtual void mesh_surface_update_attribute_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) override;
 	virtual void mesh_surface_update_skin_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) override;
 	virtual void mesh_surface_update_index_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) override;
@@ -397,7 +399,7 @@ public:
 	virtual RID mesh_surface_get_material(RID p_mesh, int p_surface) const override;
 
 	virtual RenderingServerTypes::SurfaceData mesh_get_surface(RID p_mesh, int p_surface) const override;
-	RenderingServerTypes::SurfaceData mesh_get_surface(RID p_mesh, int p_surface, bool p_include_lods) const; // Fork(Lestoroer)
+	RenderingServerTypes::SurfaceData mesh_get_surface(RID p_mesh, int p_surface, bool p_include_lods) const; // lestoroer#gi
 
 	virtual int mesh_get_surface_count(RID p_mesh) const override;
 
@@ -643,25 +645,24 @@ public:
 		return _mesh_surface_generate_vertex_format(s->format, p_input_mask, p_instanced_surface, p_input_motion_vectors, p_point_size_emulated, position_stride);
 	}
 
-	// Fork(Lestoroer)
+	// lestoroer#gi
 	_FORCE_INLINE_ RID mesh_get_surface_cache_corners(RID p_mesh) const {
 		const Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 		return mesh ? mesh->surface_cache_corners : RID();
 	}
 
-	// Fork(Lestoroer)
 	_FORCE_INLINE_ uint32_t mesh_surface_get_surface_cache_first_triangle(void *p_surface) const {
 		return reinterpret_cast<const Mesh::Surface *>(p_surface)->surface_cache_first_triangle;
 	}
 
 	Dependency *mesh_get_dependency(RID p_mesh) const;
-	uint64_t mesh_get_geometry_revision(RID p_mesh) const override; // Fork(Lestoroer)
+	uint64_t mesh_get_geometry_revision(RID p_mesh) const override; // lestoroer#gi
 
 	/* MESH INSTANCE API */
 
 	bool owns_mesh_instance(RID p_rid) const { return mesh_instance_owner.owns(p_rid); }
 
-	virtual Dictionary mesh_instance_get_deformed_surface(RID p_instance, int p_surface) override; // Fork(Lestoroer)
+	virtual Dictionary mesh_instance_get_deformed_surface(RID p_instance, int p_surface) override; // lestoroer#gi
 	virtual RID mesh_instance_create(RID p_base) override;
 	virtual void mesh_instance_free(RID p_rid) override;
 	virtual void mesh_instance_set_skeleton(RID p_mesh_instance, RID p_skeleton) override;

@@ -1144,7 +1144,7 @@ void main() {
 	float transmittance_boost_highp = 0.0;
 	float metallic_highp = 0.0;
 	float specular_highp = 0.5;
-	float surface_cache_transmission = 0.0; // Fork(Lestoroer): written by SURFACE_CACHE_TRANSMISSION, unused here.
+	float surface_cache_transmission = 0.0; // lestoroer#gi
 	vec3 emission_highp = vec3(0.0);
 	float roughness_highp = 1.0;
 	float rim_highp = 0.0;

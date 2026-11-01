@@ -1756,10 +1756,10 @@ Dictionary RenderingServer::mesh_surface_get_lods(RID p_mesh, int p_surface) con
 }
 
 TypedArray<Array> RenderingServer::mesh_surface_get_blend_shape_arrays(RID p_mesh, int p_surface) const {
+	// lestoroer#gi
 	return mesh_create_blend_shape_arrays_from_surface_data(mesh_get_surface(p_mesh, p_surface), mesh_get_blend_shape_count(p_mesh));
 }
 
-// Fork(Lestoroer): reuse an existing CPU snapshot without reading the mesh again.
 TypedArray<Array> RenderingServer::mesh_create_blend_shape_arrays_from_surface_data(const RenderingServerTypes::SurfaceData &sd, int p_shape_count) const {
 	ERR_FAIL_COND_V(sd.vertex_count == 0, Array());
 
@@ -1780,11 +1780,10 @@ TypedArray<Array> RenderingServer::mesh_create_blend_shape_arrays_from_surface_d
 
 		uint32_t blend_shape_count = blend_shape_data.size() / divisor;
 
-		// Fork(Lestoroer)
-		ERR_FAIL_COND_V(blend_shape_count != (uint32_t)p_shape_count, Array());
+		ERR_FAIL_COND_V(blend_shape_count != (uint32_t)p_shape_count, Array()); // lestoroer#gi
 
 		TypedArray<Array> blend_shape_array;
-		blend_shape_array.resize(p_shape_count);
+		blend_shape_array.resize(p_shape_count); // lestoroer#gi
 		for (uint32_t i = 0; i < blend_shape_count; i++) {
 			Vector<uint8_t> bs_data = blend_shape_data.slice(i * divisor, (i + 1) * divisor);
 			Vector<uint8_t> unused;
@@ -2378,7 +2377,7 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("mesh_surface_set_material", "mesh", "surface", "material"), &RenderingServer::mesh_surface_set_material);
 	ClassDB::bind_method(D_METHOD("mesh_surface_get_material", "mesh", "surface"), &RenderingServer::mesh_surface_get_material);
 	ClassDB::bind_method(D_METHOD("mesh_get_surface", "mesh", "surface"), &RenderingServer::_mesh_get_surface);
-	ClassDB::bind_method(D_METHOD("mesh_set_surface_cache_corners", "mesh", "corners"), &RenderingServer::mesh_set_surface_cache_corners); // Fork(Lestoroer)
+	ClassDB::bind_method(D_METHOD("mesh_set_surface_cache_corners", "mesh", "corners"), &RenderingServer::mesh_set_surface_cache_corners); // lestoroer#gi
 	ClassDB::bind_method(D_METHOD("mesh_surface_get_arrays", "mesh", "surface"), &RenderingServer::mesh_surface_get_arrays);
 	ClassDB::bind_method(D_METHOD("mesh_surface_get_blend_shape_arrays", "mesh", "surface"), &RenderingServer::mesh_surface_get_blend_shape_arrays);
 	ClassDB::bind_method(D_METHOD("mesh_get_surface_count", "mesh"), &RenderingServer::mesh_get_surface_count);
@@ -3291,7 +3290,8 @@ void RenderingServer::_bind_methods() {
 
 	/* Bake 3D Object */
 
-	ClassDB::bind_method(D_METHOD("instance_surface_cache_capture", "instance", "chart_instance", "framebuffer", "region"), &RenderingServer::instance_surface_cache_capture); // Fork(Lestoroer)
+	// lestoroer#gi
+	ClassDB::bind_method(D_METHOD("instance_surface_cache_capture", "instance", "chart_instance", "framebuffer", "region"), &RenderingServer::instance_surface_cache_capture);
 	ClassDB::bind_method(D_METHOD("scenario_set_surface_cache_callback", "scenario", "callback"), &RenderingServer::scenario_set_surface_cache_callback);
 	ClassDB::bind_method(D_METHOD("scenario_set_surface_cache_view_callback", "scenario", "callback"), &RenderingServer::scenario_set_surface_cache_view_callback);
 	ClassDB::bind_method(D_METHOD("scenario_surface_cache_poll", "scenario"), &RenderingServer::scenario_surface_cache_poll);

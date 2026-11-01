@@ -31,9 +31,7 @@ layout(location = 1) in vec4 axis_tangent_attrib;
 #endif
 
 // Location 2 is unused.
-// Fork(Lestoroer): exact original corners of every triangle of a deindexed capture mesh, three per
-// triangle; a surface starts at the triangle given by its instance data (capture pass only). Declared
-// for every variant: the render pass set must keep one layout.
+// lestoroer#gi: Буфер объявлен во всех вариантах ради общего layout дескрипторов.
 layout(set = 1, binding = 39, std430) readonly buffer SurfaceCacheCaptureCorners { vec2 data[]; } surface_cache_capture_corners;
 #ifdef MODE_RENDER_MATERIAL
 layout(location = 15) out flat vec4 surface_cache_ab_interp;
@@ -701,7 +699,7 @@ void vertex_shader(vec3 vertex_input,
 			uv_dest_attrib = uv2_attrib.xy;
 		}
 
-		// Fork(Lestoroer): conservative raster of the deindexed capture triangle.
+		// lestoroer#gi
 		if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)) {
 			uint first = (floatBitsToUint(instances.data[instance_index].compressed_aabb_size_pad.w) + uint(gl_VertexIndex) / 3u) * 3u;
 			vec2 corners[3] = vec2[](surface_cache_capture_corners.data[first], surface_cache_capture_corners.data[first + 1u], surface_cache_capture_corners.data[first + 2u]);
@@ -716,8 +714,7 @@ void vertex_shader(vec3 vertex_input,
 			float winding = sign(e0.x * e1.y - e0.y * e1.x);
 			vec2 n0 = vec2(-e0.y, e0.x) * winding / max(length(e0), 1e-20);
 			vec2 n1 = vec2(-e1.y, e1.x) * winding / max(length(e1), 1e-20);
-			// One-pixel outward edge displacement covers each intersecting cell,
-			// including subpixel fragments. The fragment stage clips exact coverage.
+			// Расширение на пиксель покрывает и субпиксельные пересечения; fragment-проход проверяет точное покрытие.
 			vec2 expansion = -(n0 + n1) / max(1.0 + dot(n0, n1), 1e-8);
 			uv_dest_attrib = (p + expansion) / scene_data.viewport_size;
 		}
@@ -921,18 +918,20 @@ layout(location = 1) in vec3 normal_interp;
 #endif
 
 #if defined(COLOR_USED)
-// Fork(Lestoroer): *_raw inputs; the upstream names become globals resampled at the capture point in fragment_shader().
+// lestoroer#gi
 layout(location = 2) in vec4 color_interp_raw;
 vec4 color_interp;
 #endif
 
 #ifdef UV_USED
-layout(location = 3) in vec2 uv_interp_raw; // Fork(Lestoroer)
+// lestoroer#gi
+layout(location = 3) in vec2 uv_interp_raw;
 vec2 uv_interp;
 #endif
 
 #if defined(UV2_USED) || defined(USE_LIGHTMAP)
-layout(location = 4) in vec2 uv2_interp_raw; // Fork(Lestoroer)
+// lestoroer#gi
+layout(location = 4) in vec2 uv2_interp_raw;
 vec2 uv2_interp;
 #endif
 
@@ -1068,7 +1067,8 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 /* clang-format on */
 #endif
 
-#ifdef MODE_RENDER_MATERIAL // Fork(Lestoroer): capture triangle from the vertex stage.
+// lestoroer#gi
+#ifdef MODE_RENDER_MATERIAL
 layout(location = 15) in flat vec4 surface_cache_ab_interp;
 layout(location = 16) in flat vec2 surface_cache_c_interp;
 layout(location = 17) in vec2 surface_cache_uv_interp;
@@ -1085,7 +1085,7 @@ layout(location = 0) out vec4 albedo_output_buffer;
 layout(location = 1) out vec4 normal_output_buffer;
 layout(location = 2) out vec4 orm_output_buffer;
 layout(location = 3) out vec4 emission_output_buffer;
-layout(location = 4) out vec4 depth_output_buffer; // Fork(Lestoroer): capture world position.
+layout(location = 4) out vec4 depth_output_buffer; // lestoroer#gi
 
 #endif // MODE_RENDER_MATERIAL
 
@@ -1115,7 +1115,7 @@ layout(location = 2) out vec2 motion_vector;
 #endif
 
 #include "../scene_forward_aa_inc.glsl"
-// Fork(Lestoroer)
+// lestoroer#gi
 #include "../surface_cache_inc.glsl"
 
 #if !defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
@@ -1248,8 +1248,7 @@ vec3 encode24(vec3 v) {
 #endif // MODE_RENDER_NORMAL_ROUGHNESS
 
 void fragment_shader(in SceneData scene_data) {
-	// Fork(Lestoroer): material values and positions refer to the same physical
-	// sample, selected from the triangle's positive-area intersection with texel.
+// lestoroer#gi
 #ifdef MODE_RENDER_MATERIAL
 	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)) {
 		vec2 cell_min = floor(gl_FragCoord.xy);
@@ -1300,7 +1299,7 @@ void fragment_shader(in SceneData scene_data) {
 	float premul_alpha = 1.0;
 #endif // PREMUL_ALPHA_USED
 	//lay out everything, whatever is unused is optimized away anyway
-	vec3 vertex = surface_cache_sample(vertex_interp); // Fork(Lestoroer): identity outside capture.
+	vec3 vertex = surface_cache_sample(vertex_interp); // lestoroer#gi
 #ifdef USE_MULTIVIEW
 	vec3 eye_offset = scene_data.eye_offset[ViewIndex].xyz;
 	vec3 view_highp = -normalize(vertex_interp - eye_offset);
@@ -1319,7 +1318,7 @@ void fragment_shader(in SceneData scene_data) {
 	float transmittance_boost = 0.0;
 	float metallic_highp = 0.0;
 	float specular = 0.5;
-	float surface_cache_transmission = 0.0; // Fork(Lestoroer)
+	float surface_cache_transmission = 0.0; // lestoroer#gi
 	vec3 emission = vec3(0.0);
 	float roughness_highp = 1.0;
 	float rim = 0.0;
@@ -1343,17 +1342,18 @@ void fragment_shader(in SceneData scene_data) {
 	float alpha_highp = float(instances.data[instance_index].flags >> INSTANCE_FLAGS_FADE_SHIFT) / float(255.0);
 
 #ifdef TANGENT_USED
-	vec3 binormal = surface_cache_sample(binormal_interp); // Fork(Lestoroer)
-	vec3 tangent = surface_cache_sample(tangent_interp); // Fork(Lestoroer)
+	// lestoroer#gi
+	vec3 binormal = surface_cache_sample(binormal_interp);
+	vec3 tangent = surface_cache_sample(tangent_interp);
 #else
 	vec3 binormal = vec3(0.0);
 	vec3 tangent = vec3(0.0);
 #endif
 
 #ifdef NORMAL_USED
-	vec3 normal_highp = surface_cache_sample(normal_interp); // Fork(Lestoroer)
+	vec3 normal_highp = surface_cache_sample(normal_interp); // lestoroer#gi
 #if defined(DO_SIDE_CHECK)
-	if (!bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) && !gl_FrontFacing) { // Fork(Lestoroer): the capture renders the front side whatever the chart winding.
+	if (!bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) && !gl_FrontFacing) { // lestoroer#gi: Лицевая сторона захвата не зависит от winding раскладки.
 		normal_highp = -normal_highp;
 	}
 #endif // DO_SIDE_CHECK
@@ -1439,7 +1439,7 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 #endif
 
-// Fork(Lestoroer): inputs for SURFACE_CACHE_IRRADIANCE and SURFACE_CACHE_GATHER_USED.
+// lestoroer#gi
 #if defined(SURFACE_CACHE_INPUT_USED) || defined(SURFACE_CACHE_GATHER_INFO_USED)
 	vec4 surface_cache_input = vec4(0.0);
 	bool surface_cache_gather_used = false;
@@ -1453,7 +1453,7 @@ void fragment_shader(in SceneData scene_data) {
 	}
 #endif
 #endif
-	if (!bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE)) { // Fork(Lestoroer): was a bare block; the coverage pass skips user code.
+	if (!bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE)) { // Проход покрытия не должен выполнять пользовательский код материала.
 #CODE : FRAGMENT
 	}
 
@@ -1872,7 +1872,8 @@ void fragment_shader(in SceneData scene_data) {
 #if defined(CUSTOM_IRRADIANCE_USED)
 	ambient_light = mix(ambient_light, custom_irradiance.rgb, custom_irradiance.a);
 #endif
-#ifndef SURFACE_CACHE_INPUT_USED // Fork(Lestoroer): Surface Cache replaces ambient light unless the material reads it itself.
+// lestoroer#gi
+#ifndef SURFACE_CACHE_INPUT_USED
 	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
 		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
 		if (cache_surface > 0u) {
@@ -2293,18 +2294,17 @@ void fragment_shader(in SceneData scene_data) {
 		float specular_occlusion = area / (M_TAU * (1.0 - cos_a_s));
 		indirect_specular_light *= specular_occlusion;
 #else // BENT_NORMAL_MAP_USED
+		// lestoroer#gi
 		float specular_occlusion;
 		if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED) && instances.data[instance_index].compressed_aabb_position_pad.w > 0.0) {
-			// Fork(Lestoroer): irradiance is energy, not visibility. Using its
-			// luminance here amplifies gather noise on metals and changes occlusion
-			// when lights are recolored. Lagarde's AO approximation keeps those
-			// signals separate (Filament, Lighting/Occlusion/Specular occlusion).
+			// Яркость GI не выражает видимость: зависимость occlusion от неё усиливает шум и меняет отражения при перекраске света.
 			float NoV = clamp(dot(normal, view), 0.0, 1.0);
 			specular_occlusion = clamp(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
 		} else {
 			specular_occlusion = (ambient_light.r * 0.3 + ambient_light.g * 0.59 + ambient_light.b * 0.11) * 2.0; // Luminance of ambient light.
 			specular_occlusion = min(specular_occlusion * 4.0, 1.0); // This multiplication preserves speculars on bright areas.
 
+			// lestoroer#gi
 			float reflective_f = (1.0 - roughness) * metallic;
 			// 10.0 is a magic number, it gives the intended effect in most scenarios.
 			// Low enough for occlusion, high enough for reaction to lights and shadows.
@@ -2376,8 +2376,7 @@ void fragment_shader(in SceneData scene_data) {
 
 #ifndef AMBIENT_LIGHT_DISABLED
 	{
-		// Fork(Lestoroer): radiance traced along the reflection replaces the radiance map: it already
-		// includes visibility, and the environment BRDF below weights it like the map.
+		// lestoroer#gi: Трассированное отражение уже учитывает видимость; BRDF применяется ниже.
 		if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED) && instances.data[instance_index].compressed_aabb_position_pad.w > 0.0) {
 			vec3 reflected_radiance;
 			if (surface_cache_reflection_for_fragment(vec3(gl_FragCoord.xy, -vertex.z), reflected_radiance)) {
@@ -3142,12 +3141,12 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 
 #ifdef MODE_RENDER_MATERIAL
-	if (!surface_cache_covered) { discard; } // Fork(Lestoroer): outside the exact triangle/texel intersection.
+	if (!surface_cache_covered) { discard; } // lestoroer#gi
 
 	albedo_output_buffer.rgb = albedo;
-	// Fork(Lestoroer): capture outputs: unencoded normal, transmission, barycentrics + primitive, specular.
-	albedo_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE) ? 0.0 : alpha;
+	albedo_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE) ? 0.0 : alpha; // lestoroer#gi
 
+	// lestoroer#gi
 	normal_output_buffer.rgb = (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? normalize(normal) : encode24(normal)) * 0.5 + 0.5;
 	normal_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? surface_cache_transmission : 0.0;
 	depth_output_buffer = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? vec4(surface_cache_bary, float(gl_PrimitiveID + 1)) : vec4(-vertex.z, 0.0, 0.0, 0.0);
@@ -3155,7 +3154,7 @@ void fragment_shader(in SceneData scene_data) {
 	orm_output_buffer.r = ao;
 	orm_output_buffer.g = roughness;
 	orm_output_buffer.b = metallic;
-	orm_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? specular : sss_strength; // Fork(Lestoroer)
+	orm_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? specular : sss_strength; // lestoroer#gi
 
 	emission_output_buffer.rgb = emission;
 	emission_output_buffer.a = 0.0;

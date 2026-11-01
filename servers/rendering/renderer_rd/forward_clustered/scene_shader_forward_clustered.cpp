@@ -74,7 +74,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	wireframe = false;
 
 	unshaded = false;
-	// Fork(Lestoroer): Surface Cache render modes.
+	// lestoroer#gi
 	surface_cache_global_invariant = false;
 	surface_cache_presentation = false;
 	uses_vertex = false;
@@ -121,7 +121,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.render_mode_values["cull_back"] = Pair<int *, int>(&cull_modei, RSE::CULL_MODE_BACK);
 
 	actions.render_mode_flags["unshaded"] = &unshaded;
-	// Fork(Lestoroer): Surface Cache render modes.
+	// lestoroer#gi
 	actions.render_mode_flags["surface_cache_global_invariant"] = &surface_cache_global_invariant;
 	actions.render_mode_flags["surface_cache_presentation"] = &surface_cache_presentation;
 	actions.render_mode_flags["wireframe"] = &wireframe;
@@ -746,12 +746,12 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["E"] = String::num(Math::E);
 		actions.renames["OUTPUT_IS_SRGB"] = "SHADER_IS_SRGB";
 		actions.renames["CLIP_SPACE_FAR"] = "SHADER_SPACE_FAR";
-		actions.renames["IN_SURFACE_CACHE_PASS"] = "bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)"; // Fork(Lestoroer)
+		actions.renames["IN_SURFACE_CACHE_PASS"] = "bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)"; // lestoroer#gi
 		actions.renames["IN_SHADOW_PASS"] = "bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_IN_SHADOW_PASS)";
 		actions.renames["VIEWPORT_SIZE"] = "read_viewport_size";
 
 		actions.renames["FRAGCOORD"] = "gl_FragCoord";
-		actions.renames["FRONT_FACING"] = "(bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) || gl_FrontFacing)"; // Fork(Lestoroer)
+		actions.renames["FRONT_FACING"] = "(bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) || gl_FrontFacing)"; // lestoroer#gi
 		actions.renames["NORMAL_MAP"] = "normal_map";
 		actions.renames["NORMAL_MAP_DEPTH"] = "normal_map_depth";
 		actions.renames["BENT_NORMAL_MAP"] = "bent_normal_map";
@@ -782,10 +782,10 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["FOG"] = "fog";
 		actions.renames["RADIANCE"] = "custom_radiance";
 		actions.renames["IRRADIANCE"] = "custom_irradiance";
-		// Fork(Lestoroer): Surface Cache shader built-ins.
+		// lestoroer#gi
 		actions.renames["SURFACE_CACHE_GATHER_USED"] = "surface_cache_gather_used";
 		actions.usage_defines["SURFACE_CACHE_GATHER_USED"] = "#define SURFACE_CACHE_GATHER_INFO_USED\n#define NORMAL_USED\n";
-		actions.renames["SURFACE_CACHE_IRRADIANCE"] = "surface_cache_input"; // Fork(Lestoroer)
+		actions.renames["SURFACE_CACHE_IRRADIANCE"] = "surface_cache_input";
 		actions.renames["SURFACE_CACHE_TRANSMISSION"] = "surface_cache_transmission";
 		actions.usage_defines["SURFACE_CACHE_IRRADIANCE"] = "#define SURFACE_CACHE_INPUT_USED\n#define NORMAL_USED\n";
 		actions.renames["BONE_INDICES"] = "bone_attrib";
@@ -914,8 +914,9 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.base_texture_binding_index = 1;
 		actions.texture_layout_set = RenderForwardClustered::MATERIAL_UNIFORM_SET;
 		actions.base_uniform_string = "material.";
-		actions.base_varying_index = 19; // Fork(Lestoroer): private capture varyings.
-		actions.surface_cache_sampling = true; // Fork(Lestoroer)
+		// lestoroer#gi
+		actions.base_varying_index = 19;
+		actions.surface_cache_sampling = true;
 
 		actions.default_filter = ShaderLanguage::FILTER_LINEAR_MIPMAP;
 		actions.default_repeat = ShaderLanguage::REPEAT_ENABLE;

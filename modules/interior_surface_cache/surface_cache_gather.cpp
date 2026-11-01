@@ -1,4 +1,4 @@
-// Fork(Lestoroer)
+// lestoroer#gi
 #include "surface_cache_gather.h"
 
 #include "core/object/class_db.h"
@@ -202,8 +202,7 @@ void SurfaceCacheGatherRD::take_changes(double now) {
 	}
 }
 
-// Ages and history limits of the changes are in seconds of the renderer's clock: the same frame step drives
-// TIME in shaders and follows --fixed-fps.
+// Используется время рендера, общее с TIME шейдеров и --fixed-fps.
 void SurfaceCacheGatherRD::write_changes(Parameters &p) {
 	int64_t frame = world_hash->get("frame");
 	double now = RSG::rasterizer->get_total_time();
@@ -342,8 +341,7 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	p.sky[3] = settings->get("trace_distance");
 	bool diagnostics = settings->get("diagnostics");
 	bool markers = settings->get("gpu_markers");
-	// History limits of the profile are in seconds; the shaders blend per frame, so a limit becomes frames of
-	// this frame's duration. The first frame has no step yet.
+	// Профиль задаёт секунды, шейдеры — число кадров; на первом кадре длительность шага ещё неизвестна.
 	double delta = RSG::rasterizer->get_frame_delta_time();
 	if (delta <= 0.0) {
 		delta = 1.0 / 60.0;

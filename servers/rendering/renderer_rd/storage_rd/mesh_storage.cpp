@@ -503,7 +503,7 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 		_mesh_instance_add_surface(mi, mesh, mesh->surface_count - 1);
 	}
 
-	mesh->geometry_revision++; // Fork(Lestoroer)
+	mesh->geometry_revision++; // lestoroer#gi
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 
 	for (Mesh *E : mesh->shadow_owners) {
@@ -569,8 +569,7 @@ RSE::BlendShapeMode MeshStorage::mesh_get_blend_shape_mode(RID p_mesh) const {
 	return mesh->blend_shape_mode;
 }
 
-// Fork(Lestoroer): capture corners of a deindexed capture mesh, three per triangle, surfaces in order.
-// A surface's vertices are its corners, so its first triangle follows from the surfaces before it.
+// lestoroer#gi
 void MeshStorage::mesh_set_surface_cache_corners(RID p_mesh, const Vector<Vector2> &p_corners) {
 	Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL(mesh);
@@ -586,7 +585,6 @@ void MeshStorage::mesh_set_surface_cache_corners(RID p_mesh, const Vector<Vector
 	mesh->surface_cache_corners = RD::get_singleton()->storage_buffer_create(p_corners.size() * sizeof(Vector2), Span<uint8_t>(reinterpret_cast<const uint8_t *>(p_corners.ptr()), p_corners.size() * sizeof(Vector2)));
 }
 
-// Fork(Lestoroer): same skeleton and morph state on a remapped mesh.
 void MeshStorage::mesh_instance_copy_pose(RID p_source, RID p_target) {
 	MeshInstance *source = mesh_instance_owner.get_or_null(p_source);
 	MeshInstance *target = mesh_instance_owner.get_or_null(p_target);
@@ -612,7 +610,7 @@ void MeshStorage::mesh_surface_update_vertex_region(RID p_mesh, int p_surface, i
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->vertex_buffer, p_offset, data_size, r);
-	// Fork(Lestoroer): region updates change geometry too; upstream sent no notification here.
+	// lestoroer#gi
 	mesh->geometry_revision++;
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 }
@@ -628,7 +626,7 @@ void MeshStorage::mesh_surface_update_attribute_region(RID p_mesh, int p_surface
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->attribute_buffer, p_offset, data_size, r);
-	// Fork(Lestoroer): see mesh_surface_update_vertex_region().
+	// lestoroer#gi
 	mesh->geometry_revision++;
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 }
@@ -644,7 +642,7 @@ void MeshStorage::mesh_surface_update_skin_region(RID p_mesh, int p_surface, int
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->skin_buffer, p_offset, data_size, r);
-	// Fork(Lestoroer): see mesh_surface_update_vertex_region().
+	// lestoroer#gi
 	mesh->geometry_revision++;
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 }
@@ -660,7 +658,7 @@ void RendererRD::MeshStorage::mesh_surface_update_index_region(RID p_mesh, int p
 	const uint8_t *r = p_data.ptr();
 
 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->index_buffer, p_offset, data_size, r);
-	// Fork(Lestoroer): see mesh_surface_update_vertex_region().
+	// lestoroer#gi
 	mesh->geometry_revision++;
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 }
@@ -684,7 +682,7 @@ RID MeshStorage::mesh_surface_get_material(RID p_mesh, int p_surface) const {
 }
 
 RenderingServerTypes::SurfaceData MeshStorage::mesh_get_surface(RID p_mesh, int p_surface) const {
-	// Fork(Lestoroer)
+	// lestoroer#gi
 	return mesh_get_surface(p_mesh, p_surface, true);
 }
 
@@ -719,8 +717,7 @@ RenderingServerTypes::SurfaceData MeshStorage::mesh_get_surface(RID p_mesh, int 
 	}
 	sd.aabb = s.aabb;
 	sd.uv_scale = s.uv_scale;
-	// Fork(Lestoroer)
-	for (uint32_t i = 0; p_include_lods && i < s.lod_count; i++) {
+	for (uint32_t i = 0; p_include_lods && i < s.lod_count; i++) { // lestoroer#gi
 		RenderingServerTypes::SurfaceData::LOD lod;
 		lod.edge_length = s.lods[i].edge_length;
 		lod.index_data = RD::get_singleton()->buffer_get_data(s.lods[i].index_buffer);
@@ -927,7 +924,8 @@ void MeshStorage::mesh_clear(RID p_mesh) {
 	if (mesh->surfaces) {
 		memfree(mesh->surfaces);
 	}
-	if (mesh->surface_cache_corners.is_valid()) { // Fork(Lestoroer)
+	// lestoroer#gi
+	if (mesh->surface_cache_corners.is_valid()) {
 		RD::get_singleton()->free_rid(mesh->surface_cache_corners);
 		mesh->surface_cache_corners = RID();
 	}
@@ -937,7 +935,7 @@ void MeshStorage::mesh_clear(RID p_mesh) {
 	mesh->material_cache.clear();
 	mesh->has_bone_weights = false;
 	mesh->aabb = AABB();
-	mesh->geometry_revision++; // Fork(Lestoroer)
+	mesh->geometry_revision++; // lestoroer#gi
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 
 	for (Mesh *E : mesh->shadow_owners) {
@@ -988,7 +986,7 @@ void MeshStorage::mesh_surface_remove(RID p_mesh, int p_surface) {
 		}
 	}
 
-	mesh->geometry_revision++; // Fork(Lestoroer)
+	mesh->geometry_revision++; // lestoroer#gi
 	mesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MESH);
 
 	for (Mesh *E : mesh->shadow_owners) {
@@ -1203,12 +1201,12 @@ void MeshStorage::mesh_instance_set_canvas_item_transform(RID p_mesh_instance, c
 	mi->canvas_item_transform_2d = p_transform;
 }
 
-// Fork(Lestoroer): exposes the deformed GPU vertex stream to Surface Cache ray geometry.
+// lestoroer#gi
 Dictionary MeshStorage::mesh_instance_get_deformed_surface(RID p_instance, int p_surface) {
 	MeshInstance *mi = mesh_instance_owner.get_or_null(p_instance);
 	ERR_FAIL_NULL_V(mi, Dictionary());
 	ERR_FAIL_INDEX_V(p_surface, int(mi->surfaces.size()), Dictionary());
-	// A secondary ray can see a deforming mesh outside all raster camera frusta.
+	// Вторичный луч может видеть деформируемый меш вне всех камер растеризации.
 	mesh_instance_check_for_update(p_instance);
 	update_mesh_instances();
 	const Mesh::Surface *source = mi->mesh->surfaces[p_surface];
@@ -1338,7 +1336,7 @@ void MeshStorage::update_mesh_instances() {
 			RD::get_singleton()->compute_list_dispatch_threads(compute_list, push_constant.vertex_count, 1, 1);
 		}
 
-		mi->deformation_version++; // Fork(Lestoroer)
+		mi->deformation_version++; // lestoroer#gi
 		mi->dirty = false;
 		if (sk) {
 			mi->skeleton_version = sk->version;
@@ -2601,7 +2599,7 @@ void MeshStorage::skeleton_update_dependency(RID p_skeleton, DependencyTracker *
 	p_instance->update_dependency(&skeleton->dependency);
 }
 
-// Fork(Lestoroer)
+// lestoroer#gi
 uint64_t MeshStorage::mesh_get_geometry_revision(RID p_mesh) const {
 	const Mesh *mesh = mesh_owner.get_or_null(p_mesh);
 	ERR_FAIL_NULL_V(mesh, 0);

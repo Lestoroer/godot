@@ -1,4 +1,4 @@
-// Fork(Lestoroer): screen-space Surface Cache passes and per-view history.
+// lestoroer#gi
 #pragma once
 #include "surface_cache_runtime.h"
 
@@ -10,14 +10,12 @@ public:
 		Transform3D from, to;
 		AABB bounds;
 	};
-	// Пиксель проверяет каждую область. При переполнении объединяются ближайшие
-	// области с сохранением времени самого свежего изменения.
+	// Лимит ограничивает проверки на пиксель; объединение сохраняет время самого свежего изменения.
 	enum { VIEW_CHANGES = 4,
 		VIEW_MOVED = 8,
 		CHANGE_FRAMES = 120 };
-	// Seconds a view keeps a world change: screen histories react to it in time, not in frames.
 	static constexpr double CHANGE_SECONDS = 1.0;
-	// History limit of the sun's whole-world change, seconds.
+	// Предел истории изменения солнца, в секундах.
 	static constexpr float SUN_CHANGE_HISTORY = 0.03f;
 
 private:

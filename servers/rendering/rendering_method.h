@@ -343,14 +343,14 @@ public:
 
 	virtual void set_debug_draw_mode(RSE::ViewportDebugDraw p_debug_draw) = 0;
 
-	// Fork(Lestoroer): Surface Cache scenario API.
+	// lestoroer#gi
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) = 0;
 	virtual void scenario_set_surface_cache_view_callback(RID p_scenario, const Callable &p_callback) = 0;
 	virtual void scenario_set_surface_cache_buffers(RID p_scenario, const TypedArray<RID> &p_buffers) = 0;
 	virtual void instance_set_surface_cache_ids(RID p_instance, const Vector<int32_t> &p_ids) = 0;
 	virtual Array scenario_surface_cache_poll(RID p_scenario) = 0;
 	virtual Dictionary instance_get_deformed_surface(RID p_instance, int p_surface) const = 0;
-	virtual void instance_surface_cache_capture(RID p_instance, RID p_chart_instance, RID p_framebuffer, const Rect2i &p_region) = 0; // Fork(Lestoroer)
+	virtual void instance_surface_cache_capture(RID p_instance, RID p_chart_instance, RID p_framebuffer, const Rect2i &p_region) = 0;
 	virtual TypedArray<Image> bake_render_uv2(RID p_base, const TypedArray<RID> &p_material_overrides, const Size2i &p_image_size) = 0;
 	virtual PackedByteArray bake_render_area_light_atlas(const TypedArray<RID> &p_area_light_textures, const TypedArray<Rect2> &p_area_light_atlas_texture_rects, const Size2i &p_size, int p_mipmaps) = 0;
 

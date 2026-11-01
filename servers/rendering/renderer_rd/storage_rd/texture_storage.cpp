@@ -987,7 +987,7 @@ void TextureStorage::texture_free(RID p_texture) {
 		p->rd_texture_srgb = RID();
 	}
 
-	_texture_surface_deleted(p_texture); // Fork(Lestoroer)
+	_texture_surface_deleted(p_texture); // lestoroer#gi
 	texture_owner.free(p_texture);
 }
 
@@ -1634,7 +1634,7 @@ void TextureStorage::_texture_2d_update(RID p_texture, const Ref<Image> &p_image
 	Ref<Image> validated = _validate_texture_format(p_image, f);
 
 	RD::get_singleton()->texture_update(tex->rd_texture, p_layer, validated->get_data());
-	_texture_surface_changed(p_texture); // Fork(Lestoroer): notify Surface Cache materials sampling this texture.
+	_texture_surface_changed(p_texture); // lestoroer#gi
 }
 
 void TextureStorage::texture_2d_update(RID p_texture, const Ref<Image> &p_image, int p_layer) {
@@ -1677,7 +1677,7 @@ void TextureStorage::texture_3d_update(RID p_texture, const Vector<Ref<Image>> &
 	}
 
 	RD::get_singleton()->texture_update(tex->rd_texture, 0, all_data);
-	_texture_surface_changed(p_texture); // Fork(Lestoroer)
+	_texture_surface_changed(p_texture); // lestoroer#gi
 }
 
 void TextureStorage::texture_external_update(RID p_texture, int p_width, int p_height, uint64_t p_external_buffer) {
@@ -1724,7 +1724,7 @@ void TextureStorage::texture_proxy_update(RID p_texture, RID p_proxy_to) {
 		tex->rd_view.format_override = tex->rd_format_srgb;
 		tex->rd_texture_srgb = RD::get_singleton()->texture_create_shared(tex->rd_view, proxy_to->rd_texture);
 	}
-	_texture_surface_changed(p_texture); // Fork(Lestoroer)
+	_texture_surface_changed(p_texture); // lestoroer#gi
 }
 
 // Output textures in p_textures must ALL BE THE SAME SIZE
@@ -2063,7 +2063,7 @@ void TextureStorage::texture_replace(RID p_texture, RID p_by_texture) {
 		texture_proxy_update(proxies_to_redirect[i], p_texture);
 	}
 	//delete last, so proxies can be updated
-	// Fork(Lestoroer): content of p_texture changed; p_by_texture's dependency dies with it.
+	// lestoroer#gi
 	_texture_surface_changed(p_texture);
 	_texture_surface_deleted(p_by_texture);
 	texture_owner.free(p_by_texture);
@@ -5306,7 +5306,7 @@ uint32_t TextureStorage::render_target_get_color_usage_bits(bool p_msaa) {
 	}
 }
 
-// Fork(Lestoroer): per-texture content dependency for Surface Cache materials.
+// lestoroer#gi
 void TextureStorage::texture_update_surface_dependency(RID p_texture, DependencyTracker *p_tracker) {
 	Texture *texture = texture_owner.get_or_null(p_texture);
 	if (!texture) return;
