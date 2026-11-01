@@ -577,6 +577,10 @@ GI работает только на Vulkan с аппаратным ray query �
     движения и TLAS передаются типизированными массивами без RD-обёрток GDScript.
     Vulkan собирает `VkAccelerationStructureInstanceKHR` в обычной памяти и копирует целиком
     в mapped upload buffer: запись битовых полей не должна читать эту память.
+    История видов держится во времени: возраст изменений мира — секунды по часам компоновщика
+    (`get_total_time`, тот же шаг, что у TIME шейдеров и `--fixed-fps`), записи живут
+    `CHANGE_SECONDS`; пределы истории профиля заданы в секундах и каждый кадр переводятся в кадры
+    по `get_frame_delta_time`, длительность кадра передаётся шейдерам (`Parameters::time`).
     Проверки: `runtime_lifecycle`, `material_updates`, `profile_updates`, `temporal_motion`,
     `temporal_reprojection`, `temporal_jitter`, `change_areas`, `reflection_contract`,
     `world_cache_fragments`; эталонная комната и активные сценарии стенда на 600 предметов.
