@@ -1,4 +1,4 @@
-// Fork(Lestoroer): Interior Star Surface Cache runtime.
+// lestoroer#gi
 #include "register_types.h"
 
 #include "surface_cache_gather.h"

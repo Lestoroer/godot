@@ -1,0 +1,16 @@
+# Отличия форка
+
+[Правила работы](AGENTS.md). Карта Surface Cache GI — [fork/gi.md](fork/gi.md).
+Самостоятельные исправления движка — [fork/fixes.md](fork/fixes.md).
+
+| Возможность вне Surface Cache GI | Основные файлы |
+|---|---|
+| Vulkan без окна на Windows, `--offscreen` | [DisplayServerOffscreen](servers/display/display_server_offscreen.cpp), [заголовок](servers/display/display_server_offscreen.h), [Main](main/main.cpp), [Windows](platform/windows/display_server_windows.cpp), [RenderingDevice](servers/rendering/rendering_device.cpp), [заголовок](servers/rendering/rendering_device.h), [проверка регистрации](tests/servers/test_display_server_registration.cpp) |
+| Контур выделенных объектов в Forward Mobile | [Forward Mobile](servers/rendering/renderer_rd/forward_mobile/), [ToneMapper](servers/rendering/renderer_rd/effects/tone_mapper.cpp), [SkyRD](servers/rendering/renderer_rd/environment/sky.cpp), [шейдер tonemap](servers/rendering/renderer_rd/shaders/effects/tonemap_mobile.glsl), [RendererSceneRenderRD](servers/rendering/renderer_rd/renderer_scene_render_rd.cpp), [RenderDataRD](servers/rendering/renderer_rd/storage_rd/render_data_rd.h); API `instance_geometry_set_highlighted` — [RenderingServer](servers/rendering/rendering_server.cpp), [RendererSceneCull](servers/rendering/renderer_scene_cull.cpp), [RenderGeometryInstance](servers/rendering/renderer_geometry_instance.cpp) |
+| Повторный Android-экспорт без лишнего Gradle clean и копирование APK; экспорт через API редактора | [Android export](platform/android/export/export_plugin.cpp), [EditorInterface](editor/editor_interface.cpp), [заголовок](editor/editor_interface.h), [API](doc/classes/EditorInterface.xml) |
+| `draw_list_set_viewport` из GDScript для проходов теневого атласа VU | [RenderingDevice](servers/rendering/rendering_device.cpp), [API](doc/classes/RenderingDevice.xml) |
+| Отсечение треугольников без покрытия MSAA2 для теней VU | [Geometry3D](core/core_bind.cpp), [заголовок](core/core_bind.h), [API `filter_shadow_sample_coverage`](doc/classes/Geometry3D.xml) |
+| Ray query, position fetch, память BLAS и исправления Vulkan/RT | [Vulkan](drivers/vulkan/rendering_device_driver_vulkan.cpp), [заголовок](drivers/vulkan/rendering_device_driver_vulkan.h), [RenderingDevice](servers/rendering/rendering_device.cpp), [заголовок](servers/rendering/rendering_device.h), [общие типы](servers/rendering/rendering_device_commons.h), [граф зависимостей](servers/rendering/rendering_device_graph.cpp), [SPIR-V reflection](servers/rendering/rendering_shader_container.cpp), [API BLAS](doc/classes/RenderingDevice.xml), [API TLAS](doc/classes/RDAccelerationStructureInstance.xml) |
+| Лимиты subgroup из GDScript | [RenderingDevice](servers/rendering/rendering_device.cpp), [API](doc/classes/RenderingDevice.xml) |
+| Создание кешированных вариантов шейдеров на GPU по запросу | [ShaderRD](servers/rendering/renderer_rd/shader_rd.cpp), [заголовок](servers/rendering/renderer_rd/shader_rd.h) |
+| Callback `POST_TEMPORAL`: HDR после TAA/upscaling, до tonemap | [CompositorEffect](scene/resources/compositor.cpp), [заголовок](scene/resources/compositor.h), [Forward+](servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp), [RenderingServer](servers/rendering/rendering_server.cpp), [enum](servers/rendering/rendering_server_enums.h) |

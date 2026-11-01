@@ -1,4 +1,4 @@
-// Fork(Lestoroer): Surface Cache scene updates and resource ownership.
+// lestoroer#gi
 #pragma once
 #include "surface_cache_gather.h"
 
@@ -27,17 +27,16 @@ class SurfaceCacheWorldRD : public RefCounted {
 		String key;
 		int references = 0;
 		Ref<ArrayMesh> mesh;
-		Vector2i size; // Capture atlas of the surface materials: columns of squares with a one-texel border.
+		Vector2i size;
 		int square = 0, columns = 0;
 		struct Surface {
 			int triangles = 0;
-			int vertices = 0; // Source vertices of the ray geometry.
-			// Orientation of every triangle, 1 or -1, or 0: each triangle has its bit from orientation_bit on.
+			int vertices = 0;
+			// +1/-1 задают общую ориентацию; при нуле она хранится для каждого треугольника битом от orientation_bit.
 			int orientation = 0;
 			int orientation_bit = 0;
 		};
 		LocalVector<Surface> surfaces;
-		// Orientation bits of the mixed surfaces until their upload, in words from orientation_offset on.
 		TypedArray<PackedByteArray> orientation_bits;
 		int orientation_offset = 0, orientation_words = 0;
 		LocalVector<RID> vertices, indices;
@@ -99,10 +98,8 @@ class SurfaceCacheWorldRD : public RefCounted {
 	bool initialized = false, disposed = false, opacity_pending = false, opacity_requested = false;
 	uint64_t capture_serial = 0, next_generation = 0;
 	int64_t frame = 0;
-	// Nearest captures first; the camera of the last rendered view.
 	Vector3 view_origin;
 	bool has_view = false;
-	// Preparation cost measured so far, for the per-frame estimate.
 	int64_t prepared_triangles = 0;
 	double prepare_ms_per_triangle = 0.0003;
 	double cpu_submit_ms = 0;

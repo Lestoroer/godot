@@ -1,4 +1,4 @@
-// Fork(Lestoroer): Interior Star rendering runtime.
+// lestoroer#gi
 #pragma once
 #include "modules/register_module_types.h"
 void initialize_interior_surface_cache_module(ModuleInitializationLevel p_level);

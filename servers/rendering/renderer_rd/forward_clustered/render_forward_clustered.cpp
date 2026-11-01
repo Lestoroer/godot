@@ -31,7 +31,7 @@
 #include "render_forward_clustered.h"
 
 #include "core/config/project_settings.h"
-// Fork(Lestoroer)
+// lestoroer#gi
 #include "core/os/os.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
@@ -386,7 +386,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 			mesh_surface = surf->surface;
 		}
 
-		// Fork(Lestoroer): original material state, chart vertex/index streams.
+		// lestoroer#gi
 		if (p_params->capture_geometry) {
 			mesh_surface = mesh_storage->mesh_get_surface(p_params->capture_geometry->data->base, surf->surface_index);
 		}
@@ -506,7 +506,8 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 			RD::VertexFormatID vertex_format = -1;
 			bool pipeline_motion_vectors = pipeline_key.color_pass_flags & SceneShaderForwardClustered::PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS;
 			uint64_t input_mask = shader->get_vertex_input_mask(pipeline_key.version, pipeline_key.color_pass_flags, pipeline_key.ubershader);
-			RID geometry_mesh_instance = p_params->capture_geometry ? p_params->capture_geometry->mesh_instance : surf->owner->mesh_instance; // Fork(Lestoroer)
+			// lestoroer#gi
+			RID geometry_mesh_instance = p_params->capture_geometry ? p_params->capture_geometry->mesh_instance : surf->owner->mesh_instance;
 			if (geometry_mesh_instance.is_valid()) {
 				mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(geometry_mesh_instance, surf->surface_index, input_mask, pipeline_motion_vectors, emulate_point_size, vertex_array_rd, vertex_format);
 			} else {
@@ -798,7 +799,7 @@ void RenderForwardClustered::SceneState::grow_instance_buffer(RenderListType p_r
 	if (p_req_element_count > 0) {
 		if (instance_buffer[p_render_list].get_size(0u) < p_req_element_count * sizeof(SceneState::InstanceData)) {
 			instance_buffer[p_render_list].uninit();
-			uint32_t new_size = Math::nearest_power_of_2_templated(MAX(uint64_t(instance_data_min_size(p_render_list)), p_req_element_count)); // Fork(Lestoroer): minimum per list.
+			uint32_t new_size = Math::nearest_power_of_2_templated(MAX(uint64_t(instance_data_min_size(p_render_list)), p_req_element_count)); // lestoroer#gi
 			instance_buffer[p_render_list].set_storage_size(0u, new_size * sizeof(SceneState::InstanceData));
 			curr_gpu_ptr[p_render_list] = nullptr;
 		}
@@ -810,8 +811,7 @@ void RenderForwardClustered::SceneState::grow_instance_buffer(RenderListType p_r
 	}
 }
 
-// Fork(Lestoroer): p_capture_geometry added; Surface Cache capture draws chart streams for the source instance.
-void RenderForwardClustered::_fill_instance_data(RenderListType p_render_list, int *p_render_info, uint32_t p_offset, int32_t p_max_elements, bool p_update_buffer, RenderGeometryInstanceBase *p_capture_geometry) {
+void RenderForwardClustered::_fill_instance_data(RenderListType p_render_list, int *p_render_info, uint32_t p_offset, int32_t p_max_elements, bool p_update_buffer, RenderGeometryInstanceBase *p_capture_geometry) { // lestoroer#gi
 	RenderList *rl = &render_list[p_render_list];
 	uint32_t element_total = p_max_elements >= 0 ? uint32_t(p_max_elements) : rl->elements.size();
 
@@ -869,23 +869,23 @@ void RenderForwardClustered::_fill_instance_data(RenderListType p_render_list, i
 		instance_data.set_lightmap_uv_scale(inst->lightmap_uv_scale);
 
 		AABB surface_aabb = AABB(Vector3(0.0, 0.0, 0.0), Vector3(1.0, 1.0, 1.0));
-		// Fork(Lestoroer): upstream used surface->surface here and for the AABB/UV scale below.
-		// Decode the stream being drawn; material and instance state still belong to the source.
+		// lestoroer#gi: Декодируется поток геометрии захвата; материал и параметры экземпляра берутся у источника.
 		void *geometry_surface = p_capture_geometry ? RendererRD::MeshStorage::get_singleton()->mesh_get_surface(p_capture_geometry->data->base, surface->surface_index) : surface->surface;
 		uint64_t format = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_format(geometry_surface);
 		Vector4 uv_scale = Vector4(0.0, 0.0, 0.0, 0.0);
 
 		if (format & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES) {
-			surface_aabb = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_aabb(geometry_surface); // Fork(Lestoroer)
-			uv_scale = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_uv_scale(geometry_surface); // Fork(Lestoroer)
+			// lestoroer#gi
+			surface_aabb = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_aabb(geometry_surface);
+			uv_scale = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_uv_scale(geometry_surface);
 		}
 
 		instance_data.set_compressed_aabb(surface_aabb);
 		instance_data.set_uv_scale(uv_scale);
-		// Fork(Lestoroer): unused padding lane carries the Surface Cache id + 1 (0 = none).
+		// lestoroer#gi: Свободная компонента хранит id поверхности + 1; ноль означает отсутствие GI.
 		instance_data.compressed_aabb_position[3] = float(surface->surface_index < inst->surface_cache_ids.size() ? inst->surface_cache_ids[surface->surface_index] + 1 : 0);
 		if (p_capture_geometry) {
-			// Fork(Lestoroer): the other padding lane carries the first capture triangle of the surface.
+			// Биты свободной компоненты хранят номер первого треугольника захвата.
 			const uint32_t first_triangle = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_surface_cache_first_triangle(geometry_surface);
 			memcpy(&instance_data.compressed_aabb_size[3], &first_triangle, sizeof(first_triangle));
 		}
@@ -1201,10 +1201,7 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 					rl->add_element(surf);
 				}
 			} else if (p_pass_mode == PASS_MODE_DEPTH_MATERIAL) {
-				// Fork(Lestoroer): skip presentation passes during Surface Cache capture.
-				// Presentation passes (outlines, highlights) do not describe the
-				// physical surface. Keep shader/material dependencies so editing
-				// this declaration still triggers a fresh capture.
+				// lestoroer#gi: Presentation-проходы не описывают поверхность; зависимости остаются для повторного захвата при смене режима.
 				if (p_render_data->scene_data->surface_cache_capture && surf->shader->surface_cache_presentation) {
 					surf = surf->next;
 					continue;
@@ -1728,7 +1725,7 @@ void RenderForwardClustered::_process_sss(Ref<RenderSceneBuffersRD> p_render_buf
 }
 
 void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Color &p_default_bg_color) {
-	p_render_data->scene_data->surface_cache_enabled = surface_cache_buffers.size() == 2; // Fork(Lestoroer)
+	p_render_data->scene_data->surface_cache_enabled = surface_cache_buffers.size() == 2; // lestoroer#gi
 	scene_state.used_uniform_buffer_count = 0;
 
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
@@ -1754,7 +1751,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	// get info about our rendering effects
 	bool ce_needs_motion_vectors = _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_NEEDS_MOTION_VECTORS);
-	bool surface_cache_gather = !is_reflection_probe && surface_cache_buffers.size() == 2 && surface_cache_view_callback.is_valid(); // Fork(Lestoroer)
+	// lestoroer#gi
+	bool surface_cache_gather = !is_reflection_probe && surface_cache_buffers.size() == 2 && surface_cache_view_callback.is_valid();
 	bool ce_needs_normal_roughness = surface_cache_gather || _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_NEEDS_ROUGHNESS);
 	bool ce_needs_separate_specular = _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_NEEDS_SEPARATE_SPECULAR);
 
@@ -2131,14 +2129,13 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	bool ce_post_opaque_resolved_color = use_msaa && _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_ACCESS_RESOLVED_COLOR, RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_OPAQUE);
 	bool ce_pre_transparent_resolved_color = use_msaa && _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_ACCESS_RESOLVED_COLOR, RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT);
 
-	// Fork(Lestoroer): surface_cache_gather added; the gather reads resolved depth after the pre-pass.
-	bool ce_pre_opaque_resolved_depth = surface_cache_gather || (use_msaa && _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_ACCESS_RESOLVED_DEPTH, RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_OPAQUE));
+	bool ce_pre_opaque_resolved_depth = surface_cache_gather || (use_msaa && _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_ACCESS_RESOLVED_DEPTH, RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_OPAQUE)); // lestoroer#gi
 	bool ce_post_opaque_resolved_depth = use_msaa && _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_ACCESS_RESOLVED_DEPTH, RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_OPAQUE);
 	bool ce_pre_transparent_resolved_depth = use_msaa && _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_ACCESS_RESOLVED_DEPTH, RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT);
 
 	bool debug_voxelgis = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_ALBEDO || get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_LIGHTING || get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_EMISSION;
 	bool debug_sdfgi_probes = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_SDFGI_PROBES;
-	bool force_depth_pre_pass = scene_state.used_opaque_stencil || surface_cache_gather; // Fork(Lestoroer): the gather needs depth and normal before opaque.
+	bool force_depth_pre_pass = scene_state.used_opaque_stencil || surface_cache_gather; // lestoroer#gi
 	bool depth_pre_pass = (force_depth_pre_pass || bool(GLOBAL_GET_CACHED(bool, "rendering/driver/depth_prepass/enable"))) && depth_framebuffer.is_valid();
 
 	SceneShaderForwardClustered::ShaderSpecialization base_specialization = scene_shader.default_specialization;
@@ -2200,8 +2197,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 		RENDER_TIMESTAMP("Process Pre Opaque Compositor Effects");
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_OPAQUE, p_render_data);
-		// Fork(Lestoroer): Surface Cache view gather runs after depth, before opaque. The callback may
-		// return the name of the surface_cache texture that holds this viewport's gather.
+		// lestoroer#gi
 		surface_cache_gather_texture = SNAME("gather");
 		if (surface_cache_gather) {
 			Array args = { p_render_data };
@@ -3059,7 +3055,7 @@ void RenderForwardClustered::_render_material(const Transform3D &p_cam_transform
 	RD::get_singleton()->draw_command_end_label();
 }
 
-// Fork(Lestoroer): source material is rasterized on chart streams, entirely on GPU.
+// lestoroer#gi
 void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region) {
 	const bool profiling = OS::get_singleton()->get_environment("SURFACE_CACHE_PROFILE_STARTUP") == "1";
 	uint64_t started = profiling ? OS::get_singleton()->get_ticks_usec() : 0, stage = started;
@@ -3125,8 +3121,6 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 		params.capture_geometry = chart;
 		Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
 		RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, capture_pass == 0 ? RD::DRAW_CLEAR_ALL : RD::DRAW_DEFAULT_ALL, clear, 0.0f, 0, p_region);
-		// Fork(Lestoroer): vertex shader expands triangle coverage; material samples
-		// are analytically reconstructed inside the original triangle per texel.
 		params.force_wireframe = false;
 		params.uv_offset = Vector2();
 		stamp("draw_setup");
@@ -3548,7 +3542,7 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		if (scene_state.instance_buffer[p_render_list].get_size(0u) == 0u) {
 			// Any buffer will do since it's not used, so just create one.
 			// We can't use scene_shader.default_vec4_xform_buffer because it's not dynamic.
-			scene_state.instance_buffer[p_render_list].set_storage_size(0u, instance_data_min_size(p_render_list) * sizeof(SceneState::InstanceData)); // Fork(Lestoroer): minimum per list.
+			scene_state.instance_buffer[p_render_list].set_storage_size(0u, instance_data_min_size(p_render_list) * sizeof(SceneState::InstanceData)); // lestoroer#gi
 			scene_state.instance_buffer[p_render_list].prepare_for_upload();
 		}
 		RID instance_buffer = scene_state.instance_buffer[p_render_list]._get(0u);
@@ -3888,8 +3882,7 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		uniforms.push_back(u);
 	}
 
-	// Fork(Lestoroer): Surface Cache bindings 37-43; defaults keep the layout valid without GI.
-	// Buffers: lookup records and rooms of the world cache.
+	// lestoroer#gi: Пустые ресурсы сохраняют единый layout дескрипторов в вариантах без GI.
 	for (int i = 0; i < 2; i++) {
 		RD::Uniform u;
 		u.binding = 37 + i;
@@ -3898,15 +3891,13 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		uniforms.push_back(u);
 	}
 	{
-		// Fork(Lestoroer): corners of the chart a Surface Cache capture draws.
 		RD::Uniform u;
 		u.binding = 39;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		u.append_id(p_render_list == RENDER_LIST_SURFACE_CACHE_CAPTURE && surface_cache_capture_corners.is_valid() ? surface_cache_capture_corners : scene_shader.default_vec4_xform_buffer);
 		uniforms.push_back(u);
 	}
-	// Fork(Lestoroer): viewport-owned diffuse gather and reflection, produced after depth. Without them
-	// the transparent default has no owner depth, and fragments read the world cache.
+	// Нулевая alpha текстуры по умолчанию исключает экранный GI: фрагмент читает мировой кеш.
 	for (int i = 0; i < 2; i++) {
 		RD::Uniform u;
 		u.binding = i == 0 ? 41 : 43;
@@ -4130,7 +4121,7 @@ RID RenderForwardClustered::_setup_sdfgi_render_pass_uniform_set(RID p_albedo_te
 		ERR_FAIL_COND_V(scene_shader.default_shader_sdfgi_rd.is_null(), RID());
 	}
 
-	// Fork(Lestoroer): unused Surface Cache bindings still belong to the layout.
+	// lestoroer#gi: Даже неиспользуемые дескрипторы GI должны соответствовать общему layout.
 	for (int i = 0; i < 4; i++) {
 		RD::Uniform u;
 		u.binding = 37 + i;

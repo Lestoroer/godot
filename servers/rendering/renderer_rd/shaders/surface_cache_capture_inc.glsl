@@ -1,4 +1,4 @@
-// Fork(Lestoroer): physical atlas samples. Padding never becomes a surface.
+// lestoroer#gi
 vec2 surface_cache_offset = vec2(0.0);
 bool surface_cache_covered = true;
 vec3 surface_cache_bary = vec3(0.0);
@@ -11,8 +11,7 @@ mat3 surface_cache_sample(mat3 v) { return mat3(surface_cache_sample(v[0]), surf
 mat4 surface_cache_sample(mat4 v) { return mat4(surface_cache_sample(v[0]), surface_cache_sample(v[1]), surface_cache_sample(v[2]), surface_cache_sample(v[3])); }
 
 #ifdef MODE_RENDER_MATERIAL
-// Error-free transforms keep edge-only contacts out of the capture. The filter
-// handles ordinary cells cheaply; ambiguous signs use a short exact expansion.
+// Точный знак отличает пересечение с площадью от касания ребром или точкой.
 void surface_cache_two_diff(float a, float b, out float x, out float y) {
 	precise float difference = a - b;
 	precise float b_virtual = a - difference;
@@ -62,8 +61,7 @@ int surface_cache_cross_differences_sign(float dx_hi, float dx_lo, float dy_hi, 
 	precise float left = dx_hi * py_hi;
 	precise float right = dy_hi * px_hi;
 	precise float determinant = left - right;
-	// Include coordinate-difference tails in the filter bound. Returning an
-	// uncertain sign is safe; it only costs the exact fallback below.
+	// Хвосты разностей входят в границу ошибки; сомнительный знак требует точного вычисления.
 	precise float tails = abs(dx_lo * py_hi) + abs(dx_hi * py_lo) + abs(dx_lo * py_lo)
 			+ abs(dy_lo * px_hi) + abs(dy_hi * px_lo) + abs(dy_lo * px_lo);
 	precise float error_bound = 5.0e-7 * (abs(left) + abs(right) + tails) + tails;
@@ -104,8 +102,7 @@ int surface_cache_orient_difference_sign(vec2 edge_a, vec2 edge_b, vec2 point, v
 	return surface_cache_cross_differences_sign(dx_hi, dx_lo, dy_hi, dy_lo, px_hi, px_lo, py_hi, py_lo);
 }
 
-// Strict SAT in original atlas coordinates. Integer cell corners are exact;
-// requiring strict overlap on every polygon axis excludes point/edge contacts.
+// Строгое перекрытие исключает касания ребром или точкой.
 bool surface_cache_triangle_cell_covered(vec2 a, vec2 b, vec2 c, vec2 cell_min) {
 	vec2 cell_max = cell_min + vec2(1.0);
 	if (max(a.x, max(b.x, c.x)) <= cell_min.x || min(a.x, min(b.x, c.x)) >= cell_max.x
@@ -129,8 +126,7 @@ bool surface_cache_triangle_cell_covered(vec2 a, vec2 b, vec2 c, vec2 cell_min) 
 	return true;
 }
 
-// Clipping coordinates are relative to the selected cell center to avoid
-// cancellation in large atlases.
+// Координаты относительно центра ячейки уменьшают потерю точности в больших атласах.
 bool surface_cache_sample_point(vec2 a, vec2 b, vec2 c, out vec2 point) {
 	vec2 polygon[8];
 	polygon[0] = a; polygon[1] = b; polygon[2] = c;
@@ -157,8 +153,7 @@ bool surface_cache_sample_point(vec2 a, vec2 b, vec2 c, out vec2 point) {
 	}
 	float area = 0.0;
 	vec2 center = vec2(0.0), anchor = polygon[0];
-	// Triangle fan avoids subtracting nearly equal shoelace terms for a
-	// tiny intersection at a texel corner. All fan areas share the same sign.
+	// Веер треугольников не вычитает почти равные площади у малого пересечения в углу текселя.
 	for (int i = 1; i + 1 < count; i++) {
 		vec2 p = polygon[i] - anchor, q = polygon[i + 1] - anchor;
 		float weight = p.x * q.y - p.y * q.x;
@@ -167,8 +162,7 @@ bool surface_cache_sample_point(vec2 a, vec2 b, vec2 c, out vec2 point) {
 	}
 	if (area == 0.0) { point = vec2(0); return false; }
 	point = anchor + center / (3.0 * area);
-	// A positive but unrepresentable cell has no physical row. Sampling uses
-	// a neighbouring valid cell of this same primitive, never its remote centroid.
+	// Непредставимое пересечение пропускается: выборка использует соседнюю ячейку того же примитива.
 	if (any(lessThanEqual(point, vec2(-0.5))) || any(greaterThanEqual(point, vec2(0.5)))) return false;
 	return true;
 }

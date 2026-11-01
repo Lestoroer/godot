@@ -1,13 +1,10 @@
-// Fork(Lestoroer): Interior Star Surface Cache runtime.
+// lestoroer#gi
 #pragma once
 
 #include "core/object/object.h"
 #include "scene/resources/mesh.h"
 #include "servers/rendering/rendering_server_types.h"
 
-// Preparation of a mesh for the Surface Cache: the capture mesh of its surface materials, the ray
-// geometry of its BLAS and the orientation of its triangles (CacheSurface of the game's Surface Cache
-// cache_types). Every surface has one side (front only) or two; the caller takes them from its materials.
 class SurfaceCacheGeometry : public Object {
 	GDCLASS(SurfaceCacheGeometry, Object);
 
@@ -19,6 +16,5 @@ protected:
 public:
 	static Dictionary prepare(const Ref<Mesh> &p_mesh, const Vector<int32_t> &p_surface_sides);
 	static Dictionary prepare_from_rid(RID p_mesh, const Vector<int32_t> &p_surface_sides);
-	// The world's frame-local readback batch.
 	static Dictionary prepare_from_surfaces(RID p_mesh, const Vector<RenderingServerTypes::SurfaceData> &p_source, const Vector<int32_t> &p_surface_sides);
 };

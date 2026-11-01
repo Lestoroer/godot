@@ -80,7 +80,7 @@ ShaderTypes::ShaderTypes() {
 
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["TIME"] = constt(ShaderLanguage::TYPE_FLOAT);
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["EXPOSURE"] = constt(ShaderLanguage::TYPE_FLOAT);
-	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["IN_SURFACE_CACHE_PASS"] = constt(ShaderLanguage::TYPE_BOOL); // Fork(Lestoroer)
+	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["IN_SURFACE_CACHE_PASS"] = constt(ShaderLanguage::TYPE_BOOL); // lestoroer#gi
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["IN_SHADOW_PASS"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["PI"] = constvt(ShaderLanguage::TYPE_FLOAT, { pi_scalar });
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["TAU"] = constvt(ShaderLanguage::TYPE_FLOAT, { tau_scalar });
@@ -194,9 +194,10 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["FOG"] = ShaderLanguage::TYPE_VEC4; // TODO consider adding to light shader
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RADIANCE"] = ShaderLanguage::TYPE_VEC4;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["IRRADIANCE"] = ShaderLanguage::TYPE_VEC4;
+	// lestoroer#gi
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SURFACE_CACHE_IRRADIANCE"] = constt(ShaderLanguage::TYPE_VEC4);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SURFACE_CACHE_TRANSMISSION"] = ShaderLanguage::TYPE_FLOAT;
-	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SURFACE_CACHE_GATHER_USED"] = constt(ShaderLanguage::TYPE_BOOL); // Fork(Lestoroer)
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SURFACE_CACHE_GATHER_USED"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].can_discard = true;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].main_function = true;
 
@@ -246,7 +247,7 @@ ShaderTypes::ShaderTypes() {
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("sss_mode_skin") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("cull"), "back", "front", "disabled" });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("unshaded") });
-		// Fork(Lestoroer): Surface Cache render modes.
+		// lestoroer#gi
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("surface_cache_global_invariant") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("surface_cache_presentation") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("wireframe") });

@@ -206,7 +206,7 @@ public:
 	virtual void mesh_surface_make_offsets_from_format(uint64_t p_format, int p_vertex_len, int p_index_len, uint32_t *r_offsets, uint32_t &r_vertex_element_size, uint32_t &r_normal_element_size, uint32_t &r_attrib_element_size, uint32_t &r_skin_element_size) const;
 	virtual Error mesh_create_surface_data_from_arrays(RenderingServerTypes::SurfaceData *r_surface_data, RSE::PrimitiveType p_primitive, const Array &p_arrays, const Array &p_blend_shapes = Array(), const Dictionary &p_lods = Dictionary(), uint64_t p_compress_format = 0);
 	Array mesh_create_arrays_from_surface_data(const RenderingServerTypes::SurfaceData &p_data) const;
-	TypedArray<Array> mesh_create_blend_shape_arrays_from_surface_data(const RenderingServerTypes::SurfaceData &p_data, int p_shape_count) const; // Fork(Lestoroer)
+	TypedArray<Array> mesh_create_blend_shape_arrays_from_surface_data(const RenderingServerTypes::SurfaceData &p_data, int p_shape_count) const; // lestoroer#gi
 	Array mesh_surface_get_arrays(RID p_mesh, int p_surface) const;
 	TypedArray<Array> mesh_surface_get_blend_shape_arrays(RID p_mesh, int p_surface) const;
 	Dictionary mesh_surface_get_lods(RID p_mesh, int p_surface) const;
@@ -220,7 +220,7 @@ public:
 	virtual RSE::BlendShapeMode mesh_get_blend_shape_mode(RID p_mesh) const = 0;
 
 	virtual void mesh_surface_update_vertex_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) = 0;
-	virtual void mesh_set_surface_cache_corners(RID p_mesh, const Vector<Vector2> &p_corners) = 0; // Fork(Lestoroer)
+	virtual void mesh_set_surface_cache_corners(RID p_mesh, const Vector<Vector2> &p_corners) = 0; // lestoroer#gi
 	virtual void mesh_surface_update_attribute_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) = 0;
 	virtual void mesh_surface_update_skin_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) = 0;
 	virtual void mesh_surface_update_index_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) = 0;
@@ -775,7 +775,7 @@ public:
 
 	/* BAKE API */
 
-	// Fork(Lestoroer): GPU-only capture, source material state and remapped chart geometry.
+	// lestoroer#gi
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) = 0;
 	virtual void scenario_set_surface_cache_view_callback(RID p_scenario, const Callable &p_callback) = 0;
 	virtual void scenario_set_surface_cache_buffers(RID p_scenario, const TypedArray<RID> &p_buffers) = 0;

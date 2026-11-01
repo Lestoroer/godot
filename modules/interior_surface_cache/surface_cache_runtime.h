@@ -1,4 +1,4 @@
-// Fork(Lestoroer): native runtime support for Interior Star Surface Cache.
+// lestoroer#gi
 #pragma once
 
 #include "core/io/resource_loader.h"
@@ -157,7 +157,6 @@ struct Ranges {
 			++at;
 		}
 		free.insert(at, Vector2i(p_start, p_size));
-		// The list is sorted and coalesced: only the inserted range's neighbors can join it.
 		if (at > 0) {
 			ERR_FAIL_COND(free[at - 1].x + free[at - 1].y > free[at].x);
 			if (free[at - 1].x + free[at - 1].y == free[at].x) {
@@ -178,4 +177,4 @@ struct Ranges {
 		}
 	}
 };
-} //namespace SurfaceCache
+}

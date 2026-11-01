@@ -727,7 +727,8 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					r_gen_code.stage_globals[STAGE_FRAGMENT] += "layout(location=" + itos(index) + ") ";
 				}
 				r_gen_code.stage_globals[STAGE_VERTEX] += interp_mode + "out " + vcode;
-				if (p_default_actions.surface_cache_sampling) { // Fork(Lestoroer)
+				// lestoroer#gi
+				if (p_default_actions.surface_cache_sampling) {
 					const String name = _mkid(varying_name);
 					const String input_name = name + "_cache_input";
 					r_gen_code.stage_globals[STAGE_FRAGMENT] += interp_mode + "in " + vcode.replace(name, input_name);

@@ -345,7 +345,7 @@ public:
 		uint64_t used_viewport_visibility_bits;
 		HashMap<RID, uint64_t> viewport_visibility_masks;
 
-		// Fork(Lestoroer): one opt-in Surface Cache controller per world.
+		// lestoroer#gi
 		Callable surface_cache_callback;
 		Callable surface_cache_view_callback;
 		Vector<RID> surface_cache_buffers;
@@ -378,7 +378,7 @@ public:
 	virtual RID scenario_allocate();
 	virtual void scenario_initialize(RID p_rid);
 
-	// Fork(Lestoroer): Surface Cache scenario API.
+	// lestoroer#gi
 	void _surface_cache_queue(Instance *p_instance, uint32_t p_flags) const;
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) override;
 	virtual void scenario_set_surface_cache_view_callback(RID p_scenario, const Callable &p_callback) override;
@@ -497,7 +497,7 @@ public:
 		uint64_t version; // changes to this, and changes to base increase version
 
 		InstanceBaseData *base_data = nullptr;
-		Vector<int32_t> surface_cache_ids; // Fork(Lestoroer)
+		Vector<int32_t> surface_cache_ids; // lestoroer#gi
 
 		SelfList<InstancePair>::List pairs;
 		uint64_t pair_check;
@@ -506,12 +506,13 @@ public:
 
 		static void dependency_changed(Dependency::DependencyChangedNotification p_notification, DependencyTracker *tracker) {
 			Instance *instance = (Instance *)tracker->userdata;
-			// Fork(Lestoroer): skeleton changes deform Surface Cache geometry.
+			// lestoroer#gi
 			if (p_notification == Dependency::DEPENDENCY_CHANGED_SKELETON_DATA || p_notification == Dependency::DEPENDENCY_CHANGED_SKELETON_BONES) {
 				singleton->_surface_cache_queue(instance, 8);
 			}
 			switch (p_notification) {
-				case Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT: { // Fork(Lestoroer)
+				// lestoroer#gi
+				case Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT: {
 					singleton->_surface_cache_queue(instance, 4);
 				} break;
 				case Dependency::DEPENDENCY_CHANGED_SKELETON_DATA:
@@ -640,7 +641,7 @@ public:
 	};
 
 	mutable SelfList<Instance>::List _instance_update_list;
-	void _instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies = false, bool p_surface_cache = true) const; // Fork(Lestoroer): p_surface_cache
+	void _instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies = false, bool p_surface_cache = true) const; // lestoroer#gi
 
 	struct InstanceGeometryData : public InstanceBaseData {
 		RenderGeometryInstance *geometry_instance = nullptr;
@@ -1191,7 +1192,7 @@ public:
 	void render_particle_colliders();
 	virtual void render_probes();
 
-	void instance_surface_cache_capture(RID p_instance, RID p_chart_instance, RID p_framebuffer, const Rect2i &p_region); // Fork(Lestoroer)
+	void instance_surface_cache_capture(RID p_instance, RID p_chart_instance, RID p_framebuffer, const Rect2i &p_region); // lestoroer#gi
 	TypedArray<Image> bake_render_uv2(RID p_base, const TypedArray<RID> &p_material_overrides, const Size2i &p_image_size);
 	PackedByteArray bake_render_area_light_atlas(const TypedArray<RID> &p_area_light_textures, const TypedArray<Rect2> &p_area_light_atlas_texture_rects, const Size2i &p_size, int p_mipmaps);
 

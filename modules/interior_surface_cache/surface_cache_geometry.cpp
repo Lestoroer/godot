@@ -1,4 +1,4 @@
-// Fork(Lestoroer): Interior Star Surface Cache runtime.
+// lestoroer#gi
 #include "surface_cache_geometry.h"
 
 #include "core/object/class_db.h"
@@ -10,17 +10,12 @@ void SurfaceCacheGeometry::_bind_methods() {
 	ClassDB::bind_static_method("SurfaceCacheGeometry", D_METHOD("prepare_from_rid", "mesh", "surface_sides"), &SurfaceCacheGeometry::prepare_from_rid);
 }
 
-// Material capture of a surface: one SURFACE_CAPTURE_SIZE square of the instance atlas. A triangle is
-// projected along its dominant normal axis and scaled to the square by the bounds of its surface; the
-// capture averages the square into the surface material (material_resolve of the game). One empty texel
-// separates squares: the capture widens a triangle by one pixel for conservative raster.
 static constexpr int SURFACE_CAPTURE_SIZE = 16;
+// Граница разделяет поверхности: консервативный захват расширяет треугольники на пиксель.
 static constexpr int SURFACE_CAPTURE_BORDER = 1;
 static constexpr int SURFACE_CAPTURE_CELL = SURFACE_CAPTURE_SIZE + 2 * SURFACE_CAPTURE_BORDER;
 
-// Surface Cache capture triangles own their three corners. Each vertex stream is copied element by
-// element to the corners in its stored encoding, compression included, so the capture renders
-// exactly the source attributes.
+// Потоки копируются в исходной кодировке, включая сжатие, чтобы захват сохранил точные атрибуты.
 static void _remap_stream(const uint8_t *p_source, uint32_t p_element_size, const Vector<int> &p_remap, uint8_t *r_target) {
 	const int *remap = p_remap.ptr();
 	for (int corner = 0; corner < p_remap.size(); corner++) {
@@ -28,7 +23,7 @@ static void _remap_stream(const uint8_t *p_source, uint32_t p_element_size, cons
 	}
 }
 
-// Positions followed by normals and tangents, as Godot stores vertex_data and every blend shape.
+// В vertex_data и blend shapes позиции предшествуют нормалям и тангентам.
 static Vector<uint8_t> _remap_vertices(const uint8_t *p_source, uint32_t p_vertex_size, uint32_t p_normal_size, uint32_t p_vertex_count, const Vector<int> &p_remap) {
 	Vector<uint8_t> result;
 	result.resize(p_remap.size() * (p_vertex_size + p_normal_size));
@@ -63,8 +58,6 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	ERR_FAIL_COND_V(p_source && p_source->size() != surface_count, Dictionary());
 	const RID mesh_rid = p_resource ? p_resource->get_rid() : p_mesh;
 	const int shape_count = server->mesh_get_blend_shape_count(mesh_rid);
-	// Layout and ray records decode only positions, normals and indices; the capture copies every
-	// stream as stored.
 	const uint64_t attribute_formats = RSE::ARRAY_FORMAT_COLOR | RSE::ARRAY_FORMAT_TEX_UV | RSE::ARRAY_FORMAT_TEX_UV2 | RSE::ARRAY_FORMAT_CUSTOM0 | RSE::ARRAY_FORMAT_CUSTOM1 | RSE::ARRAY_FORMAT_CUSTOM2 | RSE::ARRAY_FORMAT_CUSTOM3 | RSE::ARRAY_FORMAT_BONES | RSE::ARRAY_FORMAT_WEIGHTS;
 	LocalVector<RenderingServerTypes::SurfaceData> sources;
 	LocalVector<Vector<Vector3>> positions;
@@ -101,19 +94,16 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	}
 	operation_ms["mesh_read"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
 
-	// Surface squares fill the rows of a near-square instance atlas.
 	stage_start = OS::get_singleton()->get_ticks_usec();
 	const int columns = int(Math::ceil(Math::sqrt(double(surface_count))));
 	const Size2i atlas_size(columns * SURFACE_CAPTURE_CELL, ((surface_count + columns - 1) / columns) * SURFACE_CAPTURE_CELL);
 	operation_ms["mesh_layout"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
 
-	// Orientations and capture corners in one pass over the triangles.
 	stage_start = OS::get_singleton()->get_ticks_usec();
 	Array orientation_data;
 	Array vertex_data;
 	Array index_data;
 	Array result_surfaces;
-	// Capture corners of every triangle, surfaces in order: the capture reads them by triangle.
 	int corner_total = 0;
 	for (int surface = 0; surface < surface_count; surface++) {
 		corner_total += indices[surface].size();
@@ -133,8 +123,7 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 		for (int i = 1; i < positions[surface].size(); i++) {
 			bounds.expand_to(position[i]);
 		}
-		// Godot's authored winding is clockwise; vertex normals establish the semantic front: bit 1 — the
-		// front is along the winding normal. Surfaces of one orientation keep only its sign.
+		// Нормали вершин задают лицевую сторону; бит 1 означает совпадение с нормалью winding.
 		const int triangle_count = corner_count / 3;
 		Vector<uint32_t> bits;
 		bits.resize((triangle_count + 31) / 32);
@@ -167,7 +156,6 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 			memcpy(orientation_bits.ptrw(), bits.ptr(), orientation_bits.size());
 		}
 		orientation_data.push_back(orientation_bits);
-		// Ray geometry: the source vertices and triangles; ray hits read the corners back from the BLAS.
 		Vector<uint8_t> ray_vertices;
 		ray_vertices.resize(positions[surface].size() * 12);
 		memcpy(ray_vertices.ptrw(), positions[surface].ptr(), ray_vertices.size());
@@ -183,7 +171,6 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	}
 	operation_ms["mesh_pack"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
 
-	// Capture mesh: the triangle corners take the source vertex streams through the index buffer.
 	stage_start = OS::get_singleton()->get_ticks_usec();
 	Ref<ArrayMesh> capture_mesh;
 	capture_mesh.instantiate();
@@ -219,7 +206,7 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 				shapes.append_array(_remap_vertices(source.blend_shape_data.ptr() + shape_bytes * shape, shape_vertex_size, shape_normal_size, source.vertex_count, remap));
 			}
 		}
-		// Every triangle owns its corners; an identity index buffer is redundant.
+		// После раздельного хранения углов индексный буфер был бы тождественным.
 		capture_mesh->add_surface(source.format & ~uint64_t(RSE::ARRAY_FORMAT_INDEX), Mesh::PRIMITIVE_TRIANGLES,
 				_remap_vertices(source.vertex_data.ptr(), vertex_size, normal_size, source.vertex_count, remap),
 				attributes, skin, corner_count, Vector<uint8_t>(), 0, source.aabb, shapes, source.bone_aabbs,

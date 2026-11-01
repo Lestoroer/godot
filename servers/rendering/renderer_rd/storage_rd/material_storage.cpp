@@ -866,7 +866,7 @@ MaterialStorage::MaterialData::~MaterialData() {
 
 void MaterialStorage::MaterialData::update_textures(const HashMap<StringName, Variant> &p_parameters, const HashMap<StringName, HashMap<int, RID>> &p_default_textures, const Vector<ShaderCompiler::GeneratedCode::Texture> &p_texture_uniforms, RID *p_textures, bool p_use_linear_color, bool p_3d_material) {
 	MaterialStorage *material_storage = MaterialStorage::get_singleton();
-	// Fork(Lestoroer): texture content changes notify this material's Surface Cache dependency.
+	// lestoroer#gi
 	surface_texture_tracker.userdata = this;
 	surface_texture_tracker.changed_callback = surface_texture_changed;
 	surface_texture_tracker.deleted_callback = surface_texture_deleted;
@@ -987,7 +987,7 @@ void MaterialStorage::MaterialData::update_textures(const HashMap<StringName, Va
 				RID rd_texture;
 
 				if (tex) {
-					TextureStorage::get_singleton()->texture_update_surface_dependency(textures[j], &surface_texture_tracker); // Fork(Lestoroer)
+					TextureStorage::get_singleton()->texture_update_surface_dependency(textures[j], &surface_texture_tracker); // lestoroer#gi
 					rd_texture = (srgb && tex->rd_texture_srgb.is_valid()) ? tex->rd_texture_srgb : tex->rd_texture;
 #ifdef TOOLS_ENABLED
 					if (tex->detect_3d_callback && p_3d_material) {
@@ -1053,7 +1053,7 @@ void MaterialStorage::MaterialData::update_textures(const HashMap<StringName, Va
 			}
 		}
 	}
-	surface_texture_tracker.update_end(); // Fork(Lestoroer)
+	surface_texture_tracker.update_end(); // lestoroer#gi
 }
 
 RID MaterialStorage::MaterialData::get_default_texture_id(ShaderLanguage::DataType p_type, ShaderLanguage::ShaderNode::Uniform::Hint p_hint) {
@@ -1866,7 +1866,7 @@ Vector<StringName> MaterialStorage::global_shader_parameter_get_list() const {
 void MaterialStorage::global_shader_parameter_set(const StringName &p_name, const Variant &p_value) {
 	ERR_FAIL_COND(!global_shader_uniforms.variables.has(p_name));
 	GlobalShaderUniforms::Variable &gv = global_shader_uniforms.variables[p_name];
-	if (gv.value == p_value) return; // Fork(Lestoroer): an unchanged value must not invalidate Surface Cache captures.
+	if (gv.value == p_value) return; // lestoroer#gi: Повторная запись того же значения не должна инвалидировать захват.
 	gv.value = p_value;
 	if (gv.override.get_type() == Variant::NIL) {
 		if (gv.buffer_index >= 0) {
@@ -1883,7 +1883,7 @@ void MaterialStorage::global_shader_parameter_set(const StringName &p_name, cons
 			}
 		}
 	}
-	if (gv.override.get_type() == Variant::NIL) gv.surface_dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT); // Fork(Lestoroer)
+	if (gv.override.get_type() == Variant::NIL) gv.surface_dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT); // lestoroer#gi
 }
 
 void MaterialStorage::global_shader_parameter_set_override(const StringName &p_name, const Variant &p_value) {
@@ -1895,7 +1895,7 @@ void MaterialStorage::global_shader_parameter_set_override(const StringName &p_n
 
 	GlobalShaderUniforms::Variable &gv = global_shader_uniforms.variables[p_name];
 
-	if (gv.override == p_value) return; // Fork(Lestoroer)
+	if (gv.override == p_value) return; // lestoroer#gi
 	gv.override = p_value;
 
 	if (gv.buffer_index >= 0) {
@@ -1916,7 +1916,7 @@ void MaterialStorage::global_shader_parameter_set_override(const StringName &p_n
 			material_storage->_material_queue_update(material, false, true);
 		}
 	}
-	gv.surface_dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT); // Fork(Lestoroer)
+	gv.surface_dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT); // lestoroer#gi
 }
 
 Variant MaterialStorage::global_shader_parameter_get(const StringName &p_name) const {
@@ -2552,7 +2552,7 @@ void MaterialStorage::material_set_param(RID p_material, const StringName &p_par
 	Material *material = material_owner.get_or_null(p_material);
 	ERR_FAIL_NULL(material);
 
-	// Fork(Lestoroer): an unchanged value must not invalidate Surface Cache captures.
+	// lestoroer#gi: Повторная запись того же значения не должна инвалидировать захват.
 	const Variant *previous = material->params.getptr(p_param);
 	if ((previous && *previous == p_value) || (!previous && p_value.get_type() == Variant::NIL)) {
 		return;
@@ -2568,7 +2568,7 @@ void MaterialStorage::material_set_param(RID p_material, const StringName &p_par
 	if (material->shader && material->shader->data) { //shader is valid
 		bool is_texture = material->shader->data->is_parameter_texture(p_param);
 		_material_queue_update(material, !is_texture, is_texture);
-		material->dependency.changed_notify(is_texture ? Dependency::DEPENDENCY_CHANGED_MATERIAL : Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT); // Fork(Lestoroer)
+		material->dependency.changed_notify(is_texture ? Dependency::DEPENDENCY_CHANGED_MATERIAL : Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT); // lestoroer#gi
 	} else {
 		_material_queue_update(material, true, true);
 	}
@@ -2670,9 +2670,7 @@ void MaterialStorage::material_update_dependency(RID p_material, DependencyTrack
 	Material *material = material_owner.get_or_null(p_material);
 	ERR_FAIL_NULL(material);
 	p_instance->update_dependency(&material->dependency);
-	// Fork(Lestoroer): Surface Cache tracks the global uniforms a material reads.
-	// Opt-in author contract: every material/geometry capture output is invariant
-	// to global inputs. Other material, texture and instance dependencies remain.
+	// lestoroer#gi: Режим global_invariant обещает независимость захвата от globals; остальные зависимости сохраняются.
 	if (material->shader && material->shader->data && !material->shader->data->is_surface_cache_global_invariant() && !material->shader->data->is_surface_cache_presentation()) {
 		for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &uniform : material->shader->data->uniforms) {
 			if (uniform.value.scope != ShaderLanguage::ShaderNode::Uniform::SCOPE_GLOBAL) {
@@ -2794,7 +2792,7 @@ MaterialStorage::MaterialDataRequestFunction MaterialStorage::material_get_data_
 	return material_data_request_func[p_shader_type];
 }
 
-// Fork(Lestoroer): Surface Cache material queries and texture-content notifications.
+// lestoroer#gi
 bool MaterialStorage::material_has_shader_displacement(RID p_material) {
 	Material *material = material_owner.get_or_null(p_material);
 	if (!material) return false;
@@ -2802,15 +2800,12 @@ bool MaterialStorage::material_has_shader_displacement(RID p_material) {
 			(material->next_pass.is_valid() && material_has_shader_displacement(material->next_pass));
 }
 
-// Fork(Lestoroer): every pass only presents the surface (outline, highlight); capture skips it.
 bool MaterialStorage::material_is_surface_cache_presentation(RID p_material) {
 	Material *material = material_owner.get_or_null(p_material);
 	if (!material || !material->shader || !material->shader->data || !material->shader->data->is_surface_cache_presentation()) return false;
 	return material->next_pass.is_null() || material_is_surface_cache_presentation(material->next_pass);
 }
 
-// Fork(Lestoroer): the back side matters to the GI only where a captured pass draws it. An unknown
-// material keeps both sides.
 bool MaterialStorage::material_is_surface_cache_two_sided(RID p_material) {
 	Material *material = material_owner.get_or_null(p_material);
 	if (!material || !material->shader || !material->shader->data) return true;

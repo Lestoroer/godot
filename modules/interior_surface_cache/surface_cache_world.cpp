@@ -1,4 +1,4 @@
-// Fork(Lestoroer): native scene update loop for Interior Star Surface Cache.
+// lestoroer#gi
 #include "surface_cache_world.h"
 #include "surface_cache_geometry.h"
 
@@ -13,21 +13,16 @@
 using namespace SurfaceCache;
 bool SurfaceCacheWorldRD::measure_gpu_time = false;
 double SurfaceCacheWorldRD::gpu_time_ms = 0;
-// "materials" holds one SurfaceMaterial of the game (cache_types) per surface, "orientations" the triangle
-// orientation bits of the surfaces of mixed orientation.
 static const char *buffer_names[] = { "surfaces", "orientations", "materials", "lights", "material_changes", "surface_flags" };
 static constexpr uint32_t MATERIAL_BYTES = 64, SURFACE_BYTES = 32, LIGHT_BYTES = 64;
 static constexpr uint32_t PAGE_BYTES = 2097152;
-// Preparation of new geometry per frame. While the scene loads the frame may wait longer, a smaller
-// budget would only stretch the wait; afterwards it must not disturb the game.
+// При загрузке допустим больший бюджет: меньший лишь продлевает ожидание; после загрузки работа не должна задерживать игру.
 static constexpr double STARTUP_BUDGET_MS = 33.0, UPDATE_BUDGET_MS = 4.0;
-// Material captures per frame once the world is ready: each one draws and resolves on the GPU.
 static constexpr int UPDATE_CAPTURE_LIMIT = 4;
 static uint32_t round_up(uint32_t value, uint32_t step) {
 	return ((value + step - 1) / step) * step;
 }
-// Small buffers keep 16-byte sizes: growth by half again would otherwise reach sizes the buffer clear
-// of the new part rejects.
+// Размер кратен 16 байтам: иначе очистка добавленной части буфера отвергает диапазон.
 static uint32_t page_size(uint32_t size) {
 	return round_up(size, size > PAGE_BYTES ? PAGE_BYTES : 16);
 }
@@ -141,10 +136,7 @@ void SurfaceCacheWorldRD::update_world() {
 	const int capture_limit = frame > 0 ? UPDATE_CAPTURE_LIMIT : INT_MAX;
 	const double budget_ms = frame > 0 ? UPDATE_BUDGET_MS : STARTUP_BUDGET_MS;
 	Array changes = take_changes();
-	// Captures nearest to the view come first. New geometry is taken while its estimated preparation
-	// fits the budget, at least one per frame; the rest waits. The estimate lets the batch read its
-	// sources together before anything is uploaded (Fork(Lestoroer)): a read in between would wait
-	// for that upload on the GPU.
+	// Все readback выполняются до upload, чтобы чтение не ждало только что отправленных данных.
 	struct Pending {
 		Dictionary change;
 		real_t distance;
@@ -387,7 +379,6 @@ SurfaceCacheWorldRD::ChangeKind SurfaceCacheWorldRD::change_kind(const Dictionar
 	if (state.base != RID(change["base"]) || state.mesh_revision != int64_t(change["mesh_revision"]) || state.sides != PackedInt32Array(change["surface_sides"])) {
 		return REPLACE;
 	}
-	// A transform or a pose changes only the triangles: surface materials depend on neither.
 	int bits = change["changes"];
 	if ((bits & ~10) == 0 && state.capture_serial > 0 && !state.capture_dirty && (state.deformed || bits == 2)) {
 		return MOVE_OR_POSE;
@@ -421,7 +412,6 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 	return result;
 }
 
-// Ray geometry only feeds BLAS builds; posed vertices are also written by the pose pass.
 static constexpr uint32_t RAY_GEOMETRY_BITS = RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT;
 static constexpr uint32_t POSED_VERTEX_BITS = RD::BUFFER_CREATION_AS_STORAGE_BIT | RAY_GEOMETRY_BITS;
 
@@ -443,7 +433,6 @@ LocalVector<RID> SurfaceCacheWorldRD::index_buffers(const TypedArray<PackedByteA
 	return result;
 }
 
-// A deformed instance poses its own copy of the geometry's ray vertices.
 LocalVector<RID> SurfaceCacheWorldRD::copy_vertex_buffers(const Geometry &geometry) {
 	LocalVector<RID> result;
 	for (uint32_t i = 0; i < geometry.surfaces.size(); ++i) {
@@ -469,8 +458,6 @@ RID SurfaceCacheWorldRD::create_blas(const LocalVector<RID> &vertices, const Geo
 		description.index_count = geometry.surfaces[i].triangles * 3;
 		descriptions.push_back(description);
 	}
-	// Ray hits read the triangle corners back from the BLAS (position fetch); the flag costs no memory on
-	// the high-poly stand.
 	RID blas = device->blas_create(descriptions, RD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT | RD::ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT);
 	if (!blas.is_valid() || (build && device->blas_build(blas, false) != OK)) {
 		fail("Surface Cache BLAS creation failed");
@@ -629,8 +616,6 @@ void SurfaceCacheWorldRD::required_sizes(uint32_t *r_sizes) const {
 	memcpy(r_sizes, sizes, sizeof(sizes));
 }
 
-// Startup grows the buffers by half again at a time; once its queue is done they shrink to what the
-// world holds. Later growth keeps its headroom: items arrive one at a time.
 void SurfaceCacheWorldRD::fit_capacity() {
 	ScopeTimer timer(counters.capacity_ms);
 	uint32_t sizes[BUFFER_COUNT];
@@ -656,8 +641,6 @@ void SurfaceCacheWorldRD::fit_capacity() {
 	}
 }
 
-// A transform moves the instance in the TLAS only: ray hits take the triangle corners from the BLAS. A pose
-// writes the posed vertices into the instance's own ray vertices and rebuilds its BLAS.
 void SurfaceCacheWorldRD::update_geometry(Instance &state) {
 	ScopeTimer timer(counters.geometry_ms);
 	++counters.geometry_updates;
@@ -680,8 +663,6 @@ void SurfaceCacheWorldRD::update_geometry(Instance &state) {
 	state.pose_dirty = false;
 }
 
-// Surface records of the instance (CacheSurface of the game): the orientation of their triangles and the
-// number of sides. The orientation bits of a geometry go to the GPU with its first instance.
 void SurfaceCacheWorldRD::write_surfaces(Instance &state) {
 	Geometry &geometry = *state.shared;
 	if (!geometry.orientation_bits.is_empty()) {
@@ -701,8 +682,6 @@ void SurfaceCacheWorldRD::write_surfaces(Instance &state) {
 	state.surfaces_written = true;
 }
 
-// The capture draws the instance's materials into one square per surface (surface_cache_geometry) and the
-// resolve averages every square into the material record of its surface.
 void SurfaceCacheWorldRD::capture_material(Instance &state) {
 	++counters.captures;
 	uint64_t start = OS::get_singleton()->get_ticks_usec();
