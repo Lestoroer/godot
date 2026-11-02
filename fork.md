@@ -3,6 +3,7 @@
 [Правила работы](AGENTS.md).
 
 - [Surface Cache GI](fork/gi.md).
+- [Физика ткани на Jolt](fork/physics.md).
 - [Рендер без окна на Windows](fork/offscreen.md).
 - [Контур выделения в Forward Mobile](fork/highlight.md).
 - [Android-экспорт](fork/android-export.md).

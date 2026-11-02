@@ -30,12 +30,15 @@
 
 #include "register_types.h"
 
+#include "cloth/cloth_body_3d.h" // lestoroer@physics
+#include "cloth/cloth_mesh.h" // lestoroer@physics
 #include "jolt_globals.h"
 #include "jolt_physics_server_3d.h"
 #include "jolt_project_settings.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
+#include "core/object/class_db.h" // lestoroer@physics
 #include "servers/physics_3d/physics_server_3d_wrap_mt.h"
 
 PhysicsServer3D *create_jolt_physics_server() {
@@ -51,6 +54,13 @@ PhysicsServer3D *create_jolt_physics_server() {
 }
 
 void initialize_jolt_physics_module(ModuleInitializationLevel p_level) {
+	// lestoroer@physics: cloth classes live in the scene layer of this module.
+	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
+		GDREGISTER_CLASS(ClothMesh);
+		GDREGISTER_CLASS(ClothBody3D);
+		return;
+	}
+
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SERVERS) {
 		return;
 	}
