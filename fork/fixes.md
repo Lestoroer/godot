@@ -24,3 +24,6 @@
 
 - **RT/query SPIR-V обходит re-spirv, который не поддерживает эти инструкции** —
   [rendering_device_driver_vulkan.cpp](../drivers/vulkan/rendering_device_driver_vulkan.cpp).
+
+- **Release-сборка не отклоняет любой индексный буфер при создании BLAS: `max_index` известен только с DEBUG_ENABLED** —
+  [rendering_device.cpp](../servers/rendering/rendering_device.cpp).
