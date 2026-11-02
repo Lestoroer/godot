@@ -32,6 +32,7 @@
 
 #include "../jolt_physics_server_3d.h"
 #include "../spaces/jolt_space_3d.h"
+#include "jolt_cloth_3d.h" // lestoroer@physics
 #include "jolt_group_filter.h"
 
 void JoltObject3D::_remove_from_space() {
@@ -129,6 +130,8 @@ bool JoltObject3D::can_interact_with(const JoltObject3D &p_other) const {
 		return can_interact_with(*other_area);
 	} else if (const JoltSoftBody3D *other_soft_body = p_other.as_soft_body()) {
 		return can_interact_with(*other_soft_body);
+	} else if (const JoltCloth3D *other_cloth = p_other.as_cloth()) { // lestoroer@physics
+		return other_cloth->interacts_with(*this);
 	} else {
 		ERR_FAIL_V_MSG(false, vformat("Unhandled object type: '%d'. This should not happen. Please report this.", p_other.get_type()));
 	}
