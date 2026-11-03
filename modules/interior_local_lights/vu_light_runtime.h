@@ -85,6 +85,8 @@ class VuLightRuntime : public RefCounted {
 	void upload();
 	void fail(const String &p_error);
 	Vector4 shader_settings() const;
+	float moment_filter_sigma() const;
+	float moment_penumbra_scale() const;
 
 public:
 	void attach(RID p_scenario, const TypedArray<RID> &p_sources, const AABB &p_world, int p_tile_size = 256, int p_cap = 16, int p_memory_mib = 128, int p_filter_mode = 0);
