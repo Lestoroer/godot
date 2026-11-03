@@ -520,7 +520,12 @@ void VuLightRuntime::render_frame() {
 		publish(selected);
 		updates++;
 		if (filter_mode == 1) {
-			pending_filters[light.spot ? 1 : 0].push_back(selected);
+			LocalVector<int> &batch = pending_filters[light.spot ? 1 : 0];
+			batch.push_back(selected);
+			if (batch.size() == FILTER_BATCH) {
+				filter_moments(batch);
+				batch.clear();
+			}
 		}
 	}
 	for (const LocalVector<int> &batch : pending_filters) {
