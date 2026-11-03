@@ -69,8 +69,8 @@ void VuLightRuntime::attach(RID p_scenario, const TypedArray<RID> &p_sources, co
 		fail("Invalid shadow filter");
 		return;
 	}
-	if (filter_mode == 1 && p_tile_size % (1 << HIERARCHY_LEVELS) != 0) {
-		fail("Area shadow tile size must be divisible by 16");
+	if (filter_mode == 1 && p_tile_size % 2 != 0) {
+		fail("Area shadow tile size must be even");
 		return;
 	}
 	scenario = p_scenario;
@@ -107,7 +107,7 @@ void VuLightRuntime::attach(RID p_scenario, const TypedArray<RID> &p_sources, co
 			required_layers += light.spot ? 1 : 6;
 		}
 	}
-	uint64_t working_bytes = 8 * 1024 * 1024 + uint64_t(tile_size) * tile_size * 4;
+	uint64_t working_bytes = 8 * 1024 * 1024 + uint64_t(tile_size) * tile_size * 4 + temporary_bytes();
 	if (working_bytes >= memory_limit) {
 		fail("Native light scratch buffers exceed the memory budget");
 		return;
@@ -153,23 +153,23 @@ bool VuLightRuntime::initialize_gpu() {
 	format.height = tile_size;
 	format.texture_type = RD::TEXTURE_TYPE_2D_ARRAY;
 	format.array_layers = layers;
-	format.format = filter_mode == 1 ? RD::DATA_FORMAT_R32_SFLOAT : RD::DATA_FORMAT_R16G16_UNORM;
-	format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT;
+	format.format = filter_mode == 1 ? RD::DATA_FORMAT_R32G32_SFLOAT : RD::DATA_FORMAT_R16G16_UNORM;
+	format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | (filter_mode == 1 ? RD::TEXTURE_USAGE_STORAGE_BIT : RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT);
 	atlas_rd = rd->texture_create(format, RD::TextureView());
 	atlas_texture.instantiate();
 	atlas_texture->set_texture_rd_rid(atlas_rd);
 	if (filter_mode == 1) {
+		format.array_layers = VISIBILITY_TEMPORARY_LAYERS;
+		format.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
+		format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT;
+		surface_rd = rd->texture_create(format, RD::TextureView());
 		format.width = tile_size / 2;
 		format.height = tile_size / 2;
-		format.mipmaps = HIERARCHY_LEVELS;
-		format.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
+		format.format = RD::DATA_FORMAT_R32G32_SFLOAT;
 		format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
-		hierarchy_rd = rd->texture_create(format, RD::TextureView());
-		hierarchy_texture.instantiate();
-		hierarchy_texture->set_texture_rd_rid(hierarchy_rd);
+		coverage_rd = rd->texture_create(format, RD::TextureView());
 		format.width = tile_size;
 		format.height = tile_size;
-		format.mipmaps = 1;
 	}
 	format.array_layers = 1;
 	format.texture_type = RD::TEXTURE_TYPE_2D;
@@ -179,8 +179,9 @@ bool VuLightRuntime::initialize_gpu() {
 	depth_rd = rd->texture_create(format, RD::TextureView());
 	layer_owner.resize(layers);
 	layer_owner.fill(-1);
-	slices.resize(layers);
-	framebuffers.resize(layers);
+	const int attachment_layers = filter_mode == 1 ? VISIBILITY_TEMPORARY_LAYERS : layers;
+	slices.resize(attachment_layers);
+	framebuffers.resize(attachment_layers);
 	RD::SamplerState sampling;
 	sampling.min_filter = RD::SAMPLER_FILTER_LINEAR;
 	sampling.mag_filter = RD::SAMPLER_FILTER_LINEAR;
@@ -196,47 +197,58 @@ bool VuLightRuntime::initialize_gpu() {
 	Vector<Vector<uint8_t>> initial;
 	initial.push_back(white);
 	white_texture = rd->texture_create(format, RD::TextureView(), initial);
-	memory_bytes = uint64_t(tile_size) * tile_size * 4 + layers * layer_bytes() + grid.size() * 8 + records.size() * 8 + lights.size() * sizeof(Light);
+	memory_bytes = uint64_t(tile_size) * tile_size * 4 + temporary_bytes() + layers * layer_bytes() + grid.size() * 8 + records.size() * 8 + lights.size() * sizeof(Light);
 	if (memory_bytes > memory_limit) {
 		fail("Native local-light memory budget exceeded");
 		return false;
 	}
 	if (filter_mode == 1) {
-		Ref<RDShaderFile> source_hierarchy = ResourceLoader::load("res://features/lighting/vu_lights/native_depth_hierarchy.glsl");
-		if (source_hierarchy.is_null()) {
-			fail("Missing native depth hierarchy shader");
+		Ref<RDShaderFile> source_coverage = ResourceLoader::load("res://features/lighting/vu_lights/native_visibility_coverage.glsl");
+		Ref<RDShaderFile> source_resolve = ResourceLoader::load("res://features/lighting/vu_lights/native_visibility_resolve.glsl");
+		if (source_coverage.is_null() || source_resolve.is_null()) {
+			fail("Missing native visibility shaders");
 			return false;
 		}
-		hierarchy_shader = rd->shader_create_from_spirv(source_hierarchy->get_spirv()->get_stages());
-		if (!hierarchy_shader.is_valid()) {
-			fail("Cannot compile native depth hierarchy shader");
+		coverage_shader = rd->shader_create_from_spirv(source_coverage->get_spirv()->get_stages());
+		resolve_shader = rd->shader_create_from_spirv(source_resolve->get_spirv()->get_stages());
+		if (!coverage_shader.is_valid() || !resolve_shader.is_valid()) {
+			fail("Cannot compile native visibility shaders");
 			return false;
 		}
-		hierarchy_pipeline = rd->compute_pipeline_create(hierarchy_shader);
-		hierarchy_sampler = rd->sampler_create(RD::SamplerState());
-		for (int level = 0; level < HIERARCHY_LEVELS; level++) {
-			hierarchy_slices[level] = rd->texture_create_shared_from_slice(RD::TextureView(), hierarchy_rd, 0, level, 1, RD::TEXTURE_SLICE_2D_ARRAY, layers);
-			RD::Uniform source;
-			source.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
-			source.binding = 0;
-			source.append_id(hierarchy_sampler);
-			source.append_id(level == 0 ? atlas_rd : hierarchy_slices[level - 1]);
-			RD::Uniform target;
-			target.uniform_type = RD::UNIFORM_TYPE_IMAGE;
-			target.binding = 1;
-			target.append_id(hierarchy_slices[level]);
-			Vector<RD::Uniform> bindings;
-			bindings.push_back(source);
-			bindings.push_back(target);
-			hierarchy_sets[level] = rd->uniform_set_create(bindings, hierarchy_shader, 0);
-		}
+		coverage_pipeline = rd->compute_pipeline_create(coverage_shader);
+		resolve_pipeline = rd->compute_pipeline_create(resolve_shader);
+		visibility_sampler = rd->sampler_create(RD::SamplerState());
+		RD::Uniform surface_source;
+		surface_source.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+		surface_source.binding = 0;
+		surface_source.append_id(visibility_sampler);
+		surface_source.append_id(surface_rd);
+		RD::Uniform coverage_target;
+		coverage_target.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		coverage_target.binding = 1;
+		coverage_target.append_id(coverage_rd);
+		Vector<RD::Uniform> coverage_bindings;
+		coverage_bindings.push_back(surface_source);
+		coverage_bindings.push_back(coverage_target);
+		coverage_set = rd->uniform_set_create(coverage_bindings, coverage_shader, 0);
+		RD::Uniform coverage_source;
+		coverage_source.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+		coverage_source.binding = 1;
+		coverage_source.append_id(visibility_sampler);
+		coverage_source.append_id(coverage_rd);
+		RD::Uniform visibility_target;
+		visibility_target.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		visibility_target.binding = 2;
+		visibility_target.append_id(atlas_rd);
+		Vector<RD::Uniform> resolve_bindings;
+		resolve_bindings.push_back(surface_source);
+		resolve_bindings.push_back(coverage_source);
+		resolve_bindings.push_back(visibility_target);
+		resolve_set = rd->uniform_set_create(resolve_bindings, resolve_shader, 0);
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->global_shader_parameter_add("vu_native_data", RSE::GLOBAL_VAR_TYPE_SAMPLER2D, data_texture);
 	rs->global_shader_parameter_add("vu_native_atlas", RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAY, atlas_texture);
-	if (filter_mode == 1) {
-		rs->global_shader_parameter_add("vu_native_hierarchy", RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAY, hierarchy_texture);
-	}
 	rs->global_shader_parameter_add("vu_native_origin", RSE::GLOBAL_VAR_TYPE_VEC3, world.position);
 	rs->global_shader_parameter_add("vu_native_dims", RSE::GLOBAL_VAR_TYPE_IVEC3, dimensions);
 	rs->global_shader_parameter_add("vu_native_settings", RSE::GLOBAL_VAR_TYPE_VEC4, shader_settings());
@@ -251,15 +263,18 @@ Vector4 VuLightRuntime::shader_settings() const {
 	return Vector4(1 / cell_size, softness, tile_size, blocks);
 }
 
-// Площадные тени: первая преграда R32F и уровни иерархии RGBA32F, начиная с половины тайла.
+// Постоянная карта площадных теней RG32F: первая преграда и видимость её поверхности.
 uint64_t VuLightRuntime::layer_bytes() const {
-	uint64_t bytes = uint64_t(tile_size) * tile_size * 4;
-	if (filter_mode == 1) {
-		for (int level = 1; level <= HIERARCHY_LEVELS; level++) {
-			bytes += uint64_t(tile_size >> level) * (tile_size >> level) * 16;
-		}
+	return uint64_t(tile_size) * tile_size * (filter_mode == 1 ? 8 : 4);
+}
+
+// Временные атласы живут всё время работы системы: растр RGBA32F и половинная видимость RG32F.
+uint64_t VuLightRuntime::temporary_bytes() const {
+	if (filter_mode != 1) {
+		return 0;
 	}
-	return bytes;
+	const uint64_t half_size = tile_size / 2;
+	return uint64_t(VISIBILITY_TEMPORARY_LAYERS) * (uint64_t(tile_size) * tile_size * 16 + half_size * half_size * 8);
 }
 
 bool VuLightRuntime::add_light(RID instance) {
@@ -503,7 +518,6 @@ void VuLightRuntime::render_frame() {
 	if (gpu_timestamps) {
 		rd->capture_timestamp("VU Native Shadows Begin");
 	}
-	pending_hierarchy.clear();
 	int budget = cap == 0 ? max_sources : cap;
 	while (shadows_enabled && budget-- > 0) {
 		int selected = -1;
@@ -526,6 +540,10 @@ void VuLightRuntime::render_frame() {
 		if (selected < 0) {
 			break;
 		}
+		const int source_layers = lights[selected].spot ? 1 : 6;
+		if (filter_mode == 1 && temporary_layers_used + source_layers > VISIBILITY_TEMPORARY_LAYERS) {
+			flush_visibility();
+		}
 		if (!render_shadow(selected)) {
 			continue;
 		}
@@ -541,10 +559,14 @@ void VuLightRuntime::render_frame() {
 		publish(selected);
 		updates++;
 		if (filter_mode == 1) {
-			pending_hierarchy.push_back(selected);
+			VisibilitySource source;
+			source.slot = selected;
+			source.temporary_layer = temporary_layers_used;
+			pending_visibility.push_back(source);
+			temporary_layers_used += source_layers;
 		}
 	}
-	build_hierarchy(pending_hierarchy);
+	flush_visibility();
 	if (gpu_timestamps) {
 		rd->capture_timestamp("VU Native Shadows End");
 	}
@@ -593,6 +615,9 @@ void VuLightRuntime::set_softness(float value) {
 	RenderingServer::get_singleton()->global_shader_parameter_set("vu_native_settings", shader_settings());
 	for (const KeyValue<RID, int> &entry : light_slots) {
 		publish(entry.value);
+		if (filter_mode == 1) {
+			dirty(lights.write[entry.value]);
+		}
 	}
 }
 void VuLightRuntime::set_shadows_enabled(bool value) {
@@ -744,17 +769,19 @@ bool VuLightRuntime::render_shadow(int slot) {
 			candidates.push_back(&caster);
 		}
 	}
+	const RID attachment_texture = filter_mode == 1 ? surface_rd : atlas_rd;
+	const int first_attachment_layer = filter_mode == 1 ? temporary_layers_used : light.layer;
 	for (int face = 0; face < count; face++) {
-		int layer = light.layer + face;
+		int layer = first_attachment_layer + face;
 		if (!framebuffers[layer].is_valid()) {
-			slices.write[layer] = rd->texture_create_shared_from_slice(RD::TextureView(), atlas_rd, layer, 0);
+			slices.write[layer] = rd->texture_create_shared_from_slice(RD::TextureView(), attachment_texture, layer, 0);
 			Vector<RID> attachments;
 			attachments.push_back(slices[layer]);
 			attachments.push_back(depth_rd);
 			framebuffers.write[layer] = rd->framebuffer_create(attachments);
 		}
 		if (!framebuffers[0].is_valid()) {
-			slices.write[0] = rd->texture_create_shared_from_slice(RD::TextureView(), atlas_rd, 0, 0);
+			slices.write[0] = rd->texture_create_shared_from_slice(RD::TextureView(), attachment_texture, 0, 0);
 			Vector<RID> attachments;
 			attachments.push_back(slices[0]);
 			attachments.push_back(depth_rd);
@@ -840,35 +867,57 @@ bool VuLightRuntime::render_shadow(int slot) {
 	return true;
 }
 
-// Один список на уровень: источники пишут разные слои и не требуют барьера между собой, а следующий уровень читает готовый предыдущий.
-void VuLightRuntime::build_hierarchy(const LocalVector<int> &sources) {
-	if (sources.is_empty()) {
+// Вся партия одним списком на проход: источники занимают разные слои и не требуют барьера между собой.
+void VuLightRuntime::flush_visibility() {
+	if (pending_visibility.is_empty()) {
 		return;
 	}
 	struct Push {
-		int32_t first_layer, level, cells, unused_layer;
-		float texel_step, tangent_squared, unused_first, unused_second;
+		int32_t map_info[4];
+		float settings[4];
 	};
-	for (int level = 1; level <= HIERARCHY_LEVELS; level++) {
-		const int cells = tile_size >> level;
-		const int groups = (cells + 7) / 8;
-		RD::ComputeListID list = rd->compute_list_begin();
-		rd->compute_list_bind_compute_pipeline(list, hierarchy_pipeline);
-		rd->compute_list_bind_uniform_set(list, hierarchy_sets[level - 1], 0);
-		for (int slot : sources) {
-			const Light &light = lights[slot];
-			const float half_tan = light.spot ? Math::tan(Math::deg_to_rad(MIN(170.0f, 2 * light.angle + 6) * .5f)) : 1.0f;
-			Push push = {};
-			push.first_layer = light.layer;
-			push.level = level;
-			push.cells = cells;
-			push.texel_step = 2.0f / tile_size;
-			push.tangent_squared = half_tan * half_tan;
-			rd->compute_list_set_push_constant(list, &push, sizeof(push));
-			rd->compute_list_dispatch(list, groups, groups, light.spot ? 1 : 6);
-		}
-		rd->compute_list_end();
+	// Запас на поверхность, метры. Настоящая преграда бывает всего в нескольких миллиметрах от поверхности.
+	const float surface_tolerance = 0.001f;
+	// Допуск совпадения соседних текселей одной поверхности, метры.
+	const float surface_match = 0.004f;
+	const int half_groups = (tile_size / 2 + 7) / 8;
+	const int full_groups = (tile_size + 7) / 8;
+	RD::ComputeListID coverage_list = rd->compute_list_begin();
+	rd->compute_list_bind_compute_pipeline(coverage_list, coverage_pipeline);
+	rd->compute_list_bind_uniform_set(coverage_list, coverage_set, 0);
+	for (const VisibilitySource &source : pending_visibility) {
+		const Light &light = lights[source.slot];
+		const float half_tan = light.spot ? Math::tan(Math::deg_to_rad(MIN(170.0f, 2 * light.angle + 6) * .5f)) : 1.0f;
+		Push push = {};
+		push.map_info[0] = source.temporary_layer;
+		push.map_info[1] = light.spot ? 1 : 0;
+		push.map_info[2] = tile_size;
+		push.settings[0] = 1.0f / half_tan;
+		push.settings[1] = softness;
+		push.settings[2] = surface_tolerance / light.range;
+		rd->compute_list_set_push_constant(coverage_list, &push, sizeof(push));
+		rd->compute_list_dispatch(coverage_list, half_groups, half_groups, light.spot ? 1 : 6);
 	}
+	rd->compute_list_end();
+	RD::ComputeListID resolve_list = rd->compute_list_begin();
+	rd->compute_list_bind_compute_pipeline(resolve_list, resolve_pipeline);
+	rd->compute_list_bind_uniform_set(resolve_list, resolve_set, 0);
+	for (const VisibilitySource &source : pending_visibility) {
+		const Light &light = lights[source.slot];
+		const float half_tan = light.spot ? Math::tan(Math::deg_to_rad(MIN(170.0f, 2 * light.angle + 6) * .5f)) : 1.0f;
+		Push push = {};
+		push.map_info[0] = source.temporary_layer;
+		push.map_info[1] = light.spot ? 1 : 0;
+		push.map_info[2] = tile_size;
+		push.map_info[3] = light.layer;
+		push.settings[0] = 1.0f / half_tan;
+		push.settings[1] = surface_match / light.range;
+		rd->compute_list_set_push_constant(resolve_list, &push, sizeof(push));
+		rd->compute_list_dispatch(resolve_list, full_groups, full_groups, light.spot ? 1 : 6);
+	}
+	rd->compute_list_end();
+	pending_visibility.clear();
+	temporary_layers_used = 0;
 }
 
 Dictionary VuLightRuntime::diagnostics() const {
@@ -949,7 +998,7 @@ void VuLightRuntime::dispose() {
 			scene_cull()->local_light_set_owner(entry.key, false);
 		}
 		scene_cull()->local_light_observe(scenario, false);
-		for (const char *name : { "vu_native_data", "vu_native_atlas", "vu_native_hierarchy", "vu_native_origin", "vu_native_dims", "vu_native_settings" }) {
+		for (const char *name : { "vu_native_data", "vu_native_atlas", "vu_native_origin", "vu_native_dims", "vu_native_settings" }) {
 			RenderingServer::get_singleton()->global_shader_parameter_remove(name);
 		}
 	}
@@ -983,20 +1032,12 @@ void VuLightRuntime::dispose() {
 	if (atlas_texture.is_valid()) {
 		atlas_texture->set_texture_rd_rid(RID());
 	}
-	if (hierarchy_texture.is_valid()) {
-		hierarchy_texture->set_texture_rd_rid(RID());
-	}
-	for (int level = 0; level < HIERARCHY_LEVELS; level++) {
-		if (hierarchy_sets[level].is_valid() && rd->uniform_set_is_valid(hierarchy_sets[level])) {
-			rd->free_rid(hierarchy_sets[level]);
+	for (RID set : { coverage_set, resolve_set }) {
+		if (set.is_valid() && rd->uniform_set_is_valid(set)) {
+			rd->free_rid(set);
 		}
 	}
-	for (int level = 0; level < HIERARCHY_LEVELS; level++) {
-		if (hierarchy_slices[level].is_valid()) {
-			rd->free_rid(hierarchy_slices[level]);
-		}
-	}
-	for (RID rid : { hierarchy_pipeline, hierarchy_shader, hierarchy_sampler, grid_rd, data_rd, atlas_rd, hierarchy_rd, depth_rd, caster_shader, sampler, white_texture }) {
+	for (RID rid : { coverage_pipeline, coverage_shader, resolve_pipeline, resolve_shader, visibility_sampler, grid_rd, data_rd, atlas_rd, surface_rd, coverage_rd, depth_rd, caster_shader, sampler, white_texture }) {
 		if (rid.is_valid()) {
 			rd->free_rid(rid);
 		}

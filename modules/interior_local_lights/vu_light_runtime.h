@@ -38,26 +38,32 @@ class VuLightRuntime : public RefCounted {
 		float alpha = 1, threshold = -1;
 		bool casts = true;
 	};
-	// Четыре уровня укладываются в тайл, кратный 16. VU_NATIVE_TOP_LEVEL в vu_native_inc.gdshaderinc.
-	static constexpr int HIERARCHY_LEVELS = 4;
+	struct VisibilitySource {
+		int slot = -1;
+		int temporary_layer = 0;
+	};
+	// 16 Omni по шесть граней: столько помещается при исходном cap. Больший cap и raw обрабатываются несколькими партиями с тем же объёмом.
+	static constexpr int VISIBILITY_TEMPORARY_LAYERS = 96;
 	RenderingDevice *rd = nullptr;
 	RID scenario;
-	RID hierarchy_shader, hierarchy_pipeline, hierarchy_sampler;
-	RID hierarchy_slices[HIERARCHY_LEVELS], hierarchy_sets[HIERARCHY_LEVELS];
+	RID surface_rd, coverage_rd, visibility_sampler;
+	RID coverage_shader, coverage_pipeline, coverage_set;
+	RID resolve_shader, resolve_pipeline, resolve_set;
 	HashMap<RID, int> light_slots;
 	Vector<Light> lights;
 	HashMap<RID, Geometry> geometry;
 	LocalVector<RendererSceneCull::LocalLightChange> changes;
-	LocalVector<int> pending_hierarchy;
+	LocalVector<VisibilitySource> pending_visibility;
+	int temporary_layers_used = 0;
 	Vector<uint32_t> grid;
 	Vector<float> records;
 	Vector<int> layer_owner;
 	Vector<RID> slices, framebuffers;
 	HashMap<uint64_t, RID> pipelines;
 	HashMap<RID, MaterialData> materials;
-	RID grid_rd, data_rd, atlas_rd, hierarchy_rd, depth_rd, caster_shader, sampler, white_texture;
+	RID grid_rd, data_rd, atlas_rd, depth_rd, caster_shader, sampler, white_texture;
 	Ref<Texture2DRD> grid_texture, data_texture;
-	Ref<Texture2DArrayRD> atlas_texture, hierarchy_texture;
+	Ref<Texture2DArrayRD> atlas_texture;
 	AABB world;
 	Vector3i dimensions;
 	float cell_size = 1.0f, softness = 0.18f;
@@ -82,13 +88,14 @@ class VuLightRuntime : public RefCounted {
 	void clear_membership(int p_slot);
 	void publish(int p_slot);
 	bool render_shadow(int p_slot);
-	void build_hierarchy(const LocalVector<int> &p_sources);
+	void flush_visibility();
 	MaterialData material_data(RID p_material);
 	RID pipeline(RenderingDevice::VertexFormatID p_format);
 	void upload();
 	void fail(const String &p_error);
 	Vector4 shader_settings() const;
 	uint64_t layer_bytes() const;
+	uint64_t temporary_bytes() const;
 
 public:
 	void attach(RID p_scenario, const TypedArray<RID> &p_sources, const AABB &p_world, int p_tile_size = 256, int p_cap = 16, int p_memory_mib = 128, int p_filter_mode = 0);
