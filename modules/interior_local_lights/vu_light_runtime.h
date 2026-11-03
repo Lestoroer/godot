@@ -13,7 +13,7 @@ class VuLightRuntime : public RefCounted {
 		Transform3D transform, baked_transform;
 		Color color;
 		float range = 1, energy = 1, decay = 1, angle = 45, cone_decay = 1, specular = 1;
-		float baked_range = 1, baked_angle = 45;
+		float baked_range = 1, baked_angle = 45, baked_softness = 0.18f;
 		uint32_t caster_mask = UINT32_MAX;
 		bool spot = false, shadows = true, enabled = true, valid = false, dirty = true, atlas_denied = false;
 		int layer = -1;
@@ -38,12 +38,18 @@ class VuLightRuntime : public RefCounted {
 		float alpha = 1, threshold = -1;
 		bool casts = true;
 	};
+	// Ячейка границ в текселях карты. CELL_TEXELS в native_bounds_cells.glsl и native_bounds_regions.glsl, VU_NATIVE_BOUNDS_CELL_TEXELS в vu_native_inc.gdshaderinc.
+	static constexpr int BOUNDS_CELL_TEXELS = 4;
 	RenderingDevice *rd = nullptr;
 	RID scenario;
+	RID cell_bounds_rd, region_bounds_rd, bounds_sampler;
+	RID cell_bounds_shader, cell_bounds_pipeline, cell_bounds_set;
+	RID region_bounds_shader, region_bounds_pipeline, region_bounds_set;
 	HashMap<RID, int> light_slots;
 	Vector<Light> lights;
 	HashMap<RID, Geometry> geometry;
 	LocalVector<RendererSceneCull::LocalLightChange> changes;
+	LocalVector<int> pending_bounds;
 	Vector<uint32_t> grid;
 	Vector<float> records;
 	Vector<int> layer_owner;
@@ -52,7 +58,7 @@ class VuLightRuntime : public RefCounted {
 	HashMap<RID, MaterialData> materials;
 	RID grid_rd, data_rd, atlas_rd, depth_rd, caster_shader, sampler, white_texture;
 	Ref<Texture2DRD> grid_texture, data_texture;
-	Ref<Texture2DArrayRD> atlas_texture;
+	Ref<Texture2DArrayRD> atlas_texture, bounds_texture;
 	AABB world;
 	Vector3i dimensions;
 	float cell_size = 1.0f, softness = 0.18f;
@@ -77,6 +83,7 @@ class VuLightRuntime : public RefCounted {
 	void clear_membership(int p_slot);
 	void publish(int p_slot);
 	bool render_shadow(int p_slot);
+	void build_bounds();
 	MaterialData material_data(RID p_material);
 	RID pipeline(RenderingDevice::VertexFormatID p_format);
 	void upload();
