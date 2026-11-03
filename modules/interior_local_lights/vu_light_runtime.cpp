@@ -69,6 +69,10 @@ void VuLightRuntime::attach(RID p_scenario, const TypedArray<RID> &p_sources, co
 		fail("Invalid shadow filter");
 		return;
 	}
+	if (filter_mode == 1 && p_tile_size % BOUNDS_CELL_TEXELS != 0) {
+		fail("Area shadow tile size must be divisible by 4");
+		return;
+	}
 	scenario = p_scenario;
 	world = p_world;
 	tile_size = p_tile_size;
@@ -155,6 +159,18 @@ bool VuLightRuntime::initialize_gpu() {
 	atlas_rd = rd->texture_create(format, RD::TextureView());
 	atlas_texture.instantiate();
 	atlas_texture->set_texture_rd_rid(atlas_rd);
+	if (filter_mode == 1) {
+		// В строке по два текселя на ячейку: нижняя и верхняя граница.
+		format.width = tile_size / BOUNDS_CELL_TEXELS * 2;
+		format.height = tile_size / BOUNDS_CELL_TEXELS;
+		format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
+		cell_bounds_rd = rd->texture_create(format, RD::TextureView());
+		region_bounds_rd = rd->texture_create(format, RD::TextureView());
+		bounds_texture.instantiate();
+		bounds_texture->set_texture_rd_rid(region_bounds_rd);
+		format.width = tile_size;
+		format.height = tile_size;
+	}
 	format.array_layers = 1;
 	format.texture_type = RD::TEXTURE_TYPE_2D;
 	format.format = RD::DATA_FORMAT_D32_SFLOAT;
@@ -185,9 +201,55 @@ bool VuLightRuntime::initialize_gpu() {
 		fail("Native local-light memory budget exceeded");
 		return false;
 	}
+	if (filter_mode == 1) {
+		Ref<RDShaderFile> source_cells = ResourceLoader::load("res://features/lighting/vu_lights/native_bounds_cells.glsl");
+		Ref<RDShaderFile> source_regions = ResourceLoader::load("res://features/lighting/vu_lights/native_bounds_regions.glsl");
+		if (source_cells.is_null() || source_regions.is_null()) {
+			fail("Missing native bounds shaders");
+			return false;
+		}
+		cell_bounds_shader = rd->shader_create_from_spirv(source_cells->get_spirv()->get_stages());
+		region_bounds_shader = rd->shader_create_from_spirv(source_regions->get_spirv()->get_stages());
+		if (!cell_bounds_shader.is_valid() || !region_bounds_shader.is_valid()) {
+			fail("Cannot compile native bounds shaders");
+			return false;
+		}
+		cell_bounds_pipeline = rd->compute_pipeline_create(cell_bounds_shader);
+		region_bounds_pipeline = rd->compute_pipeline_create(region_bounds_shader);
+		bounds_sampler = rd->sampler_create(RD::SamplerState());
+		RD::Uniform surface_source;
+		surface_source.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+		surface_source.binding = 0;
+		surface_source.append_id(bounds_sampler);
+		surface_source.append_id(atlas_rd);
+		RD::Uniform cell_target;
+		cell_target.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		cell_target.binding = 1;
+		cell_target.append_id(cell_bounds_rd);
+		Vector<RD::Uniform> cell_bindings;
+		cell_bindings.push_back(surface_source);
+		cell_bindings.push_back(cell_target);
+		cell_bounds_set = rd->uniform_set_create(cell_bindings, cell_bounds_shader, 0);
+		RD::Uniform cell_source;
+		cell_source.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+		cell_source.binding = 0;
+		cell_source.append_id(bounds_sampler);
+		cell_source.append_id(cell_bounds_rd);
+		RD::Uniform region_target;
+		region_target.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		region_target.binding = 1;
+		region_target.append_id(region_bounds_rd);
+		Vector<RD::Uniform> region_bindings;
+		region_bindings.push_back(cell_source);
+		region_bindings.push_back(region_target);
+		region_bounds_set = rd->uniform_set_create(region_bindings, region_bounds_shader, 0);
+	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->global_shader_parameter_add("vu_native_data", RSE::GLOBAL_VAR_TYPE_SAMPLER2D, data_texture);
 	rs->global_shader_parameter_add("vu_native_atlas", RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAY, atlas_texture);
+	if (filter_mode == 1) {
+		rs->global_shader_parameter_add("vu_native_bounds", RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAY, bounds_texture);
+	}
 	rs->global_shader_parameter_add("vu_native_origin", RSE::GLOBAL_VAR_TYPE_VEC3, world.position);
 	rs->global_shader_parameter_add("vu_native_dims", RSE::GLOBAL_VAR_TYPE_IVEC3, dimensions);
 	rs->global_shader_parameter_add("vu_native_settings", RSE::GLOBAL_VAR_TYPE_VEC4, shader_settings());
@@ -202,8 +264,14 @@ Vector4 VuLightRuntime::shader_settings() const {
 	return Vector4(1 / cell_size, softness, tile_size, blocks);
 }
 
+// Площадные тени: глубина и нормаль на тексель, плюс два атласа границ по 32 байта на ячейку.
 uint64_t VuLightRuntime::layer_bytes() const {
-	return uint64_t(tile_size) * tile_size * (filter_mode == 1 ? 16 : 4);
+	const uint64_t texels = uint64_t(tile_size) * tile_size;
+	if (filter_mode != 1) {
+		return texels * 4;
+	}
+	const uint64_t cells = uint64_t(tile_size / BOUNDS_CELL_TEXELS) * (tile_size / BOUNDS_CELL_TEXELS);
+	return texels * 16 + 2 * cells * 32;
 }
 
 bool VuLightRuntime::add_light(RID instance) {
@@ -426,6 +494,8 @@ void VuLightRuntime::publish(int slot) {
 	data[21] = y.y;
 	data[22] = y.z;
 	data[23] = shadow && light.valid ? light.layer : -1;
+	// Мягкость, с которой построены границы карты: ядро не должно выйти за них, пока обновление ждёт очереди.
+	data[24] = shadow && light.valid ? light.baked_softness : softness;
 	if (memcmp(records.ptr() + slot * STRIDE, data, sizeof(data)) != 0) {
 		memcpy(records.ptrw() + slot * STRIDE, data, sizeof(data));
 		data_dirty = true;
@@ -480,10 +550,15 @@ void VuLightRuntime::render_frame() {
 		light.baked_transform = light.transform;
 		light.baked_range = light.range;
 		light.baked_angle = light.angle;
+		light.baked_softness = softness;
 		update_membership(selected);
 		publish(selected);
 		updates++;
+		if (filter_mode == 1) {
+			pending_bounds.push_back(selected);
+		}
 	}
+	build_bounds();
 	if (gpu_timestamps) {
 		rd->capture_timestamp("VU Native Shadows End");
 	}
@@ -532,6 +607,9 @@ void VuLightRuntime::set_softness(float value) {
 	RenderingServer::get_singleton()->global_shader_parameter_set("vu_native_settings", shader_settings());
 	for (const KeyValue<RID, int> &entry : light_slots) {
 		publish(entry.value);
+		if (filter_mode == 1) {
+			dirty(lights.write[entry.value]);
+		}
 	}
 }
 void VuLightRuntime::set_shadows_enabled(bool value) {
@@ -779,6 +857,43 @@ bool VuLightRuntime::render_shadow(int slot) {
 	return true;
 }
 
+// Один список на проход: источники пишут разные слои и не требуют барьера между собой, а второй проход читает готовый первый.
+void VuLightRuntime::build_bounds() {
+	if (pending_bounds.is_empty()) {
+		return;
+	}
+	struct Push {
+		int32_t map_info[4];
+		float forward[4], right[4], up[4];
+	};
+	const int groups = (tile_size / BOUNDS_CELL_TEXELS + 7) / 8;
+	for (int pass = 0; pass < 2; pass++) {
+		RD::ComputeListID list = rd->compute_list_begin();
+		rd->compute_list_bind_compute_pipeline(list, pass == 0 ? cell_bounds_pipeline : region_bounds_pipeline);
+		rd->compute_list_bind_uniform_set(list, pass == 0 ? cell_bounds_set : region_bounds_set, 0);
+		for (int slot : pending_bounds) {
+			const Light &light = lights[slot];
+			const Basis &basis = light.baked_transform.basis;
+			const Vector3 forward = -basis.get_column(2).normalized(), right = basis.get_column(0).normalized(), up = basis.get_column(1).normalized();
+			Push push = {};
+			push.map_info[0] = light.layer;
+			push.map_info[1] = light.spot ? 1 : 0;
+			push.map_info[2] = tile_size;
+			for (int k = 0; k < 3; k++) {
+				push.forward[k] = forward[k];
+				push.right[k] = right[k];
+				push.up[k] = up[k];
+			}
+			push.forward[3] = 1 / Math::tan(Math::deg_to_rad(MIN(170.0f, 2 * light.baked_angle + 6) * 0.5f));
+			push.right[3] = light.baked_softness;
+			rd->compute_list_set_push_constant(list, &push, sizeof(push));
+			rd->compute_list_dispatch(list, groups, groups, light.spot ? 1 : 6);
+		}
+		rd->compute_list_end();
+	}
+	pending_bounds.clear();
+}
+
 Dictionary VuLightRuntime::diagnostics() const {
 	Dictionary result;
 	int active = 0, omni = 0, spot = 0, valid = 0, queue = 0, casting = 0, used_layers = 0, denied = 0;
@@ -857,7 +972,7 @@ void VuLightRuntime::dispose() {
 			scene_cull()->local_light_set_owner(entry.key, false);
 		}
 		scene_cull()->local_light_observe(scenario, false);
-		for (const char *name : { "vu_native_data", "vu_native_atlas", "vu_native_origin", "vu_native_dims", "vu_native_settings" }) {
+		for (const char *name : { "vu_native_data", "vu_native_atlas", "vu_native_bounds", "vu_native_origin", "vu_native_dims", "vu_native_settings" }) {
 			RenderingServer::get_singleton()->global_shader_parameter_remove(name);
 		}
 	}
@@ -891,7 +1006,15 @@ void VuLightRuntime::dispose() {
 	if (atlas_texture.is_valid()) {
 		atlas_texture->set_texture_rd_rid(RID());
 	}
-	for (RID rid : { grid_rd, data_rd, atlas_rd, depth_rd, caster_shader, sampler, white_texture }) {
+	if (bounds_texture.is_valid()) {
+		bounds_texture->set_texture_rd_rid(RID());
+	}
+	for (RID set : { cell_bounds_set, region_bounds_set }) {
+		if (set.is_valid() && rd->uniform_set_is_valid(set)) {
+			rd->free_rid(set);
+		}
+	}
+	for (RID rid : { cell_bounds_pipeline, cell_bounds_shader, region_bounds_pipeline, region_bounds_shader, bounds_sampler, grid_rd, data_rd, atlas_rd, cell_bounds_rd, region_bounds_rd, depth_rd, caster_shader, sampler, white_texture }) {
 		if (rid.is_valid()) {
 			rd->free_rid(rid);
 		}
