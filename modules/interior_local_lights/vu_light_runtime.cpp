@@ -69,10 +69,6 @@ void VuLightRuntime::attach(RID p_scenario, const TypedArray<RID> &p_sources, co
 		fail("Invalid shadow filter");
 		return;
 	}
-	if (filter_mode == 1 && p_tile_size % 2 != 0) {
-		fail("Area shadow tile size must be even");
-		return;
-	}
 	scenario = p_scenario;
 	world = p_world;
 	tile_size = p_tile_size;
@@ -107,7 +103,7 @@ void VuLightRuntime::attach(RID p_scenario, const TypedArray<RID> &p_sources, co
 			required_layers += light.spot ? 1 : 6;
 		}
 	}
-	uint64_t working_bytes = 8 * 1024 * 1024 + uint64_t(tile_size) * tile_size * 4 + temporary_bytes();
+	uint64_t working_bytes = 8 * 1024 * 1024 + uint64_t(tile_size) * tile_size * 4;
 	if (working_bytes >= memory_limit) {
 		fail("Native light scratch buffers exceed the memory budget");
 		return;
@@ -153,24 +149,12 @@ bool VuLightRuntime::initialize_gpu() {
 	format.height = tile_size;
 	format.texture_type = RD::TEXTURE_TYPE_2D_ARRAY;
 	format.array_layers = layers;
-	format.format = filter_mode == 1 ? RD::DATA_FORMAT_R32G32_SFLOAT : RD::DATA_FORMAT_R16G16_UNORM;
-	format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | (filter_mode == 1 ? RD::TEXTURE_USAGE_STORAGE_BIT : RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT);
+	// Площадные тени: первая преграда и нормаль треугольника на каждом текселе.
+	format.format = filter_mode == 1 ? RD::DATA_FORMAT_R32G32B32A32_SFLOAT : RD::DATA_FORMAT_R16G16_UNORM;
+	format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT;
 	atlas_rd = rd->texture_create(format, RD::TextureView());
 	atlas_texture.instantiate();
 	atlas_texture->set_texture_rd_rid(atlas_rd);
-	if (filter_mode == 1) {
-		format.array_layers = VISIBILITY_TEMPORARY_LAYERS;
-		format.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
-		format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT;
-		surface_rd = rd->texture_create(format, RD::TextureView());
-		format.width = tile_size / 2;
-		format.height = tile_size / 2;
-		format.format = RD::DATA_FORMAT_R32G32_SFLOAT;
-		format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
-		coverage_rd = rd->texture_create(format, RD::TextureView());
-		format.width = tile_size;
-		format.height = tile_size;
-	}
 	format.array_layers = 1;
 	format.texture_type = RD::TEXTURE_TYPE_2D;
 	format.format = RD::DATA_FORMAT_D32_SFLOAT;
@@ -179,9 +163,8 @@ bool VuLightRuntime::initialize_gpu() {
 	depth_rd = rd->texture_create(format, RD::TextureView());
 	layer_owner.resize(layers);
 	layer_owner.fill(-1);
-	const int attachment_layers = filter_mode == 1 ? VISIBILITY_TEMPORARY_LAYERS : layers;
-	slices.resize(attachment_layers);
-	framebuffers.resize(attachment_layers);
+	slices.resize(layers);
+	framebuffers.resize(layers);
 	RD::SamplerState sampling;
 	sampling.min_filter = RD::SAMPLER_FILTER_LINEAR;
 	sampling.mag_filter = RD::SAMPLER_FILTER_LINEAR;
@@ -197,54 +180,10 @@ bool VuLightRuntime::initialize_gpu() {
 	Vector<Vector<uint8_t>> initial;
 	initial.push_back(white);
 	white_texture = rd->texture_create(format, RD::TextureView(), initial);
-	memory_bytes = uint64_t(tile_size) * tile_size * 4 + temporary_bytes() + layers * layer_bytes() + grid.size() * 8 + records.size() * 8 + lights.size() * sizeof(Light);
+	memory_bytes = uint64_t(tile_size) * tile_size * 4 + layers * layer_bytes() + grid.size() * 8 + records.size() * 8 + lights.size() * sizeof(Light);
 	if (memory_bytes > memory_limit) {
 		fail("Native local-light memory budget exceeded");
 		return false;
-	}
-	if (filter_mode == 1) {
-		Ref<RDShaderFile> source_coverage = ResourceLoader::load("res://features/lighting/vu_lights/native_visibility_coverage.glsl");
-		Ref<RDShaderFile> source_resolve = ResourceLoader::load("res://features/lighting/vu_lights/native_visibility_resolve.glsl");
-		if (source_coverage.is_null() || source_resolve.is_null()) {
-			fail("Missing native visibility shaders");
-			return false;
-		}
-		coverage_shader = rd->shader_create_from_spirv(source_coverage->get_spirv()->get_stages());
-		resolve_shader = rd->shader_create_from_spirv(source_resolve->get_spirv()->get_stages());
-		if (!coverage_shader.is_valid() || !resolve_shader.is_valid()) {
-			fail("Cannot compile native visibility shaders");
-			return false;
-		}
-		coverage_pipeline = rd->compute_pipeline_create(coverage_shader);
-		resolve_pipeline = rd->compute_pipeline_create(resolve_shader);
-		visibility_sampler = rd->sampler_create(RD::SamplerState());
-		RD::Uniform surface_source;
-		surface_source.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
-		surface_source.binding = 0;
-		surface_source.append_id(visibility_sampler);
-		surface_source.append_id(surface_rd);
-		RD::Uniform coverage_target;
-		coverage_target.uniform_type = RD::UNIFORM_TYPE_IMAGE;
-		coverage_target.binding = 1;
-		coverage_target.append_id(coverage_rd);
-		Vector<RD::Uniform> coverage_bindings;
-		coverage_bindings.push_back(surface_source);
-		coverage_bindings.push_back(coverage_target);
-		coverage_set = rd->uniform_set_create(coverage_bindings, coverage_shader, 0);
-		RD::Uniform coverage_source;
-		coverage_source.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
-		coverage_source.binding = 1;
-		coverage_source.append_id(visibility_sampler);
-		coverage_source.append_id(coverage_rd);
-		RD::Uniform visibility_target;
-		visibility_target.uniform_type = RD::UNIFORM_TYPE_IMAGE;
-		visibility_target.binding = 2;
-		visibility_target.append_id(atlas_rd);
-		Vector<RD::Uniform> resolve_bindings;
-		resolve_bindings.push_back(surface_source);
-		resolve_bindings.push_back(coverage_source);
-		resolve_bindings.push_back(visibility_target);
-		resolve_set = rd->uniform_set_create(resolve_bindings, resolve_shader, 0);
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->global_shader_parameter_add("vu_native_data", RSE::GLOBAL_VAR_TYPE_SAMPLER2D, data_texture);
@@ -263,18 +202,8 @@ Vector4 VuLightRuntime::shader_settings() const {
 	return Vector4(1 / cell_size, softness, tile_size, blocks);
 }
 
-// Постоянная карта площадных теней RG32F: первая преграда и видимость её поверхности.
 uint64_t VuLightRuntime::layer_bytes() const {
-	return uint64_t(tile_size) * tile_size * (filter_mode == 1 ? 8 : 4);
-}
-
-// Временные атласы живут всё время работы системы: растр RGBA32F и половинная видимость RG32F.
-uint64_t VuLightRuntime::temporary_bytes() const {
-	if (filter_mode != 1) {
-		return 0;
-	}
-	const uint64_t half_size = tile_size / 2;
-	return uint64_t(VISIBILITY_TEMPORARY_LAYERS) * (uint64_t(tile_size) * tile_size * 16 + half_size * half_size * 8);
+	return uint64_t(tile_size) * tile_size * (filter_mode == 1 ? 16 : 4);
 }
 
 bool VuLightRuntime::add_light(RID instance) {
@@ -540,10 +469,6 @@ void VuLightRuntime::render_frame() {
 		if (selected < 0) {
 			break;
 		}
-		const int source_layers = lights[selected].spot ? 1 : 6;
-		if (filter_mode == 1 && temporary_layers_used + source_layers > VISIBILITY_TEMPORARY_LAYERS) {
-			flush_visibility();
-		}
 		if (!render_shadow(selected)) {
 			continue;
 		}
@@ -558,15 +483,7 @@ void VuLightRuntime::render_frame() {
 		update_membership(selected);
 		publish(selected);
 		updates++;
-		if (filter_mode == 1) {
-			VisibilitySource source;
-			source.slot = selected;
-			source.temporary_layer = temporary_layers_used;
-			pending_visibility.push_back(source);
-			temporary_layers_used += source_layers;
-		}
 	}
-	flush_visibility();
 	if (gpu_timestamps) {
 		rd->capture_timestamp("VU Native Shadows End");
 	}
@@ -615,9 +532,6 @@ void VuLightRuntime::set_softness(float value) {
 	RenderingServer::get_singleton()->global_shader_parameter_set("vu_native_settings", shader_settings());
 	for (const KeyValue<RID, int> &entry : light_slots) {
 		publish(entry.value);
-		if (filter_mode == 1) {
-			dirty(lights.write[entry.value]);
-		}
 	}
 }
 void VuLightRuntime::set_shadows_enabled(bool value) {
@@ -769,19 +683,17 @@ bool VuLightRuntime::render_shadow(int slot) {
 			candidates.push_back(&caster);
 		}
 	}
-	const RID attachment_texture = filter_mode == 1 ? surface_rd : atlas_rd;
-	const int first_attachment_layer = filter_mode == 1 ? temporary_layers_used : light.layer;
 	for (int face = 0; face < count; face++) {
-		int layer = first_attachment_layer + face;
+		int layer = light.layer + face;
 		if (!framebuffers[layer].is_valid()) {
-			slices.write[layer] = rd->texture_create_shared_from_slice(RD::TextureView(), attachment_texture, layer, 0);
+			slices.write[layer] = rd->texture_create_shared_from_slice(RD::TextureView(), atlas_rd, layer, 0);
 			Vector<RID> attachments;
 			attachments.push_back(slices[layer]);
 			attachments.push_back(depth_rd);
 			framebuffers.write[layer] = rd->framebuffer_create(attachments);
 		}
 		if (!framebuffers[0].is_valid()) {
-			slices.write[0] = rd->texture_create_shared_from_slice(RD::TextureView(), attachment_texture, 0, 0);
+			slices.write[0] = rd->texture_create_shared_from_slice(RD::TextureView(), atlas_rd, 0, 0);
 			Vector<RID> attachments;
 			attachments.push_back(slices[0]);
 			attachments.push_back(depth_rd);
@@ -865,59 +777,6 @@ bool VuLightRuntime::render_shadow(int slot) {
 		faces++;
 	}
 	return true;
-}
-
-// Вся партия одним списком на проход: источники занимают разные слои и не требуют барьера между собой.
-void VuLightRuntime::flush_visibility() {
-	if (pending_visibility.is_empty()) {
-		return;
-	}
-	struct Push {
-		int32_t map_info[4];
-		float settings[4];
-	};
-	// Запас на поверхность, метры. Настоящая преграда бывает всего в нескольких миллиметрах от поверхности.
-	const float surface_tolerance = 0.001f;
-	// Допуск совпадения соседних текселей одной поверхности, метры.
-	const float surface_match = 0.004f;
-	const int half_groups = (tile_size / 2 + 7) / 8;
-	const int full_groups = (tile_size + 7) / 8;
-	RD::ComputeListID coverage_list = rd->compute_list_begin();
-	rd->compute_list_bind_compute_pipeline(coverage_list, coverage_pipeline);
-	rd->compute_list_bind_uniform_set(coverage_list, coverage_set, 0);
-	for (const VisibilitySource &source : pending_visibility) {
-		const Light &light = lights[source.slot];
-		const float half_tan = light.spot ? Math::tan(Math::deg_to_rad(MIN(170.0f, 2 * light.angle + 6) * .5f)) : 1.0f;
-		Push push = {};
-		push.map_info[0] = source.temporary_layer;
-		push.map_info[1] = light.spot ? 1 : 0;
-		push.map_info[2] = tile_size;
-		push.settings[0] = 1.0f / half_tan;
-		push.settings[1] = softness;
-		push.settings[2] = surface_tolerance / light.range;
-		rd->compute_list_set_push_constant(coverage_list, &push, sizeof(push));
-		rd->compute_list_dispatch(coverage_list, half_groups, half_groups, light.spot ? 1 : 6);
-	}
-	rd->compute_list_end();
-	RD::ComputeListID resolve_list = rd->compute_list_begin();
-	rd->compute_list_bind_compute_pipeline(resolve_list, resolve_pipeline);
-	rd->compute_list_bind_uniform_set(resolve_list, resolve_set, 0);
-	for (const VisibilitySource &source : pending_visibility) {
-		const Light &light = lights[source.slot];
-		const float half_tan = light.spot ? Math::tan(Math::deg_to_rad(MIN(170.0f, 2 * light.angle + 6) * .5f)) : 1.0f;
-		Push push = {};
-		push.map_info[0] = source.temporary_layer;
-		push.map_info[1] = light.spot ? 1 : 0;
-		push.map_info[2] = tile_size;
-		push.map_info[3] = light.layer;
-		push.settings[0] = 1.0f / half_tan;
-		push.settings[1] = surface_match / light.range;
-		rd->compute_list_set_push_constant(resolve_list, &push, sizeof(push));
-		rd->compute_list_dispatch(resolve_list, full_groups, full_groups, light.spot ? 1 : 6);
-	}
-	rd->compute_list_end();
-	pending_visibility.clear();
-	temporary_layers_used = 0;
 }
 
 Dictionary VuLightRuntime::diagnostics() const {
@@ -1032,12 +891,7 @@ void VuLightRuntime::dispose() {
 	if (atlas_texture.is_valid()) {
 		atlas_texture->set_texture_rd_rid(RID());
 	}
-	for (RID set : { coverage_set, resolve_set }) {
-		if (set.is_valid() && rd->uniform_set_is_valid(set)) {
-			rd->free_rid(set);
-		}
-	}
-	for (RID rid : { coverage_pipeline, coverage_shader, resolve_pipeline, resolve_shader, visibility_sampler, grid_rd, data_rd, atlas_rd, surface_rd, coverage_rd, depth_rd, caster_shader, sampler, white_texture }) {
+	for (RID rid : { grid_rd, data_rd, atlas_rd, depth_rd, caster_shader, sampler, white_texture }) {
 		if (rid.is_valid()) {
 			rd->free_rid(rid);
 		}
