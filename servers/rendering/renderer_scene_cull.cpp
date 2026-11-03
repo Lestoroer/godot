@@ -526,7 +526,86 @@ void RendererSceneCull::scenario_add_viewport_visibility_mask(RID p_scenario, RI
 /* INSTANCING API */
 
 // lestoroer#gi
+// lestoroer#local-lights
+void RendererSceneCull::local_light_observe(RID p_scenario, bool p_enabled) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	ERR_FAIL_COND(p_enabled && scenario->local_light_observer);
+	scenario->local_light_observer = p_enabled;
+	scenario->local_light_dirty.clear();
+	if (p_enabled) {
+		for (SelfList<Instance> *item = scenario->instances.first(); item; item = item->next()) {
+			scenario->local_light_dirty[item->self()->self] = 15;
+		}
+	}
+}
+void RendererSceneCull::local_light_set_owner(RID p_instance, bool p_enabled) {
+	Instance *instance = instance_owner.get_or_null(p_instance);
+	if (!instance) return;
+	if (instance->local_light_owner == p_enabled) return;
+	if (p_enabled) {
+		instance->local_light_visible = instance->visible;
+		instance_set_visible(p_instance, false);
+		instance->local_light_owner = true;
+	} else {
+		instance->local_light_owner = false;
+		instance_set_visible(p_instance, instance->local_light_visible);
+	}
+	_surface_cache_queue(instance, 15);
+}
+bool RendererSceneCull::local_light_is_managed(RID p_instance) const {
+	const Instance *instance = instance_owner.get_or_null(p_instance);
+	return instance && instance->local_light_owner && !instance->visible;
+}
+void RendererSceneCull::local_light_set_enabled(RID p_instance, bool p_enabled) {
+	Instance *instance = instance_owner.get_or_null(p_instance);
+	if (!instance || instance->local_light_enabled == p_enabled) return;
+	instance->local_light_enabled = p_enabled;
+	_surface_cache_queue(instance, 15);
+}
+void RendererSceneCull::local_light_invalidate_gi(RID p_scenario) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	for (SelfList<Instance> *item = scenario->instances.first(); item; item = item->next()) {
+		if (item->self()->local_light_owner) _surface_cache_queue(item->self(), 15);
+	}
+}
+void RendererSceneCull::local_light_poll(RID p_scenario, LocalVector<LocalLightChange> &r_changes) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	update_dirty_instances();
+	r_changes.clear();
+	for (const KeyValue<RID, uint32_t> &entry : scenario->local_light_dirty) {
+		Instance *instance = instance_owner.get_or_null(entry.key);
+		LocalLightChange change;
+		change.instance = entry.key;
+		change.flags = entry.value;
+		change.exists = instance != nullptr;
+		change.active = instance && instance->scenario == scenario && instance->transform.basis.determinant() != 0 &&
+				((instance->base_type == RSE::INSTANCE_LIGHT && instance->local_light_owner) ||
+				(instance->base_type == RSE::INSTANCE_MESH && instance->visible && instance->cast_shadows != RSE::SHADOW_CASTING_SETTING_OFF));
+		if (change.active) {
+			change.base = instance->base;
+			change.light = instance->base_type == RSE::INSTANCE_LIGHT;
+			change.enabled = !change.light || (instance->local_light_visible && instance->local_light_enabled);
+			change.transform = instance->transform;
+			change.bounds = instance->transformed_aabb;
+			change.layers = instance->layer_mask;
+			if (!change.light) {
+				change.mesh_instance = instance->mesh_instance;
+				change.material_override = instance->material_override;
+				change.materials = instance->materials;
+			}
+		}
+		r_changes.push_back(change);
+	}
+	scenario->local_light_dirty.clear();
+}
+// lestoroer#gi, lestoroer#local-lights
 void RendererSceneCull::_surface_cache_queue(Instance *p_instance, uint32_t p_flags) const {
+	if (p_instance->scenario && p_instance->scenario->local_light_observer) {
+		p_instance->scenario->local_light_dirty[p_instance->self] |= p_flags;
+	}
 	if (p_instance->scenario && p_instance->scenario->surface_cache_callback.is_valid()) {
 		p_instance->scenario->surface_cache_dirty[p_instance->self] |= p_flags;
 	}
@@ -582,7 +661,8 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 		data["instance"] = entry.key;
 		data["changes"] = entry.value;
 		// Вырожденный transform исключает объект из растеризации; GI должен исключить его тоже.
-		bool active = instance && instance->scenario == scenario && instance->visible &&
+		// lestoroer#local-lights
+		bool active = instance && instance->scenario == scenario && (instance->visible || (instance->local_light_owner && instance->local_light_visible && instance->local_light_enabled)) &&
 				instance->transform.basis.determinant() != 0 &&
 				((instance->base_type == RSE::INSTANCE_MESH && (instance->baked_light || instance->dynamic_gi) &&
 						RSG::mesh_storage->mesh_get_surface_count(instance->base) > 0) || instance->base_type == RSE::INSTANCE_LIGHT);
@@ -594,6 +674,7 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 			data["layers"] = instance->layer_mask;
 			data["bounds"] = instance->transformed_aabb;
 			if (instance->base_type == RSE::INSTANCE_LIGHT) {
+				data["local_light"] = instance->local_light_owner; // lestoroer#local-lights
 				data["light_type"] = RSG::light_storage->light_get_type(instance->base);
 				data["color"] = RSG::light_storage->light_get_color(instance->base);
 				Vector<float> params;
@@ -1190,6 +1271,12 @@ void RendererSceneCull::instance_set_surface_override_material(RID p_instance, i
 void RendererSceneCull::instance_set_visible(RID p_instance, bool p_visible) {
 	Instance *instance = instance_owner.get_or_null(p_instance);
 	ERR_FAIL_NULL(instance);
+	// lestoroer#local-lights: keep Node3D transform notifications while suppressing standard rendering.
+	if (instance->local_light_owner) {
+		instance->local_light_visible = p_visible;
+		_surface_cache_queue(instance, 15);
+		p_visible = false;
+	}
 
 	if (instance->visible == p_visible) {
 		return;

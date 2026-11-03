@@ -7,6 +7,9 @@
 #include "core/object/class_db.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
 #include "servers/rendering/rendering_server.h"
+// lestoroer#local-lights
+#include "servers/rendering/renderer_scene_cull.h"
+#include "servers/rendering/rendering_server_globals.h"
 
 #include <cstring>
 
@@ -61,6 +64,10 @@ void SurfaceCacheWorldRD::update_profile(const Ref<Resource> &settings) {
 	}
 	ERR_FAIL_COND(settings.is_null() || settings->call("layout_key") != profile->call("layout_key"));
 	sky_changed |= settings->get("sky_radiance") != profile->get("sky_radiance") || settings->get("trace_distance") != profile->get("trace_distance");
+	// lestoroer#local-lights
+	if (settings->get("local_lights_enabled") != profile->get("local_lights_enabled")) {
+		static_cast<RendererSceneCull *>(RSG::scene)->local_light_invalidate_gi(scenario);
+	}
 	profile = settings;
 }
 
@@ -369,6 +376,8 @@ SurfaceCacheWorldRD::ChangeKind SurfaceCacheWorldRD::change_kind(const Dictionar
 		return REMOVE;
 	}
 	if (int(change["type"]) == RSE::INSTANCE_LIGHT) {
+		// lestoroer#local-lights
+		if (bool(change.get("local_light", false)) && !bool(profile->get("local_lights_enabled"))) return REMOVE;
 		return LIGHT;
 	}
 	RID source = change["instance"];

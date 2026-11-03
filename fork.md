@@ -13,3 +13,4 @@
 - [Создание кешированных шейдеров по запросу](fork/shader-cache.md).
 - [Callback POST_TEMPORAL](fork/post-temporal.md).
 - [Самостоятельные исправления движка](fork/fixes.md).
+- [Локальное освещение Interior Star](fork/local-lights.md).
