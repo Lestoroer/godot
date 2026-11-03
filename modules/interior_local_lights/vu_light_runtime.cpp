@@ -229,6 +229,7 @@ bool VuLightRuntime::initialize_gpu() {
 	rs->global_shader_parameter_add("vu_native_origin", RSE::GLOBAL_VAR_TYPE_VEC3, world.position);
 	rs->global_shader_parameter_add("vu_native_dims", RSE::GLOBAL_VAR_TYPE_IVEC3, dimensions);
 	rs->global_shader_parameter_add("vu_native_settings", RSE::GLOBAL_VAR_TYPE_VEC4, shader_settings());
+	rs->global_shader_parameter_add("vu_native_penumbra", RSE::GLOBAL_VAR_TYPE_FLOAT, moment_penumbra_scale());
 	return true;
 }
 
@@ -238,6 +239,19 @@ Vector4 VuLightRuntime::shader_settings() const {
 		blocks = MAX(blocks, entry.value / 64 + 1);
 	}
 	return Vector4(1 / cell_size, softness, tile_size, blocks);
+}
+
+// σ ядра карты в радианах. Границы задают выборки на текселе: шаг угла равен 2/tile_size, в фильтре до 12 шагов на сторону.
+float VuLightRuntime::moment_filter_sigma() const {
+	return CLAMP(softness / 3.0f, 1.0f / tile_size, 9.0f / tile_size);
+}
+
+// Приём сравнивает настоящую полутень сферы с шириной ядра, куда входит и предфильтр (1,22 текселя). 0,75 приближает
+// долю ядра внутри полутени: erf(g/√2) при g = полутень/σ.
+float VuLightRuntime::moment_penumbra_scale() const {
+	const float sigma = moment_filter_sigma();
+	const float box = 2.44f / tile_size;
+	return 0.75f * softness / Math::sqrt(sigma * sigma + box * box);
 }
 
 bool VuLightRuntime::add_light(RID instance) {
@@ -577,6 +591,7 @@ void VuLightRuntime::set_softness(float value) {
 	}
 	softness = value;
 	RenderingServer::get_singleton()->global_shader_parameter_set("vu_native_settings", shader_settings());
+	RenderingServer::get_singleton()->global_shader_parameter_set("vu_native_penumbra", moment_penumbra_scale());
 	for (const KeyValue<RID, int> &entry : light_slots) {
 		publish(entry.value);
 		if (filter_mode == 1) {
@@ -834,6 +849,7 @@ void VuLightRuntime::filter_moments(const LocalVector<int> &sources) {
 		int32_t layers[FILTER_BATCH][4];
 		float settings[FILTER_BATCH][4];
 	};
+	const float sigma = moment_filter_sigma();
 	for (uint32_t first = 0; first < sources.size(); first += FILTER_BATCH) {
 		const int count = MIN(uint32_t(FILTER_BATCH), sources.size() - first);
 		const bool spot = lights[sources[first]].spot;
@@ -845,10 +861,10 @@ void VuLightRuntime::filter_moments(const LocalVector<int> &sources) {
 				push.layers[i][1] = axis % 2 == 0 ? i * 6 : light.layer;
 				push.layers[i][2] = spot ? 1 : 6;
 				push.layers[i][3] = axis;
+				const float half_tan = spot ? Math::tan(Math::deg_to_rad(MIN(170.0f, 2 * light.angle + 6) * .5f)) : 1.0f;
 				push.settings[i][0] = tile_size;
-				push.settings[i][1] = softness;
-				push.settings[i][2] = light.range;
-				push.settings[i][3] = spot ? Math::tan(Math::deg_to_rad(MIN(170.0f, 2 * light.angle + 6) * .5f)) : 1;
+				// Тот же угол в шагах карты: для куба шаг 2/tile_size, для спота в центре карты 2·tan/tile_size.
+				push.settings[i][1] = CLAMP(sigma * tile_size / (2.0f * half_tan), 0.5f, 4.5f);
 			}
 			RD::ComputeListID list = rd->compute_list_begin();
 			rd->compute_list_bind_compute_pipeline(list, filter_pipeline);
@@ -938,7 +954,7 @@ void VuLightRuntime::dispose() {
 			scene_cull()->local_light_set_owner(entry.key, false);
 		}
 		scene_cull()->local_light_observe(scenario, false);
-		for (const char *name : { "vu_native_data", "vu_native_atlas", "vu_native_origin", "vu_native_dims", "vu_native_settings" }) {
+		for (const char *name : { "vu_native_data", "vu_native_atlas", "vu_native_origin", "vu_native_dims", "vu_native_settings", "vu_native_penumbra" }) {
 			RenderingServer::get_singleton()->global_shader_parameter_remove(name);
 		}
 	}
