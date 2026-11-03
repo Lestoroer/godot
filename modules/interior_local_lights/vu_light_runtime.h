@@ -15,7 +15,7 @@ class VuLightRuntime : public RefCounted {
 		float range = 1, energy = 1, decay = 1, angle = 45, cone_decay = 1, specular = 1;
 		float baked_range = 1, baked_angle = 45;
 		uint32_t caster_mask = UINT32_MAX;
-		bool spot = false, shadows = true, enabled = true, valid = false, dirty = true;
+		bool spot = false, shadows = true, enabled = true, valid = false, dirty = true, atlas_denied = false;
 		int layer = -1;
 		uint64_t queued = 0, updated = 0;
 		LocalVector<int> cells;
@@ -45,6 +45,7 @@ class VuLightRuntime : public RefCounted {
 	Vector<Light> lights;
 	HashMap<RID, Geometry> geometry;
 	LocalVector<RendererSceneCull::LocalLightChange> changes;
+	LocalVector<int> pending_filters[2];
 	Vector<uint32_t> grid;
 	Vector<float> records;
 	Vector<int> layer_owner;
@@ -78,7 +79,7 @@ class VuLightRuntime : public RefCounted {
 	void clear_membership(int p_slot);
 	void publish(int p_slot);
 	bool render_shadow(int p_slot);
-	void filter_moments(const Light &p_light);
+	void filter_moments(const LocalVector<int> &p_sources);
 	MaterialData material_data(RID p_material);
 	RID pipeline(RenderingDevice::VertexFormatID p_format);
 	void upload();
@@ -94,7 +95,7 @@ public:
 	void set_shadows_enabled(bool p_enabled);
 	void set_light_enabled(RID p_instance, bool p_enabled);
 	void set_interactive(RID p_instance) { interactive = p_instance; }
-	void add_light(RID p_instance);
+	bool add_light(RID p_instance);
 	void dispose();
 	String get_error() const { return error; }
 	Ref<Texture2DRD> get_grid_texture() const { return grid_texture; }

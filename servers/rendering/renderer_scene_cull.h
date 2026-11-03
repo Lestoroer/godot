@@ -394,6 +394,7 @@ public:
 	void local_light_observe(RID p_scenario, bool p_enabled);
 	void local_light_set_owner(RID p_instance, bool p_enabled);
 	void local_light_set_enabled(RID p_instance, bool p_enabled);
+	bool local_light_can_manage(RID p_instance, RID p_scenario) const;
 	bool local_light_is_managed(RID p_instance) const;
 	void local_light_poll(RID p_scenario, LocalVector<LocalLightChange> &r_changes);
 	void local_light_invalidate_gi(RID p_scenario);

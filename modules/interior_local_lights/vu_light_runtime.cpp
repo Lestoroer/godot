@@ -20,7 +20,7 @@ static RendererSceneCull *scene_cull() {
 static double elapsed(uint64_t start) {
 	return (OS::get_singleton()->get_ticks_usec() - start) * 0.001;
 }
-static constexpr int WORDS = 8, STRIDE = 32;
+static constexpr int WORDS = 8, STRIDE = 32, FILTER_BATCH = 4;
 static const Basis faces_basis[6] = {
 	Basis(Vector3(0, 0, 1), Vector3(0, 1, 0), Vector3(-1, 0, 0)),
 	Basis(Vector3(0, 0, -1), Vector3(0, 1, 0), Vector3(1, 0, 0)),
@@ -91,7 +91,10 @@ void VuLightRuntime::attach(RID p_scenario, const TypedArray<RID> &p_sources, co
 	scene_cull()->local_light_observe(scenario, true);
 	ready = true;
 	for (int i = 0; i < p_sources.size(); i++) {
-		add_light(p_sources[i]);
+		if (!add_light(p_sources[i])) {
+			fail("Invalid source or native source capacity exceeded");
+			return;
+		}
 	}
 	consume_changes();
 	int required_layers = 0;
@@ -100,7 +103,7 @@ void VuLightRuntime::attach(RID p_scenario, const TypedArray<RID> &p_sources, co
 			required_layers += light.spot ? 1 : 6;
 		}
 	}
-	uint64_t working_bytes = 8 * 1024 * 1024 + uint64_t(tile_size) * tile_size * (4 + (filter_mode == 1 ? 96 : 0));
+	uint64_t working_bytes = 8 * 1024 * 1024 + uint64_t(tile_size) * tile_size * (4 + (filter_mode == 1 ? 96 * FILTER_BATCH : 0));
 	if (working_bytes >= memory_limit) {
 		fail("Native light scratch buffers exceed the memory budget");
 		return;
@@ -179,7 +182,7 @@ bool VuLightRuntime::initialize_gpu() {
 	Vector<Vector<uint8_t>> initial;
 	initial.push_back(white);
 	white_texture = rd->texture_create(format, RD::TextureView(), initial);
-	memory_bytes = uint64_t(tile_size) * tile_size * (uint64_t(layers) * (filter_mode == 1 ? 16 : 4) + 4 + (filter_mode == 1 ? 96 : 0)) + grid.size() * 8 + records.size() * 8 + lights.size() * sizeof(Light);
+	memory_bytes = uint64_t(tile_size) * tile_size * (uint64_t(layers) * (filter_mode == 1 ? 16 : 4) + 4 + (filter_mode == 1 ? 96 * FILTER_BATCH : 0)) + grid.size() * 8 + records.size() * 8 + lights.size() * sizeof(Light);
 	if (memory_bytes > memory_limit) {
 		fail("Native local-light memory budget exceeded");
 		return false;
@@ -195,7 +198,7 @@ bool VuLightRuntime::initialize_gpu() {
 		format.width = tile_size;
 		format.height = tile_size;
 		format.texture_type = RD::TEXTURE_TYPE_2D_ARRAY;
-		format.array_layers = 6;
+		format.array_layers = 6 * FILTER_BATCH;
 		format.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
 		format.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
 		filter_scratch = rd->texture_create(format, RD::TextureView());
@@ -237,9 +240,12 @@ Vector4 VuLightRuntime::shader_settings() const {
 	return Vector4(1 / cell_size, softness, tile_size, blocks);
 }
 
-void VuLightRuntime::add_light(RID instance) {
-	if (!ready || light_slots.has(instance)) {
-		return;
+bool VuLightRuntime::add_light(RID instance) {
+	if (!ready || disposed || !scene_cull()->local_light_can_manage(instance, scenario)) {
+		return false;
+	}
+	if (light_slots.has(instance)) {
+		return true;
 	}
 	for (int i = 0; i < lights.size(); i++) {
 		if (!lights[i].instance.is_valid()) {
@@ -251,10 +257,10 @@ void VuLightRuntime::add_light(RID instance) {
 			if (data_texture.is_valid()) {
 				RenderingServer::get_singleton()->global_shader_parameter_set("vu_native_settings", shader_settings());
 			}
-			return;
+			return true;
 		}
 	}
-	fail("Native light source capacity exceeded; increase the configured registry capacity");
+	return false;
 }
 void VuLightRuntime::dirty(Light &light) {
 	if (!light.dirty) {
@@ -324,6 +330,9 @@ void VuLightRuntime::consume_changes() {
 						layer_owner.write[i] = -1;
 					}
 				}
+				for (Light &waiting : lights) {
+					waiting.atlas_denied = false;
+				}
 				records.write[slot * STRIDE + 3] = 0;
 				light.layer = -1;
 				light.valid = false;
@@ -341,16 +350,21 @@ void VuLightRuntime::consume_changes() {
 			float range = storage->light_get_param(change.base, RSE::LIGHT_PARAM_RANGE), angle = storage->light_get_param(change.base, RSE::LIGHT_PARAM_SPOT_ANGLE);
 			bool shadows = storage->light_has_shadow(change.base);
 			uint32_t mask = storage->light_get_shadow_caster_mask(change.base);
-			bool geometry_change = light.base != change.base || light.transform != change.transform || light.range != range || light.angle != angle || light.caster_mask != mask || light.shadows != shadows;
+			bool geometry_change = light.base != change.base || light.transform != change.transform || light.range != range || light.angle != angle || light.caster_mask != mask;
+			bool shadow_change = light.shadows != shadows;
 			light.base = change.base;
 			light.transform = change.transform;
 			light.range = range;
 			light.angle = angle;
+			if (shadows && !light.shadows && (light.dirty || geometry_change)) {
+				light.valid = false;
+			}
 			light.shadows = shadows;
 			light.caster_mask = mask;
 			if (light.enabled != change.enabled) {
 				light.enabled = change.enabled;
 				if (light.enabled) {
+					light.valid = false;
 					dirty(light);
 				}
 				update_membership(slot);
@@ -363,6 +377,8 @@ void VuLightRuntime::consume_changes() {
 			light.specular = 2.0f * storage->light_get_param(change.base, RSE::LIGHT_PARAM_SPECULAR);
 			if (geometry_change) {
 				dirty(light);
+			}
+			if (geometry_change || shadow_change) {
 				update_membership(slot);
 			}
 			publish(slot);
@@ -465,13 +481,15 @@ void VuLightRuntime::render_frame() {
 	if (gpu_timestamps) {
 		rd->capture_timestamp("VU Native Shadows Begin");
 	}
+	pending_filters[0].clear();
+	pending_filters[1].clear();
 	int budget = cap == 0 ? max_sources : cap;
 	while (shadows_enabled && budget-- > 0) {
 		int selected = -1;
 		double best = -1;
 		for (int slot = 0; slot < lights.size(); slot++) {
 			const Light &light = lights[slot];
-			if (!light.instance.is_valid() || !light.base.is_valid() || !light.enabled || !light.shadows || !light.dirty) {
+			if (!light.instance.is_valid() || !light.base.is_valid() || !light.enabled || !light.shadows || !light.dirty || light.atlas_denied) {
 				continue;
 			}
 			double distance = light.transform.origin.distance_squared_to(camera_position);
@@ -488,7 +506,7 @@ void VuLightRuntime::render_frame() {
 			break;
 		}
 		if (!render_shadow(selected)) {
-			break;
+			continue;
 		}
 		Light &light = lights.write[selected];
 		served_age = MAX(served_age, frame - light.queued);
@@ -501,6 +519,12 @@ void VuLightRuntime::render_frame() {
 		update_membership(selected);
 		publish(selected);
 		updates++;
+		if (filter_mode == 1) {
+			pending_filters[light.spot ? 1 : 0].push_back(selected);
+		}
+	}
+	for (const LocalVector<int> &batch : pending_filters) {
+		filter_moments(batch);
 	}
 	if (gpu_timestamps) {
 		rd->capture_timestamp("VU Native Shadows End");
@@ -556,25 +580,34 @@ void VuLightRuntime::set_softness(float value) {
 	}
 }
 void VuLightRuntime::set_shadows_enabled(bool value) {
-	if (shadows_enabled == value) {
+	if (!ready || disposed || shadows_enabled == value) {
 		return;
+	}
+	if (value) {
+		consume_changes();
 	}
 	shadows_enabled = value;
 	for (const KeyValue<RID, int> &entry : light_slots) {
+		Light &light = lights.write[entry.value];
+		if (value && light.dirty) {
+			light.valid = false;
+		}
 		update_membership(entry.value);
 		publish(entry.value);
 	}
 }
 void VuLightRuntime::set_light_enabled(RID instance, bool enabled) {
-	scene_cull()->local_light_set_enabled(instance, enabled);
+	if (disposed) { return; }
 	int *slot = light_slots.getptr(instance);
 	ERR_FAIL_NULL(slot);
+	scene_cull()->local_light_set_enabled(instance, enabled);
 	Light &light = lights.write[*slot];
 	if (light.enabled == enabled) {
 		return;
 	}
 	light.enabled = enabled;
 	if (enabled) {
+		light.valid = false;
 		dirty(light);
 	}
 	update_membership(*slot);
@@ -676,7 +709,8 @@ bool VuLightRuntime::render_shadow(int slot) {
 			}
 		}
 		if (light.layer < 0) {
-			fail("Native shadow atlas exhausted: no source may silently lose its shadow");
+			light.atlas_denied = true;
+			ERR_PRINT_ONCE("Native shadow atlas full: waiting sources remain dark; existing lights continue. See atlas_denied diagnostics.");
 			return false;
 		}
 		for (int i = 0; i < count; i++) {
@@ -787,42 +821,48 @@ bool VuLightRuntime::render_shadow(int slot) {
 		rd->draw_list_end();
 		faces++;
 	}
-	if (filter_mode == 1) {
-		filter_moments(light);
-	}
 	return true;
 }
 
-void VuLightRuntime::filter_moments(const Light &light) {
+void VuLightRuntime::filter_moments(const LocalVector<int> &sources) {
 	struct Push {
-		int32_t layers[4];
-		float settings[4];
-	} push = {};
-	push.layers[2] = light.spot ? 1 : 6;
-	push.settings[0] = tile_size;
-	push.settings[1] = softness;
-	push.settings[2] = light.range;
-	push.settings[3] = light.spot ? Math::tan(Math::deg_to_rad(MIN(170.0f, 2 * light.angle + 6) * .5f)) : 1;
-	for (int axis = 0; axis < 2; axis++) {
-		push.layers[0] = axis == 0 ? light.layer : 0;
-		push.layers[1] = axis == 0 ? 0 : light.layer;
-		push.layers[3] = axis;
-		RD::ComputeListID list = rd->compute_list_begin();
-		rd->compute_list_bind_compute_pipeline(list, filter_pipeline);
-		rd->compute_list_bind_uniform_set(list, axis == 0 ? filter_horizontal : filter_vertical, 0);
-		rd->compute_list_set_push_constant(list, &push, sizeof(push));
-		rd->compute_list_dispatch(list, (tile_size + 7) / 8, (tile_size + 7) / 8, push.layers[2]);
-		rd->compute_list_end();
+		int32_t layers[FILTER_BATCH][4];
+		float settings[FILTER_BATCH][4];
+	};
+	for (uint32_t first = 0; first < sources.size(); first += FILTER_BATCH) {
+		const int count = MIN(uint32_t(FILTER_BATCH), sources.size() - first);
+		const bool spot = lights[sources[first]].spot;
+		Push push = {};
+		for (int axis = 0; axis < (spot ? 2 : 4); axis++) {
+			for (int i = 0; i < count; i++) {
+				const Light &light = lights[sources[first + i]];
+				push.layers[i][0] = axis % 2 == 0 ? light.layer : i * 6;
+				push.layers[i][1] = axis % 2 == 0 ? i * 6 : light.layer;
+				push.layers[i][2] = spot ? 1 : 6;
+				push.layers[i][3] = axis;
+				push.settings[i][0] = tile_size;
+				push.settings[i][1] = softness;
+				push.settings[i][2] = light.range;
+				push.settings[i][3] = spot ? Math::tan(Math::deg_to_rad(MIN(170.0f, 2 * light.angle + 6) * .5f)) : 1;
+			}
+			RD::ComputeListID list = rd->compute_list_begin();
+			rd->compute_list_bind_compute_pipeline(list, filter_pipeline);
+			rd->compute_list_bind_uniform_set(list, axis % 2 == 0 ? filter_horizontal : filter_vertical, 0);
+			rd->compute_list_set_push_constant(list, &push, sizeof(push));
+			rd->compute_list_dispatch(list, (tile_size + 7) / 8, (tile_size + 7) / 8, count * (spot ? 1 : 6));
+			rd->compute_list_end();
+		}
 	}
 }
 
 Dictionary VuLightRuntime::diagnostics() const {
 	Dictionary result;
-	int active = 0, omni = 0, spot = 0, valid = 0, queue = 0, casting = 0, used_layers = 0;
+	int active = 0, omni = 0, spot = 0, valid = 0, queue = 0, casting = 0, used_layers = 0, denied = 0;
 	uint64_t age = 0;
 	for (const Light &light : lights) {
 		if (light.instance.is_valid() && light.enabled) {
 			active++;
+			if (light.atlas_denied) { denied++; }
 			light.spot ? spot++ : omni++;
 			if (light.shadows && shadows_enabled) {
 				casting++;
@@ -845,6 +885,7 @@ Dictionary VuLightRuntime::diagnostics() const {
 	result["valid_shadows"] = valid;
 	result["queue"] = queue;
 	result["casting"] = casting;
+	result["atlas_denied"] = denied;
 	result["used_layers"] = used_layers;
 	result["served_age_frames"] = served_age;
 	result["total_uploads"] = total_uploads;
@@ -875,7 +916,7 @@ Dictionary VuLightRuntime::diagnostics() const {
 	return result;
 }
 bool VuLightRuntime::owns_light(RID instance) const {
-	return light_slots.has(instance) && scene_cull()->local_light_is_managed(instance);
+	return !disposed && light_slots.has(instance) && scene_cull()->local_light_is_managed(instance);
 }
 void VuLightRuntime::dispose() {
 	if (disposed) {
@@ -888,6 +929,7 @@ void VuLightRuntime::dispose() {
 	}
 	if (ready) {
 		for (const KeyValue<RID, int> &entry : light_slots) {
+			scene_cull()->local_light_set_enabled(entry.key, true);
 			scene_cull()->local_light_set_owner(entry.key, false);
 		}
 		scene_cull()->local_light_observe(scenario, false);
