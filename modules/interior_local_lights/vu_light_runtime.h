@@ -52,9 +52,9 @@ class VuLightRuntime : public RefCounted {
 	Vector<RID> slices, framebuffers;
 	HashMap<uint64_t, RID> pipelines;
 	HashMap<RID, MaterialData> materials;
-	RID grid_rd, data_rd, atlas_rd, depth_rd, caster_shader, sampler, white_texture;
+	RID grid_rd, data_rd, atlas_rd, first_hit_rd, depth_rd, caster_shader, sampler, white_texture;
 	Ref<Texture2DRD> grid_texture, data_texture;
-	Ref<Texture2DArrayRD> atlas_texture;
+	Ref<Texture2DArrayRD> atlas_texture, first_hit_texture;
 	AABB world;
 	Vector3i dimensions;
 	float cell_size = 1.0f, softness = 0.18f;
