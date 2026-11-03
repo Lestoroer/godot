@@ -108,7 +108,8 @@ void VuLightRuntime::attach(RID p_scenario, const TypedArray<RID> &p_sources, co
 		fail("Native light scratch buffers exceed the memory budget");
 		return;
 	}
-	int layer_limit = MIN(int((memory_limit - working_bytes) / (uint64_t(tile_size) * tile_size * (filter_mode == 1 ? 16 : 4))), int(rd->limit_get(RD::LIMIT_MAX_TEXTURE_ARRAY_LAYERS)));
+	// Режим моментов: 16 байт на моменты и 4 на первую преграду.
+	int layer_limit = MIN(int((memory_limit - working_bytes) / (uint64_t(tile_size) * tile_size * (filter_mode == 1 ? 20 : 4))), int(rd->limit_get(RD::LIMIT_MAX_TEXTURE_ARRAY_LAYERS)));
 	if (required_layers > layer_limit) {
 		fail("Requested native shadow atlas exceeds the memory budget");
 		return;
@@ -157,6 +158,13 @@ bool VuLightRuntime::initialize_gpu() {
 	atlas_rd = rd->texture_create(format, RD::TextureView());
 	atlas_texture.instantiate();
 	atlas_texture->set_texture_rd_rid(atlas_rd);
+	if (filter_mode == 1) {
+		format.format = RD::DATA_FORMAT_R32_SFLOAT;
+		format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
+		first_hit_rd = rd->texture_create(format, RD::TextureView());
+		first_hit_texture.instantiate();
+		first_hit_texture->set_texture_rd_rid(first_hit_rd);
+	}
 	format.array_layers = 1;
 	format.texture_type = RD::TEXTURE_TYPE_2D;
 	format.format = RD::DATA_FORMAT_D32_SFLOAT;
@@ -182,7 +190,7 @@ bool VuLightRuntime::initialize_gpu() {
 	Vector<Vector<uint8_t>> initial;
 	initial.push_back(white);
 	white_texture = rd->texture_create(format, RD::TextureView(), initial);
-	memory_bytes = uint64_t(tile_size) * tile_size * (uint64_t(layers) * (filter_mode == 1 ? 16 : 4) + 4 + (filter_mode == 1 ? 96 * FILTER_BATCH : 0)) + grid.size() * 8 + records.size() * 8 + lights.size() * sizeof(Light);
+	memory_bytes = uint64_t(tile_size) * tile_size * (uint64_t(layers) * (filter_mode == 1 ? 20 : 4) + 4 + (filter_mode == 1 ? 96 * FILTER_BATCH : 0)) + grid.size() * 8 + records.size() * 8 + lights.size() * sizeof(Light);
 	if (memory_bytes > memory_limit) {
 		fail("Native local-light memory budget exceeded");
 		return false;
@@ -215,6 +223,11 @@ bool VuLightRuntime::initialize_gpu() {
 			Vector<RD::Uniform> bindings;
 			bindings.push_back(source);
 			bindings.push_back(target);
+			RD::Uniform first_hit;
+			first_hit.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+			first_hit.binding = 2;
+			first_hit.append_id(first_hit_rd);
+			bindings.push_back(first_hit);
 			RID set = rd->uniform_set_create(bindings, filter_shader, 0);
 			if (axis == 0) {
 				filter_horizontal = set;
@@ -226,6 +239,9 @@ bool VuLightRuntime::initialize_gpu() {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->global_shader_parameter_add("vu_native_data", RSE::GLOBAL_VAR_TYPE_SAMPLER2D, data_texture);
 	rs->global_shader_parameter_add("vu_native_atlas", RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAY, atlas_texture);
+	if (filter_mode == 1) {
+		rs->global_shader_parameter_add("vu_native_first_hit", RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAY, first_hit_texture);
+	}
 	rs->global_shader_parameter_add("vu_native_origin", RSE::GLOBAL_VAR_TYPE_VEC3, world.position);
 	rs->global_shader_parameter_add("vu_native_dims", RSE::GLOBAL_VAR_TYPE_IVEC3, dimensions);
 	rs->global_shader_parameter_add("vu_native_settings", RSE::GLOBAL_VAR_TYPE_VEC4, shader_settings());
@@ -944,7 +960,7 @@ void VuLightRuntime::dispose() {
 			scene_cull()->local_light_set_owner(entry.key, false);
 		}
 		scene_cull()->local_light_observe(scenario, false);
-		for (const char *name : { "vu_native_data", "vu_native_atlas", "vu_native_origin", "vu_native_dims", "vu_native_settings" }) {
+		for (const char *name : { "vu_native_data", "vu_native_atlas", "vu_native_first_hit", "vu_native_origin", "vu_native_dims", "vu_native_settings" }) {
 			RenderingServer::get_singleton()->global_shader_parameter_remove(name);
 		}
 	}
@@ -978,7 +994,10 @@ void VuLightRuntime::dispose() {
 	if (atlas_texture.is_valid()) {
 		atlas_texture->set_texture_rd_rid(RID());
 	}
-	for (RID rid : { filter_horizontal, filter_vertical, filter_pipeline, filter_shader, filter_scratch, grid_rd, data_rd, atlas_rd, depth_rd, caster_shader, sampler, white_texture }) {
+	if (first_hit_texture.is_valid()) {
+		first_hit_texture->set_texture_rd_rid(RID());
+	}
+	for (RID rid : { filter_horizontal, filter_vertical, filter_pipeline, filter_shader, filter_scratch, grid_rd, data_rd, atlas_rd, first_hit_rd, depth_rd, caster_shader, sampler, white_texture }) {
 		if (rid.is_valid()) {
 			rd->free_rid(rid);
 		}
