@@ -553,6 +553,11 @@ void RendererSceneCull::local_light_set_owner(RID p_instance, bool p_enabled) {
 	}
 	_surface_cache_queue(instance, 15);
 }
+bool RendererSceneCull::local_light_can_manage(RID p_instance, RID p_scenario) const {
+	const Instance *instance = instance_owner.get_or_null(p_instance);
+	return instance && instance->scenario && instance->scenario->self == p_scenario && instance->base_type == RSE::INSTANCE_LIGHT &&
+			RSG::light_storage->light_get_type(instance->base) != RSE::LIGHT_DIRECTIONAL;
+}
 bool RendererSceneCull::local_light_is_managed(RID p_instance) const {
 	const Instance *instance = instance_owner.get_or_null(p_instance);
 	return instance && instance->local_light_owner && !instance->visible;
