@@ -229,7 +229,6 @@ bool VuLightRuntime::initialize_gpu() {
 	rs->global_shader_parameter_add("vu_native_origin", RSE::GLOBAL_VAR_TYPE_VEC3, world.position);
 	rs->global_shader_parameter_add("vu_native_dims", RSE::GLOBAL_VAR_TYPE_IVEC3, dimensions);
 	rs->global_shader_parameter_add("vu_native_settings", RSE::GLOBAL_VAR_TYPE_VEC4, shader_settings());
-	rs->global_shader_parameter_add("vu_native_penumbra", RSE::GLOBAL_VAR_TYPE_FLOAT, moment_penumbra_scale());
 	return true;
 }
 
@@ -244,14 +243,6 @@ Vector4 VuLightRuntime::shader_settings() const {
 // σ ядра карты в радианах. Границы задают выборки на текселе: шаг угла равен 2/tile_size, в фильтре до 12 шагов на сторону.
 float VuLightRuntime::moment_filter_sigma() const {
 	return CLAMP(softness / 3.0f, 1.0f / tile_size, 9.0f / tile_size);
-}
-
-// Приём сравнивает настоящую полутень сферы с шириной ядра, куда входит и предфильтр (1,22 текселя). 0,75 приближает
-// долю ядра внутри полутени: erf(g/√2) при g = полутень/σ.
-float VuLightRuntime::moment_penumbra_scale() const {
-	const float sigma = moment_filter_sigma();
-	const float box = 2.44f / tile_size;
-	return 0.75f * softness / Math::sqrt(sigma * sigma + box * box);
 }
 
 bool VuLightRuntime::add_light(RID instance) {
@@ -591,7 +582,6 @@ void VuLightRuntime::set_softness(float value) {
 	}
 	softness = value;
 	RenderingServer::get_singleton()->global_shader_parameter_set("vu_native_settings", shader_settings());
-	RenderingServer::get_singleton()->global_shader_parameter_set("vu_native_penumbra", moment_penumbra_scale());
 	for (const KeyValue<RID, int> &entry : light_slots) {
 		publish(entry.value);
 		if (filter_mode == 1) {
@@ -954,7 +944,7 @@ void VuLightRuntime::dispose() {
 			scene_cull()->local_light_set_owner(entry.key, false);
 		}
 		scene_cull()->local_light_observe(scenario, false);
-		for (const char *name : { "vu_native_data", "vu_native_atlas", "vu_native_origin", "vu_native_dims", "vu_native_settings", "vu_native_penumbra" }) {
+		for (const char *name : { "vu_native_data", "vu_native_atlas", "vu_native_origin", "vu_native_dims", "vu_native_settings" }) {
 			RenderingServer::get_singleton()->global_shader_parameter_remove(name);
 		}
 	}
