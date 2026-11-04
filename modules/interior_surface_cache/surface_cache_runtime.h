@@ -14,8 +14,10 @@
 #include "servers/rendering/storage/render_data.h"
 
 namespace SurfaceCache {
+inline constexpr const char *GAME_SOURCE_ROOT = "res://features/lighting/subsystems/gi/src/";
+
 inline Ref<RefCounted> script_object(const String &p_name) {
-	Ref<Script> script = ResourceLoader::load("res://features/lighting/surface_cache/" + p_name + ".gd");
+	Ref<Script> script = ResourceLoader::load(String(GAME_SOURCE_ROOT) + p_name + ".gd");
 	ERR_FAIL_COND_V(script.is_null(), Ref<RefCounted>());
 	Ref<RefCounted> object = Object::cast_to<RefCounted>(ClassDB::instantiate(script->get_instance_base_type()));
 	ERR_FAIL_COND_V(object.is_null(), Ref<RefCounted>());
@@ -42,7 +44,7 @@ struct Kernel {
 	String error;
 	bool initialize(RenderingDevice *p_device, const String &p_name, const PackedStringArray &p_defines = {}) {
 		compiler = script_object("gpu_kernel");
-		if (compiler.is_null() || !bool(compiler->call("initialize", p_device, "res://features/lighting/surface_cache/" + p_name + ".glsl.template", p_defines))) {
+		if (compiler.is_null() || !bool(compiler->call("initialize", p_device, String(GAME_SOURCE_ROOT) + p_name + ".glsl.template", p_defines))) {
 			error = compiler.is_valid() ? String(compiler->get("error")) : "Cannot load Surface Cache shader compiler";
 			return false;
 		}

@@ -68,5 +68,5 @@
   [SCsub](../modules/interior_surface_cache/SCsub),
   [config.py](../modules/interior_surface_cache/config.py).
 
-Шаблоны GPU-проходов и скрипты игры — [освещение](../../is-game/game/features/lighting/README.md#gi).
+Шаблоны GPU-проходов и скрипты игры — [освещение](../../is-game/game/features/lighting/subsystems/gi/README.md#код).
 Расширения Vulkan/RenderingDevice — [ray query](ray-query.md).
