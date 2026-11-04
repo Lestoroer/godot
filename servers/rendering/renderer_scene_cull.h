@@ -346,9 +346,6 @@ public:
 		HashMap<RID, uint64_t> viewport_visibility_masks;
 
 		// lestoroer#gi
-		// lestoroer#local-lights
-		bool local_light_observer = false;
-		HashMap<RID, uint32_t> local_light_dirty;
 		Callable surface_cache_callback;
 		Callable surface_cache_view_callback;
 		Vector<RID> surface_cache_buffers;
@@ -382,22 +379,6 @@ public:
 	virtual void scenario_initialize(RID p_rid);
 
 	// lestoroer#gi
-	// lestoroer#local-lights
-	struct LocalLightChange {
-		RID instance, base, mesh_instance, material_override;
-		Vector<RID> materials;
-		Transform3D transform;
-		AABB bounds;
-		uint32_t flags = 0, layers = 0;
-		bool active = false, light = false, enabled = true, exists = false;
-	};
-	void local_light_observe(RID p_scenario, bool p_enabled);
-	void local_light_set_owner(RID p_instance, bool p_enabled);
-	void local_light_set_enabled(RID p_instance, bool p_enabled);
-	bool local_light_can_manage(RID p_instance, RID p_scenario) const;
-	bool local_light_is_managed(RID p_instance) const;
-	void local_light_poll(RID p_scenario, LocalVector<LocalLightChange> &r_changes);
-	void local_light_invalidate_gi(RID p_scenario);
 	void _surface_cache_queue(Instance *p_instance, uint32_t p_flags) const;
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) override;
 	virtual void scenario_set_surface_cache_view_callback(RID p_scenario, const Callable &p_callback) override;
@@ -437,9 +418,6 @@ public:
 		RID base;
 
 		RID skeleton;
-		// lestoroer#local-lights
-		bool local_light_owner = false;
-		bool local_light_visible = true, local_light_enabled = true;
 		RID material_override;
 		RID material_overlay;
 
