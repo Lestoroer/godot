@@ -80,8 +80,10 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		// Очередь: кадр постановки и порядок прихода, ноль — не ждёт.
 		uint64_t queued_order = 0;
 		uint64_t queued_frame = 0;
-		// Карта: номер лампы в своём атласе и снятая поза.
-		int map_index = -1;
+		// Карта: место в атласе и снятая поза; map_faces == 0 — места нет.
+		Vector2i map_origin;
+		int map_side = 0;
+		int map_faces = 0;
 		bool map_valid = false;
 		Vector3 baked_origin;
 		float baked_inverse_range = 0.0f;
@@ -104,15 +106,11 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		uint32_t triangles = 0;
 	};
 
-	struct Tile {
-		int lamp = -1;
-		int face = 0;
-		int layer = 0;
-	};
-
-	struct DepthStrip {
-		RID depth;
-		RID framebuffer;
+	// Полка атласа: места одной высоты слева направо.
+	struct MapShelf {
+		int y = 0;
+		int height = 0;
+		int next_x = 0;
 	};
 
 	struct CasterPush {
@@ -158,20 +156,17 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	RID blur_pipeline;
 	RID params_buffer;
 
-	// Атласы карт: у Omni шесть слоёв на лампу, у Spot один. Вместимость растёт, снятые карты копируются.
-	RID omni_atlas;
-	RID spot_atlas;
-	RID omni_atlas_texture;
-	RID spot_atlas_texture;
-	int omni_capacity = 0;
-	int spot_capacity = 0;
+	// Общий атлас карт. Ширина постоянна, высота растёт небольшими шагами с копией снятых карт; у Omni на лампу шесть плиток подряд.
+	RID map_atlas;
+	RID map_atlas_texture;
+	RID map_framebuffer;
+	int atlas_height = 0;
+	int atlas_used_height = 0;
 	int omni_size = 0;
 	int spot_size = 0;
-	LocalVector<int> free_omni_maps;
-	LocalVector<int> free_spot_maps;
-	HashMap<int, DepthStrip> depth_strips;
+	LocalVector<MapShelf> map_shelves;
+	HashMap<uint32_t, LocalVector<Vector2i>> free_map_rects;
 	LocalVector<CasterSurface> caster_pool;
-	LocalVector<Tile> tiles;
 	LocalVector<uint32_t> serve_order;
 
 	// Сетка: окно по миру и блоки ламп по ячейкам.
@@ -215,12 +210,12 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _release_map(Lamp &r_lamp);
 	void _release_lamp(uint32_t p_index);
 	void _serve_queue(uint64_t p_frame);
-	void _ensure_atlases(int p_omni_needed, int p_spot_needed);
-	RID _create_atlas(int p_size, int p_layers, RID p_previous, int p_previous_layers);
-	DepthStrip &_strip_for(int p_size);
+	void _apply_map_sizes(const LocalLightsSettings &p_settings);
+	bool _allocate_map(Lamp &r_lamp, int p_side);
+	void _ensure_atlas_height();
 	RID _pipeline_for(RD::VertexFormatID p_format);
 	void _gather_casters(Lamp &r_lamp, const Instance *p_instance);
-	void _record_tiles(const LocalVector<Tile> &p_tiles, int p_size, const LocalLightsSettings &p_settings);
+	void _record_lamp(const Lamp &p_lamp, const LocalLightsSettings &p_settings);
 	void _update_grid();
 	void _repack();
 	void _write_lamp_data(const Lamp &p_lamp);

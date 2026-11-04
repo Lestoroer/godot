@@ -13,7 +13,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 layout(set = 0, binding = 0) uniform sampler2D depth_buffer;
 layout(set = 0, binding = 1) uniform sampler2D cull_grid;
 layout(set = 0, binding = 2) uniform sampler2D cull_data;
-layout(set = 0, binding = 3) uniform sampler2DArray shadow_atlas;
+layout(set = 0, binding = 3) uniform sampler2D shadow_atlas;
 // Радиус размытия, м.
 layout(r16f, set = 0, binding = 4) uniform restrict writeonly image2D blur_radius;
 // rgb — затенённый свет ламп к незатенённому по каналам: лампа в тени гасит только свой цвет. a — нормаль в осях вида,
@@ -29,7 +29,6 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	vec4 blur;
 	ivec4 view_size;
 } params;
-layout(set = 0, binding = 6) uniform sampler2DArray spot_atlas;
 
 const int INDEX_W_LOG2 = 11;
 const int INDEX_W_MASK = (1 << INDEX_W_LOG2) - 1;
@@ -66,24 +65,25 @@ vec3 surface_normal_at(ivec2 pixel, ivec2 size, vec3 point) {
 const float CUBE_GUARD_TEXELS = 4.0;
 // Смысл Godot: shadow_normal_bias умножается на размер текселя и на 10.
 const float NORMAL_BIAS_TEXELS = 10.0;
+// Единица начала плитки в атласе: контракт с local_lights_world.cpp.
+const float MAP_ORIGIN_UNIT = 32.0;
 // Ближняя плоскость снимка спота в Godot, метры.
 const float SPOT_SHADOW_NEAR = 0.025;
 
 // Открытая доля: gather и билинейные веса, как аппаратное сравнение в PCF 2×2.
-float compare_depth(vec4 stored_depth, vec2 uv, float side, float compared_distance, float range) {
-	vec4 depth = stored_depth * range;
-	vec2 fraction = fract(uv * side - 0.5);
+float compare_depth(vec2 atlas_texel, float compared_distance, float range) {
+	vec4 depth = textureGather(shadow_atlas, atlas_texel / vec2(textureSize(shadow_atlas, 0)), 0) * range;
+	vec2 fraction = fract(atlas_texel - 0.5);
 	vec4 weights = vec4((1.0 - fraction.x) * fraction.y, fraction.x * fraction.y, fraction.x * (1.0 - fraction.y), (1.0 - fraction.x) * (1.0 - fraction.y));
 	return dot(vec4(greaterThanEqual(depth, vec4(compared_distance))), weights);
 }
 
 // Смещения как у Omni в Godot: нормаль сдвигает только направление выборки, shadow_bias — метры вдоль луча.
-// t4.xy: shadow_bias и shadow_normal_bias лампы, контракт с local_lights_world.cpp.
-float omni_visibility(vec4 t4, vec4 t6, vec3 to_point, vec3 surface_normal) {
+// t4.xy: shadow_bias и shadow_normal_bias лампы; t6.w и t4.z: начало места в атласе, side: сторона плитки. Контракт с local_lights_world.cpp.
+float omni_visibility(vec4 t4, vec4 t6, float side, vec3 to_point, vec3 surface_normal) {
 	vec3 p = to_point + t6.xyz;
 	float reach = length(p);
 	vec3 direction = p / reach;
-	float side = float(textureSize(shadow_atlas, 0).x);
 	vec2 biases = t4.xy;
 	vec3 sample_direction = normalize(direction + surface_normal * biases.y * NORMAL_BIAS_TEXELS / side * (1.0 - abs(dot(surface_normal, direction))));
 	vec3 magnitude = abs(sample_direction);
@@ -101,20 +101,19 @@ float omni_visibility(vec4 t4, vec4 t6, vec3 to_point, vec3 surface_normal) {
 		local = vec3(sample_direction.x, sample_direction.y, magnitude.z);
 	}
 	vec2 uv = local.xy / local.z / (1.0 + CUBE_GUARD_TEXELS / side) * 0.5 + 0.5;
-	return compare_depth(textureGather(shadow_atlas, vec3(uv, t6.w + face), 0), uv, side, reach - biases.x, 1.0 / t4.w);
+	return compare_depth(vec2(t6.w, t4.z) * MAP_ORIGIN_UNIT + vec2(face * side, 0.0) + uv * side, reach - biases.x, 1.0 / t4.w);
 }
 
 // Смещения как у Spot в Godot: нормаль сдвигает саму точку пропорционально расстоянию; shadow_bias / 100 прибавлен к
 // перспективной глубине с ближней плоскостью SPOT_SHADOW_NEAR, поэтому в метрах он растёт вместе с расстоянием.
-// t4.z: слой плитки в атласе спотов, контракт с local_lights_world.cpp.
 float spot_visibility(ivec2 sc, vec4 t4, vec4 t6, vec3 to_point, vec3 surface_normal) {
 	vec3 p = to_point + t6.xyz;
 	float reach = length(p);
-	float side = float(textureSize(spot_atlas, 0).x);
-	vec2 biases = t4.xy;
-	vec3 moved = p + surface_normal * reach * biases.y * NORMAL_BIAS_TEXELS / side * (1.0 - abs(dot(surface_normal, p / reach)));
 	vec4 t5 = texelFetch(cull_data, sc + ivec2(5, 0), 0);
 	vec4 t7 = texelFetch(cull_data, sc + ivec2(7, 0), 0);
+	float side = t7.w;
+	vec2 biases = t4.xy;
+	vec3 moved = p + surface_normal * reach * biases.y * NORMAL_BIAS_TEXELS / side * (1.0 - abs(dot(surface_normal, p / reach)));
 	vec3 point = vec3(dot(moved, cross(t7.xyz, t5.xyz)), dot(moved, t7.xyz), dot(moved, t5.xyz));
 	if (point.z <= 0.0) {
 		return 0.0;
@@ -126,7 +125,7 @@ float spot_visibility(ivec2 sc, vec4 t4, vec4 t6, vec3 to_point, vec3 surface_no
 	float range = 1.0 / t4.w;
 	float relative_bias = biases.x / (SPOT_SHADOW_NEAR * 100.0 + biases.x);
 	vec2 uv = ndc * 0.5 + 0.5;
-	return compare_depth(textureGather(spot_atlas, vec3(uv, t4.z), 0), uv, side, length(moved) * (1.0 - relative_bias), range);
+	return compare_depth(vec2(t6.w, t4.z) * MAP_ORIGIN_UNIT + uv * side, length(moved) * (1.0 - relative_bias), range);
 }
 
 // Байты 1..255: ноль остаётся за пикселем без света ламп.
@@ -204,7 +203,7 @@ void main() {
 			vec4 t6 = texelFetch(cull_data, sc + ivec2(6, 0), 0);
 			if (t6.w >= 0.0) {
 				vec4 t4 = texelFetch(cull_data, sc + ivec2(4, 0), 0);
-				visibility = is_spot ? spot_visibility(sc, t4, t6, -to_light, world_normal) : omni_visibility(t4, t6, -to_light, world_normal);
+				visibility = is_spot ? spot_visibility(sc, t4, t6, -to_light, world_normal) : omni_visibility(t4, t6, texelFetch(cull_data, sc + ivec2(7, 0), 0).w, -to_light, world_normal);
 			}
 			unshadowed += light_weight;
 			unshadowed_color += light_color;
