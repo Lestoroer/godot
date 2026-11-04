@@ -32,10 +32,13 @@ const float TAU = 6.28318531;
 const float PLANE_STOP_METERS = 0.03;
 const float NORMAL_STOP_COSINE = 0.85;
 
+// Обратная проекция перспективная: большая часть матрицы нули, полное умножение на каждую выборку не нужно.
 vec3 view_point_at(ivec2 pixel, ivec2 size) {
 	float depth = texelFetch(depth_buffer, pixel, 0).r;
-	vec4 view = params.inverse_projection * vec4((vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0, depth, 1.0);
-	return view.xyz / view.w;
+	vec2 ndc = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
+	mat4 inverse_projection = params.inverse_projection;
+	vec3 view = vec3(inverse_projection[0][0] * ndc.x + inverse_projection[2][0] * depth + inverse_projection[3][0], inverse_projection[1][1] * ndc.y + inverse_projection[2][1] * depth + inverse_projection[3][1], inverse_projection[2][2] * depth + inverse_projection[3][2]);
+	return view / (inverse_projection[2][3] * depth + inverse_projection[3][3]);
 }
 
 vec2 screen_position_of(vec3 view_point, ivec2 size) {
@@ -88,7 +91,8 @@ void main() {
 			continue;
 		}
 		vec4 tap_value = imageLoad(ratio_and_normal, tap_pixel);
-		if (tap_value.a <= 0.0 || dot(normal_of(tap_value.a), normal) < NORMAL_STOP_COSINE) {
+		// Та же упакованная нормаль почти на всех выборках: распаковка только при отличии.
+		if (tap_value.a <= 0.0 || (tap_value.a != own.a && dot(normal_of(tap_value.a), normal) < NORMAL_STOP_COSINE)) {
 			continue;
 		}
 		if (abs(dot(view_point_at(tap_pixel, size) - point, normal)) > PLANE_STOP_METERS) {
