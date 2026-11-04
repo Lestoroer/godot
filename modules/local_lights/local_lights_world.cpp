@@ -29,8 +29,6 @@ const int ATLAS_MAX_HEIGHT = 8192;
 const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
 // Начало плитки хранится в этих единицах: половинная точность хранит целые точно. Контракт с local_light_ratio.glsl.
 const int MAP_ORIGIN_UNIT = 32;
-// Контракт с local_light_ratio.glsl.
-const float MAP_RANGE_TO_NEAR = 64.0f;
 const float SPOT_HOTSPOT = 0.5f;
 // Снимок спота шире конуса: выборка у края конуса не выходит за плитку.
 const float SPOT_MAP_MARGIN_DEGREES = 8.0f;
@@ -53,6 +51,12 @@ bool material_casts_in_maps(RID p_material) {
 	typedef RendererSceneRenderImplementation::SceneShaderForwardClustered SceneShader;
 	const SceneShader::MaterialData *data = static_cast<const SceneShader::MaterialData *>(RendererRD::MaterialStorage::get_singleton()->material_get_data(p_material, RendererRD::MaterialStorage::SHADER_TYPE_3D));
 	return !data || !data->shader_data || !data->shader_data->uses_alpha_pass();
+}
+
+// Ближняя плоскость карты: как можно ближе к лампе, но шаг 16 бит на дальнем конце остаётся меньше половины смещения тени.
+// Контракт с local_light_ratio.glsl и local_lights_inc.gdshaderinc.
+float map_near_plane(float p_range) {
+	return MAX(MIN(p_range / 64.0f, 0.03f), p_range * p_range / (65536.0f * 0.0125f));
 }
 
 Basis rows_of(const Vector3 &p_right, const Vector3 &p_up, const Vector3 &p_forward) {
@@ -607,6 +611,8 @@ RID LocalLightsWorld::_pipeline_for(RD::VertexFormatID p_format) {
 	}
 	RD::PipelineRasterizationState raster;
 	raster.cull_mode = RD::POLYGON_CULL_DISABLED;
+	// Кастер ближе ближней плоскости перекрывает всё за ней, а не выпадает из карты: лампа стоит вплотную к преграде.
+	raster.enable_depth_clamp = true;
 	RD::PipelineDepthStencilState depth;
 	depth.enable_depth_test = true;
 	depth.enable_depth_write = true;
@@ -778,8 +784,7 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSetting
 	CasterPush push;
 	push.projection[2] = 0.0f;
 	push.projection[3] = 0.0f;
-	// Ближняя плоскость растёт с радиусом: так 16 бит перспективной глубины дают ошибку в постоянную долю радиуса.
-	const float near_plane = p_lamp.range / MAP_RANGE_TO_NEAR;
+	const float near_plane = map_near_plane(p_lamp.range);
 	push.extra[0] = p_lamp.range / (p_lamp.range - near_plane);
 	push.extra[1] = -near_plane * p_lamp.range / (p_lamp.range - near_plane);
 	push.extra[2] = 0.0f;
