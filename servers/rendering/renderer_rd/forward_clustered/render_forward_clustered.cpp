@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "render_forward_clustered.h"
+#include "servers/rendering/local_lights_screen_hook.h" // lestoroer#local-lights
 
 #include "core/config/project_settings.h"
 // lestoroer#gi
@@ -2135,7 +2136,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	bool debug_voxelgis = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_ALBEDO || get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_LIGHTING || get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_VOXEL_GI_EMISSION;
 	bool debug_sdfgi_probes = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_SDFGI_PROBES;
-	bool force_depth_pre_pass = scene_state.used_opaque_stencil || surface_cache_gather; // lestoroer#gi
+	bool force_depth_pre_pass = scene_state.used_opaque_stencil || surface_cache_gather || LocalLightsScreenHook::get_active_view(); // lestoroer#gi lestoroer#local-lights // lestoroer#gi, lestoroer#local-lights
 	bool depth_pre_pass = (force_depth_pre_pass || bool(GLOBAL_GET_CACHED(bool, "rendering/driver/depth_prepass/enable"))) && depth_framebuffer.is_valid();
 
 	SceneShaderForwardClustered::ShaderSpecialization base_specialization = scene_shader.default_specialization;
@@ -2197,6 +2198,11 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 		RENDER_TIMESTAMP("Process Pre Opaque Compositor Effects");
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_OPAQUE, p_render_data);
+		// lestoroer#local-lights
+		if (LocalLightsScreenHook *local_lights = LocalLightsScreenHook::get_active_view()) {
+			RENDER_TIMESTAMP("Local Lights Screen Passes");
+			local_lights->render_screen_passes(p_render_data);
+		}
 		// lestoroer#gi
 		surface_cache_gather_texture = SNAME("gather");
 		if (surface_cache_gather) {

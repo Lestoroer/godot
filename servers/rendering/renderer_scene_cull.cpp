@@ -430,11 +430,52 @@ void RendererSceneCull::_instance_unpair(Instance *p_A, Instance *p_B) {
 RID RendererSceneCull::scenario_allocate() {
 	return scenario_owner.allocate_rid();
 }
+// lestoroer#local-lights
+void RendererSceneCull::scenario_set_local_lights(RID p_scenario, LocalLightsBackend *p_backend) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	if (scenario->local_lights) {
+		memdelete(scenario->local_lights);
+	}
+	scenario->local_lights = p_backend;
+	scenario_queue_lights_for_surface_cache(p_scenario);
+}
+
+RendererSceneCull::LocalLightsBackend *RendererSceneCull::scenario_get_local_lights(RID p_scenario) const {
+	const Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL_V(scenario, nullptr);
+	return scenario->local_lights;
+}
+
+// Включение меняет, кому принадлежат лампы: GI должен заново узнать о них.
+void RendererSceneCull::scenario_queue_lights_for_surface_cache(RID p_scenario) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	for (SelfList<Instance> *E = scenario->instances.first(); E; E = E->next()) {
+		if (E->self()->base_type == RSE::INSTANCE_LIGHT) {
+			_surface_cache_queue(E->self(), 7);
+		}
+	}
+}
+
+bool RendererSceneCull::_scenario_owns_local_light(const Scenario *p_scenario, const Instance *p_instance) const {
+	if (!p_scenario->local_lights || !p_scenario->local_lights->is_enabled()) {
+		return false;
+	}
+	const RSE::LightType type = RSG::light_storage->light_get_type(p_instance->base);
+	return type == RSE::LIGHT_OMNI || type == RSE::LIGHT_SPOT;
+}
+
 void RendererSceneCull::scenario_initialize(RID p_rid) {
 	scenario_owner.initialize_rid(p_rid);
 
 	Scenario *scenario = scenario_owner.get_or_null(p_rid);
 	scenario->self = p_rid;
+
+	// lestoroer#local-lights
+	if (local_lights_backend_factory && bool(GLOBAL_GET("rendering/lights_and_shadows/local_lights/enabled"))) {
+		scenario->local_lights = local_lights_backend_factory(p_rid);
+	}
 
 	scenario->reflection_probe_shadow_atlas = RSG::light_storage->shadow_atlas_create();
 	RSG::light_storage->shadow_atlas_set_size(scenario->reflection_probe_shadow_atlas, 1024); //make enough shadows for close distance, don't bother with rest
@@ -585,7 +626,8 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 		bool active = instance && instance->scenario == scenario && instance->visible &&
 				instance->transform.basis.determinant() != 0 &&
 				((instance->base_type == RSE::INSTANCE_MESH && (instance->baked_light || instance->dynamic_gi) &&
-						RSG::mesh_storage->mesh_get_surface_count(instance->base) > 0) || instance->base_type == RSE::INSTANCE_LIGHT);
+						RSG::mesh_storage->mesh_get_surface_count(instance->base) > 0) ||
+						(instance->base_type == RSE::INSTANCE_LIGHT && !_scenario_owns_local_light(scenario, instance))); // lestoroer#local-lights
 		data["active"] = active;
 		if (active) {
 			data["base"] = instance->base;
@@ -3638,6 +3680,24 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 
 	//render shadows
 
+	// lestoroer#local-lights
+	LocalLightsScreenHook::set_active_view(nullptr);
+	if (scenario->local_lights && scenario->local_lights->is_enabled()) {
+		local_lights_view.clear();
+		for (int64_t i = int64_t(scene_cull_result.lights.size()) - 1; i >= 0; i--) {
+			Instance *light = scene_cull_result.lights[i];
+			if (_scenario_owns_local_light(scenario, light)) {
+				local_lights_view.push_back(light);
+				scene_cull_result.lights.remove_at_unordered(i);
+				scene_cull_result.light_instances.remove_at_unordered(i);
+			}
+		}
+		if (!render_reflection_probe) {
+			scenario->local_lights->prepare_view(local_lights_view);
+			LocalLightsScreenHook::set_active_view(scenario->local_lights);
+		}
+	}
+
 	max_shadows_used = 0;
 
 	if (p_using_shadows) { //setup shadow maps
@@ -3878,6 +3938,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	}
 	scene_render->surface_cache_set_context(scenario->surface_cache_buffers, scenario->surface_cache_view_callback);
 	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, p_window_output_max_value, &sdfgi_update_data, r_render_info);
+	LocalLightsScreenHook::set_active_view(nullptr); // lestoroer#local-lights
 
 	if (p_viewport.is_valid()) {
 		RSG::viewport->viewport_set_prev_camera_data(p_viewport, p_camera_data);
@@ -4576,6 +4637,11 @@ bool RendererSceneCull::free(RID p_rid) {
 		scenario->instance_data.reset();
 		scenario->instance_visibility.reset();
 
+		// lestoroer#local-lights
+		if (scenario->local_lights) {
+			memdelete(scenario->local_lights);
+			scenario->local_lights = nullptr;
+		}
 		RSG::light_storage->shadow_atlas_free(scenario->reflection_probe_shadow_atlas);
 		RSG::light_storage->reflection_atlas_free(scenario->reflection_atlas);
 		scenario_owner.free(p_rid);

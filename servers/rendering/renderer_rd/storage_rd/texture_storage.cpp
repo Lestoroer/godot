@@ -3258,6 +3258,15 @@ void TextureStorage::_texture_format_from_rd(RD::DataFormat p_rd_format, Texture
 			r_format.swizzle_b = RD::TEXTURE_SWIZZLE_ZERO;
 			r_format.swizzle_a = RD::TEXTURE_SWIZZLE_ONE;
 		} break;
+		// lestoroer#local-lights
+		case RD::DATA_FORMAT_A2B10G10R10_UNORM_PACK32: {
+			r_format.image_format = Image::FORMAT_RGBA8;
+			r_format.rd_format = RD::DATA_FORMAT_A2B10G10R10_UNORM_PACK32;
+			r_format.swizzle_r = RD::TEXTURE_SWIZZLE_R;
+			r_format.swizzle_g = RD::TEXTURE_SWIZZLE_G;
+			r_format.swizzle_b = RD::TEXTURE_SWIZZLE_B;
+			r_format.swizzle_a = RD::TEXTURE_SWIZZLE_A;
+		} break;
 		case RD::DATA_FORMAT_R16_UNORM: {
 			r_format.image_format = Image::FORMAT_R16;
 			r_format.rd_format = RD::DATA_FORMAT_R16_UNORM;

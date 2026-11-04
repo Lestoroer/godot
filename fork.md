@@ -12,4 +12,5 @@
 - [Лимиты subgroup из GDScript](fork/subgroups.md).
 - [Создание кешированных шейдеров по запросу](fork/shader-cache.md).
 - [Callback POST_TEMPORAL](fork/post-temporal.md).
+- [Собственный локальный свет](fork/local-lights.md).
 - [Самостоятельные исправления движка](fork/fixes.md).

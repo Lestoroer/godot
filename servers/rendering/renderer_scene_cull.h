@@ -40,6 +40,7 @@
 #include "core/templates/rid_owner.h"
 #include "core/templates/self_list.h"
 #include "servers/rendering/instance_uniforms.h"
+#include "servers/rendering/local_lights_screen_hook.h" // lestoroer#local-lights
 #include "servers/rendering/renderer_scene_occlusion_cull.h"
 #include "servers/rendering/renderer_scene_render.h"
 #include "servers/rendering/rendering_method.h"
@@ -324,6 +325,8 @@ public:
 	PagedArrayPool<InstanceData> instance_data_page_pool;
 	PagedArrayPool<InstanceVisibilityData> instance_visibility_data_page_pool;
 
+	class LocalLightsBackend; // lestoroer#local-lights
+
 	struct Scenario {
 		enum IndexerType {
 			INDEXER_GEOMETRY, //for geometry
@@ -352,6 +355,8 @@ public:
 		HashMap<RID, uint32_t> surface_cache_dirty;
 		uint64_t surface_cache_frame = UINT64_MAX;
 		SelfList<Instance>::List instances;
+
+		LocalLightsBackend *local_lights = nullptr; // lestoroer#local-lights
 
 		LocalVector<RID> dynamic_lights;
 
@@ -763,6 +768,8 @@ public:
 			light_update_frame_id = p_frame_id;
 		}
 
+		void clear_shadow_dirty() { shadow_dirty_count = 0; } // lestoroer#local-lights
+
 		void decrement_shadow_dirty() {
 			shadow_dirty_count--;
 			DEV_ASSERT(shadow_dirty_count >= 0);
@@ -1028,6 +1035,21 @@ public:
 	};
 
 	InstanceCullResult scene_cull_result;
+
+	// lestoroer#local-lights: Omni и Spot включённого мира считает модуль, штатный рендер их не получает.
+	class LocalLightsBackend : public LocalLightsScreenHook {
+	public:
+		virtual bool is_enabled() const = 0;
+		// Перед главным проходом вида: лампы вида с учётом радиуса уже отобраны куллом камеры.
+		virtual void prepare_view(const LocalVector<Instance *> &p_lights) = 0;
+	};
+	typedef LocalLightsBackend *(*LocalLightsBackendFactory)(RID p_scenario);
+	static inline LocalLightsBackendFactory local_lights_backend_factory = nullptr;
+	LocalVector<Instance *> local_lights_view;
+	void scenario_set_local_lights(RID p_scenario, LocalLightsBackend *p_backend);
+	LocalLightsBackend *scenario_get_local_lights(RID p_scenario) const;
+	void scenario_queue_lights_for_surface_cache(RID p_scenario);
+	bool _scenario_owns_local_light(const Scenario *p_scenario, const Instance *p_instance) const;
 	LocalVector<InstanceCullResult> scene_cull_result_threads;
 
 	RendererSceneRender::RenderShadowData render_shadow_data[MAX_UPDATE_SHADOWS];

@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "renderer_scene_render_rd.h"
+#include "servers/rendering/local_lights_screen_hook.h" // lestoroer#local-lights
 
 #include "core/config/project_settings.h"
 #include "core/io/image.h"
@@ -1377,7 +1378,7 @@ void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render
 		scene_data.cam_transform = p_camera_data->main_transform;
 		scene_data.cam_projection = p_camera_data->main_projection;
 		scene_data.cam_orthogonal = p_camera_data->is_orthogonal;
-		scene_data.camera_visible_layers = p_camera_data->visible_layers;
+		scene_data.camera_visible_layers = p_camera_data->visible_layers | (LocalLightsScreenHook::get_active_view() ? LocalLightsScreenHook::ACTIVE_VIEW_LAYER_BIT : 0u); // lestoroer#local-lights
 		scene_data.taa_jitter = p_camera_data->taa_jitter;
 		scene_data.taa_frame_count = p_camera_data->taa_frame_count;
 		scene_data.main_cam_transform = p_camera_data->main_transform;
