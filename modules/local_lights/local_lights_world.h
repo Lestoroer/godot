@@ -19,8 +19,10 @@ struct LocalLightsSettings {
 	bool show_hard_mask = false;
 	int fixed_noise_frame = -1;
 	bool caster_culling = true;
+	// Наибольшие стороны плитки; меньшие выбираются по радиусу лампы так, чтобы тексель на границе радиуса был не крупнее map_texel_size.
 	int omni_face_size = 256;
 	int spot_tile_size = 512;
+	float map_texel_size = 0.025f;
 	bool gpu_timestamps = false;
 };
 
@@ -164,6 +166,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	int atlas_used_height = 0;
 	int omni_size = 0;
 	int spot_size = 0;
+	float map_texel_size = -1.0f;
 	LocalVector<MapShelf> map_shelves;
 	HashMap<uint32_t, LocalVector<Vector2i>> free_map_rects;
 	LocalVector<CasterSurface> caster_pool;
@@ -211,7 +214,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _release_lamp(uint32_t p_index);
 	void _serve_queue(uint64_t p_frame);
 	void _apply_map_sizes(const LocalLightsSettings &p_settings);
-	bool _allocate_map(Lamp &r_lamp, int p_side);
+	int _map_side_for(const Lamp &p_lamp) const;
+	bool _place_map(Lamp &r_lamp, int p_side);
+	void _free_map_place(const Lamp &p_lamp);
 	void _ensure_atlas_height();
 	RID _pipeline_for(RD::VertexFormatID p_format);
 	void _gather_casters(Lamp &r_lamp, const Instance *p_instance);

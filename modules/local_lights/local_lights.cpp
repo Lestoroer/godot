@@ -25,6 +25,7 @@ void LocalLights::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fixed_noise_frame", "frame"), &LocalLights::set_fixed_noise_frame);
 	ClassDB::bind_method(D_METHOD("set_caster_culling", "enabled"), &LocalLights::set_caster_culling);
 	ClassDB::bind_method(D_METHOD("set_map_sizes", "omni_face", "spot_tile"), &LocalLights::set_map_sizes);
+	ClassDB::bind_method(D_METHOD("set_map_texel_size", "meters"), &LocalLights::set_map_texel_size);
 	ClassDB::bind_method(D_METHOD("set_gpu_timestamps", "enabled"), &LocalLights::set_gpu_timestamps);
 	ClassDB::bind_method(D_METHOD("get_frame_metrics"), &LocalLights::get_frame_metrics);
 	ClassDB::bind_method(D_METHOD("get_memory_report", "world"), &LocalLights::get_memory_report);
@@ -89,8 +90,13 @@ void LocalLights::set_caster_culling(bool p_enabled) {
 }
 
 void LocalLights::set_map_sizes(int p_omni_face, int p_spot_tile) {
+	ERR_FAIL_COND_MSG(p_omni_face % 32 != 0 || p_spot_tile % 32 != 0, "Сторона плитки локального света кратна 32: начало плитки хранится в этих единицах.");
 	settings.omni_face_size = p_omni_face;
 	settings.spot_tile_size = p_spot_tile;
+}
+
+void LocalLights::set_map_texel_size(float p_meters) {
+	settings.map_texel_size = p_meters;
 }
 
 void LocalLights::set_gpu_timestamps(bool p_enabled) {

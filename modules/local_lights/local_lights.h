@@ -39,6 +39,7 @@ public:
 	void set_fixed_noise_frame(int p_frame);
 	void set_caster_culling(bool p_enabled);
 	void set_map_sizes(int p_omni_face, int p_spot_tile);
+	void set_map_texel_size(float p_meters);
 	void set_gpu_timestamps(bool p_enabled);
 	Dictionary get_frame_metrics() const;
 	Dictionary get_memory_report(const Ref<World3D> &p_world) const;

@@ -72,8 +72,10 @@ const float SPOT_SHADOW_NEAR = 0.025;
 
 // Открытая доля: gather и билинейные веса, как аппаратное сравнение в PCF 2×2.
 float compare_depth(vec2 atlas_texel, float compared_distance, float range) {
-	vec4 depth = textureGather(shadow_atlas, atlas_texel / vec2(textureSize(shadow_atlas, 0)), 0) * range;
-	vec2 fraction = fract(atlas_texel - 0.5);
+	// Выборка точно между четырьмя центрами: округление координаты в gather не выбирает другую четвёрку, чем считают веса.
+	vec2 below = floor(atlas_texel - 0.5);
+	vec4 depth = textureGather(shadow_atlas, (below + 1.0) / vec2(textureSize(shadow_atlas, 0)), 0) * range;
+	vec2 fraction = atlas_texel - 0.5 - below;
 	vec4 weights = vec4((1.0 - fraction.x) * fraction.y, fraction.x * fraction.y, fraction.x * (1.0 - fraction.y), (1.0 - fraction.x) * (1.0 - fraction.y));
 	return dot(vec4(greaterThanEqual(depth, vec4(compared_distance))), weights);
 }

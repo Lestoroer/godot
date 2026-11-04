@@ -26,6 +26,7 @@ const uint32_t BYTES_PER_DATA_TEXEL = 8;
 const int ATLAS_WIDTH = 8192;
 const int ATLAS_HEIGHT_STEP = 512;
 const int ATLAS_MAX_HEIGHT = 8192;
+const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
 // Начало плитки хранится в этих единицах: половинная точность хранит целые точно. Контракт с local_light_ratio.glsl.
 const int MAP_ORIGIN_UNIT = 32;
 const float NEAR_PLANE = 0.03f;
@@ -458,13 +459,17 @@ void LocalLightsWorld::_compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cel
 	}
 }
 
+void LocalLightsWorld::_free_map_place(const Lamp &p_lamp) {
+	const uint32_t rect_class = uint32_t(p_lamp.map_side) * 8 + uint32_t(p_lamp.map_faces);
+	if (!free_map_rects.has(rect_class)) {
+		free_map_rects.insert(rect_class, LocalVector<Vector2i>());
+	}
+	free_map_rects[rect_class].push_back(p_lamp.map_origin);
+}
+
 void LocalLightsWorld::_release_map(Lamp &r_lamp) {
 	if (r_lamp.map_faces > 0) {
-		const uint32_t rect_class = uint32_t(r_lamp.map_side) * 8 + uint32_t(r_lamp.map_faces);
-		if (!free_map_rects.has(rect_class)) {
-			free_map_rects.insert(rect_class, LocalVector<Vector2i>());
-		}
-		free_map_rects[rect_class].push_back(r_lamp.map_origin);
+		_free_map_place(r_lamp);
 	}
 	if (r_lamp.map_faces > 0 || r_lamp.map_valid) {
 		r_lamp.data_dirty = true;
@@ -486,7 +491,7 @@ void LocalLightsWorld::_release_lamp(uint32_t p_index) {
 }
 
 void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
-	if (p_settings.omni_face_size == omni_size && p_settings.spot_tile_size == spot_size) {
+	if (p_settings.omni_face_size == omni_size && p_settings.spot_tile_size == spot_size && p_settings.map_texel_size == map_texel_size) {
 		return;
 	}
 	// Другое разрешение: снятые карты не переносятся.
@@ -509,10 +514,31 @@ void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
 	free_map_rects.clear();
 	omni_size = p_settings.omni_face_size;
 	spot_size = p_settings.spot_tile_size;
+	map_texel_size = p_settings.map_texel_size;
 }
 
-bool LocalLightsWorld::_allocate_map(Lamp &r_lamp, int p_side) {
+int LocalLightsWorld::_map_side_for(const Lamp &p_lamp) const {
+	const int largest = p_lamp.spot ? spot_size : omni_size;
+	if (map_texel_size <= 0.0f) {
+		return largest;
+	}
+	const float half_span = p_lamp.spot ? Math::tan(Math::deg_to_rad(MIN(p_lamp.angle + SPOT_MAP_MARGIN_DEGREES, SPOT_MAP_MAX_HALF_ANGLE_DEGREES))) : 1.0f;
+	const float wanted = 2.0f * p_lamp.range * half_span / map_texel_size;
+	for (const int side : MAP_SIDES) {
+		if (float(side) >= wanted) {
+			return MIN(side, largest);
+		}
+	}
+	return largest;
+}
+
+// Старое место лампы освобождается только после выдачи нового: при нехватке места лампа остаётся со старой картой.
+bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 	const int faces = r_lamp.spot ? 1 : 6;
+	Lamp previous_place;
+	previous_place.map_origin = r_lamp.map_origin;
+	previous_place.map_side = r_lamp.map_side;
+	previous_place.map_faces = r_lamp.map_faces;
 	LocalVector<Vector2i> *free_rects = free_map_rects.getptr(uint32_t(p_side) * 8 + uint32_t(faces));
 	if (free_rects && !free_rects->is_empty()) {
 		r_lamp.map_origin = (*free_rects)[free_rects->size() - 1];
@@ -540,6 +566,9 @@ bool LocalLightsWorld::_allocate_map(Lamp &r_lamp, int p_side) {
 	}
 	r_lamp.map_side = p_side;
 	r_lamp.map_faces = faces;
+	if (previous_place.map_faces > 0) {
+		_free_map_place(previous_place);
+	}
 	return true;
 }
 
@@ -666,8 +695,9 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	caster_pool.clear();
 	for (uint32_t i = 0; i < budget; i++) {
 		Lamp &lamp = lamps[serve_order[i]];
-		if (lamp.map_faces == 0) {
-			_allocate_map(lamp, lamp.spot ? spot_size : omni_size);
+		const int side = _map_side_for(lamp);
+		if (lamp.map_side != side) {
+			_place_map(lamp, side);
 		}
 	}
 	_ensure_atlas_height();
