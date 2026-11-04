@@ -553,7 +553,10 @@ bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 			}
 		}
 		if (!shelf) {
-			ERR_FAIL_COND_V_MSG(atlas_used_height + p_side > ATLAS_MAX_HEIGHT, false, "В атласе локального света нет места для новой лампы.");
+			if (atlas_used_height + p_side > ATLAS_MAX_HEIGHT) {
+				ERR_PRINT_ONCE("В атласе локального света нет места: лампа без места не светит, пока место не освободится.");
+				return false;
+			}
 			MapShelf new_shelf;
 			new_shelf.y = atlas_used_height;
 			new_shelf.height = p_side;
@@ -758,6 +761,11 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	}
 	frame_metrics.oldest_wait_frames = MAX(frame_metrics.oldest_wait_frames, oldest);
 	frame_metrics.queue = serve_order.size() - budget;
+	for (uint32_t i = 0; i < budget; i++) {
+		if (lamps[serve_order[i]].map_faces == 0) {
+			frame_metrics.queue++;
+		}
+	}
 }
 
 void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSettings &p_settings) {
