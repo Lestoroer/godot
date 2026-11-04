@@ -625,57 +625,76 @@ RID LocalLightsWorld::_pipeline_for(RD::VertexFormatID p_format) {
 
 void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance) {
 	const LocalLightsSettings &settings = LocalLights::get_singleton()->get_settings();
-	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
-	r_lamp.caster_first = caster_pool.size();
+	r_lamp.caster_first = lamp_casters.size();
 	const InstanceLightData *light = static_cast<const InstanceLightData *>(p_instance->base_data);
-	const uint64_t position_mask = 1ull << RSE::ARRAY_VERTEX;
 	const float range_sq = r_lamp.range * r_lamp.range;
 	for (const Instance *geometry : light->geometries) {
 		if (geometry->base_type != RSE::INSTANCE_MESH || geometry->cast_shadows == RSE::SHADOW_CASTING_SETTING_OFF || !(geometry->layer_mask & r_lamp.caster_mask)) {
 			continue;
 		}
-		const uint32_t surface_count = mesh_storage->mesh_get_surface_count(geometry->base);
-		if (geometry->mesh_instance.is_valid()) {
-			mesh_storage->mesh_instance_check_for_update(geometry->mesh_instance);
-		}
-		for (uint32_t index = 0; index < surface_count; index++) {
-			void *surface = mesh_storage->mesh_get_surface(geometry->base, index);
-			if (mesh_storage->mesh_surface_get_primitive(surface) != RSE::PRIMITIVE_TRIANGLES) {
-				continue;
-			}
-			RID material = geometry->material_override;
-			if (material.is_null()) {
-				material = index < uint32_t(geometry->materials.size()) && geometry->materials[index].is_valid() ? geometry->materials[index] : mesh_storage->mesh_surface_get_material(geometry->base, index);
-			}
-			if (material.is_valid() && !material_casts_in_maps(material)) {
-				continue;
-			}
-			const AABB local_bounds = mesh_storage->mesh_surface_get_aabb(surface);
-			const AABB bounds = geometry->transform.xform(local_bounds);
+		const InstanceCasters &surfaces = _instance_surfaces(geometry);
+		for (uint32_t index = surfaces.first; index < surfaces.first + surfaces.count; index++) {
 			if (settings.caster_culling) {
+				const AABB &bounds = caster_pool[index].bounds;
 				const Vector3 nearest = r_lamp.position.clamp(bounds.position, bounds.get_end());
 				if (nearest.distance_squared_to(r_lamp.position) > range_sq) {
 					frame_metrics.surfaces_culled++;
 					continue;
 				}
 			}
-			CasterSurface caster;
-			caster.instance = geometry;
-			caster.bounds = bounds;
-			if (geometry->mesh_instance.is_valid()) {
-				mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(geometry->mesh_instance, index, position_mask, false, false, caster.vertex_array, caster.format);
-			} else {
-				mesh_storage->mesh_surface_get_vertex_arrays_and_format(surface, position_mask, false, false, caster.vertex_array, caster.format);
-			}
-			caster.index_array = mesh_storage->mesh_surface_get_index_array(surface, 0);
-			const bool compressed = mesh_storage->mesh_surface_get_format(surface) & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES;
-			caster.decode_position = compressed ? local_bounds.position : Vector3();
-			caster.decode_size = compressed ? local_bounds.size : Vector3(1, 1, 1);
-			caster.triangles = mesh_storage->mesh_surface_get_vertices_drawn_count(surface) / 3;
-			caster_pool.push_back(caster);
+			lamp_casters.push_back(index);
 		}
 	}
-	r_lamp.caster_count = caster_pool.size() - r_lamp.caster_first;
+	r_lamp.caster_count = lamp_casters.size() - r_lamp.caster_first;
+}
+
+const LocalLightsWorld::InstanceCasters &LocalLightsWorld::_instance_surfaces(const Instance *p_geometry) {
+	const uint32_t slot = p_geometry->self.get_local_index();
+	if (slot >= instance_casters.size()) {
+		instance_casters.resize(slot + 1);
+	}
+	InstanceCasters &entry = instance_casters[slot];
+	if (entry.gather_pass == gather_pass) {
+		return entry;
+	}
+	entry.gather_pass = gather_pass;
+	entry.first = caster_pool.size();
+	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+	const uint64_t position_mask = 1ull << RSE::ARRAY_VERTEX;
+	const uint32_t surface_count = mesh_storage->mesh_get_surface_count(p_geometry->base);
+	if (p_geometry->mesh_instance.is_valid()) {
+		mesh_storage->mesh_instance_check_for_update(p_geometry->mesh_instance);
+	}
+	for (uint32_t index = 0; index < surface_count; index++) {
+		void *surface = mesh_storage->mesh_get_surface(p_geometry->base, index);
+		if (mesh_storage->mesh_surface_get_primitive(surface) != RSE::PRIMITIVE_TRIANGLES) {
+			continue;
+		}
+		RID material = p_geometry->material_override;
+		if (material.is_null()) {
+			material = index < uint32_t(p_geometry->materials.size()) && p_geometry->materials[index].is_valid() ? p_geometry->materials[index] : mesh_storage->mesh_surface_get_material(p_geometry->base, index);
+		}
+		if (material.is_valid() && !material_casts_in_maps(material)) {
+			continue;
+		}
+		const AABB local_bounds = mesh_storage->mesh_surface_get_aabb(surface);
+		CasterSurface caster;
+		caster.instance = p_geometry;
+		caster.bounds = p_geometry->transform.xform(local_bounds);
+		if (p_geometry->mesh_instance.is_valid()) {
+			mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(p_geometry->mesh_instance, index, position_mask, false, false, caster.vertex_array, caster.format);
+		} else {
+			mesh_storage->mesh_surface_get_vertex_arrays_and_format(surface, position_mask, false, false, caster.vertex_array, caster.format);
+		}
+		caster.index_array = mesh_storage->mesh_surface_get_index_array(surface, 0);
+		const bool compressed = mesh_storage->mesh_surface_get_format(surface) & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES;
+		caster.decode_position = compressed ? local_bounds.position : Vector3();
+		caster.decode_size = compressed ? local_bounds.size : Vector3(1, 1, 1);
+		caster.triangles = mesh_storage->mesh_surface_get_vertices_drawn_count(surface) / 3;
+		caster_pool.push_back(caster);
+	}
+	entry.count = caster_pool.size() - entry.first;
+	return entry;
 }
 
 void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
@@ -703,6 +722,8 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	uint64_t started = OS::get_singleton()->get_ticks_usec();
 	_apply_map_sizes(settings);
 	caster_pool.clear();
+	lamp_casters.clear();
+	gather_pass++;
 	for (uint32_t i = 0; i < budget; i++) {
 		Lamp &lamp = lamps[serve_order[i]];
 		const int side = _map_side_for(lamp);
@@ -818,7 +839,7 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSetting
 		push.projection[0] = extent;
 		push.projection[1] = extent;
 		for (uint32_t i = 0; i < p_lamp.caster_count; i++) {
-			const CasterSurface &caster = caster_pool[p_lamp.caster_first + i];
+			const CasterSurface &caster = caster_pool[lamp_casters[p_lamp.caster_first + i]];
 			if (p_settings.caster_culling) {
 				const Vector3 half = caster.bounds.size * 0.5f;
 				const Vector3 center = caster.bounds.position + half - p_lamp.position;
@@ -1140,7 +1161,7 @@ Dictionary LocalLightsWorld::memory_report() const {
 		cpu += (lamp.cells.get_capacity() + lamp.cell_slots.get_capacity()) * sizeof(uint32_t);
 	}
 	cpu += (cell_omni.get_capacity() + cell_spot.get_capacity() + cell_next.get_capacity() + filled_cells.get_capacity() + serve_order.get_capacity()) * sizeof(uint32_t);
-	cpu += caster_pool.get_capacity() * sizeof(CasterSurface) + map_shelves.get_capacity() * sizeof(MapShelf);
+	cpu += caster_pool.get_capacity() * sizeof(CasterSurface) + instance_casters.get_capacity() * sizeof(InstanceCasters) + lamp_casters.get_capacity() * sizeof(uint32_t) + map_shelves.get_capacity() * sizeof(MapShelf);
 	for (const KeyValue<uint32_t, LocalVector<Vector2i>> &entry : free_map_rects) {
 		cpu += entry.value.get_capacity() * sizeof(Vector2i);
 	}

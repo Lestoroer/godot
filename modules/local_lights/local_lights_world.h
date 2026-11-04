@@ -108,6 +108,13 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		uint32_t triangles = 0;
 	};
 
+	// Отрезок caster_pool с поверхностями экземпляра: лампы видят одни и те же предметы, поверхности собираются один раз за обход очереди.
+	struct InstanceCasters {
+		uint64_t gather_pass = 0;
+		uint32_t first = 0;
+		uint32_t count = 0;
+	};
+
 	// Полка атласа: места одной высоты слева направо.
 	struct MapShelf {
 		int y = 0;
@@ -170,6 +177,11 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	LocalVector<MapShelf> map_shelves;
 	HashMap<uint32_t, LocalVector<Vector2i>> free_map_rects;
 	LocalVector<CasterSurface> caster_pool;
+	// По локальному индексу RID экземпляра.
+	LocalVector<InstanceCasters> instance_casters;
+	uint64_t gather_pass = 0;
+	// Индексы caster_pool по лампам: отрезок лампы — caster_first и caster_count.
+	LocalVector<uint32_t> lamp_casters;
 	LocalVector<uint32_t> serve_order;
 
 	// Сетка: окно по миру и блоки ламп по ячейкам.
@@ -219,6 +231,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _ensure_atlas_height();
 	RID _pipeline_for(RD::VertexFormatID p_format);
 	void _gather_casters(Lamp &r_lamp, const Instance *p_instance);
+	const InstanceCasters &_instance_surfaces(const Instance *p_geometry);
 	void _record_lamp(const Lamp &p_lamp, const LocalLightsSettings &p_settings);
 	void _update_grid();
 	void _repack();
