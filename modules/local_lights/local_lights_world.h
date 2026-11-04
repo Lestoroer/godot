@@ -22,7 +22,7 @@ struct LocalLightsSettings {
 	// Наибольшие стороны плитки; меньшие выбираются по радиусу лампы так, чтобы тексель на границе радиуса был не крупнее map_texel_size.
 	int omni_face_size = 256;
 	int spot_tile_size = 512;
-	float map_texel_size = 0.025f;
+	float map_texel_size = 0.015f;
 	bool gpu_timestamps = false;
 };
 
