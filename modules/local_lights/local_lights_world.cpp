@@ -29,7 +29,8 @@ const int ATLAS_MAX_HEIGHT = 8192;
 const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
 // Начало плитки хранится в этих единицах: половинная точность хранит целые точно. Контракт с local_light_ratio.glsl.
 const int MAP_ORIGIN_UNIT = 32;
-const float NEAR_PLANE = 0.03f;
+// Контракт с local_light_ratio.glsl.
+const float MAP_RANGE_TO_NEAR = 64.0f;
 const float SPOT_HOTSPOT = 0.5f;
 // Снимок спота шире конуса: выборка у края конуса не выходит за плитку.
 const float SPOT_MAP_MARGIN_DEGREES = 8.0f;
@@ -774,13 +775,14 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSetting
 	const Rect2 region(p_lamp.map_origin, Vector2i(side * p_lamp.map_faces, side));
 	RD::DrawListID list = rd->draw_list_begin(map_framebuffer, RD::DRAW_CLEAR_DEPTH, VectorView<Color>(), 1.0f, 0, region);
 	RD::VertexFormatID bound_format = 0;
-	const float inverse_range = 1.0f / p_lamp.range;
 	CasterPush push;
 	push.projection[2] = 0.0f;
 	push.projection[3] = 0.0f;
-	push.extra[0] = p_lamp.range / (p_lamp.range - NEAR_PLANE);
-	push.extra[1] = -NEAR_PLANE * p_lamp.range / (p_lamp.range - NEAR_PLANE);
-	push.extra[2] = inverse_range;
+	// Ближняя плоскость растёт с радиусом: так 16 бит перспективной глубины дают ошибку в постоянную долю радиуса.
+	const float near_plane = p_lamp.range / MAP_RANGE_TO_NEAR;
+	push.extra[0] = p_lamp.range / (p_lamp.range - near_plane);
+	push.extra[1] = -near_plane * p_lamp.range / (p_lamp.range - near_plane);
+	push.extra[2] = 0.0f;
 	push.extra[3] = 0.0f;
 	push.decode_position[3] = 0.0f;
 	push.decode_size[3] = 0.0f;

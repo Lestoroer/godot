@@ -67,6 +67,8 @@ const float CUBE_GUARD_TEXELS = 4.0;
 const float NORMAL_BIAS_TEXELS = 10.0;
 // Единица начала плитки в атласе: контракт с local_lights_world.cpp.
 const float MAP_ORIGIN_UNIT = 32.0;
+// Радиус к ближней плоскости карты: контракт с local_lights_world.cpp.
+const float MAP_RANGE_TO_NEAR = 64.0;
 // Ближняя плоскость снимка спота в Godot, метры.
 const float SPOT_SHADOW_NEAR = 0.025;
 
@@ -74,7 +76,8 @@ const float SPOT_SHADOW_NEAR = 0.025;
 float compare_depth(vec2 atlas_texel, float compared_distance, float range) {
 	// Выборка точно между четырьмя центрами: округление координаты в gather не выбирает другую четвёрку, чем считают веса.
 	vec2 below = floor(atlas_texel - 0.5);
-	vec4 depth = textureGather(shadow_atlas, (below + 1.0) / vec2(textureSize(shadow_atlas, 0)), 0) * range;
+	vec4 stored = textureGather(shadow_atlas, (below + 1.0) / vec2(textureSize(shadow_atlas, 0)), 0);
+	vec4 depth = range / (MAP_RANGE_TO_NEAR - (MAP_RANGE_TO_NEAR - 1.0) * stored);
 	vec2 fraction = atlas_texel - 0.5 - below;
 	vec4 weights = vec4((1.0 - fraction.x) * fraction.y, fraction.x * fraction.y, fraction.x * (1.0 - fraction.y), (1.0 - fraction.x) * (1.0 - fraction.y));
 	return dot(vec4(greaterThanEqual(depth, vec4(compared_distance))), weights);
@@ -103,7 +106,7 @@ float omni_visibility(vec4 t4, vec4 t6, float side, vec3 to_point, vec3 surface_
 		local = vec3(sample_direction.x, sample_direction.y, magnitude.z);
 	}
 	vec2 uv = local.xy / local.z / (1.0 + CUBE_GUARD_TEXELS / side) * 0.5 + 0.5;
-	return compare_depth(vec2(t6.w, t4.z) * MAP_ORIGIN_UNIT + vec2(face * side, 0.0) + uv * side, reach - biases.x, 1.0 / t4.w);
+	return compare_depth(vec2(t6.w, t4.z) * MAP_ORIGIN_UNIT + vec2(face * side, 0.0) + uv * side, (reach - biases.x) * local.z, 1.0 / t4.w);
 }
 
 // Смещения как у Spot в Godot: нормаль сдвигает саму точку пропорционально расстоянию; shadow_bias / 100 прибавлен к
@@ -127,7 +130,7 @@ float spot_visibility(ivec2 sc, vec4 t4, vec4 t6, vec3 to_point, vec3 surface_no
 	float range = 1.0 / t4.w;
 	float relative_bias = biases.x / (SPOT_SHADOW_NEAR * 100.0 + biases.x);
 	vec2 uv = ndc * 0.5 + 0.5;
-	return compare_depth(vec2(t6.w, t4.z) * MAP_ORIGIN_UNIT + uv * side, length(moved) * (1.0 - relative_bias), range);
+	return compare_depth(vec2(t6.w, t4.z) * MAP_ORIGIN_UNIT + uv * side, point.z * (1.0 - relative_bias), range);
 }
 
 // Байты 1..255: ноль остаётся за пикселем без света ламп.
