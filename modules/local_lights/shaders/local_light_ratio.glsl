@@ -4,8 +4,10 @@
 
 #VERSION_DEFINES
 
+#include "local_light_ratio_surface_inc.glsl"
+
 // Проход после предварительной глубины: на пиксель считается доля света ламп ячейки, которую пропускает жёсткая тень от
-// центра лампы, один gather на лампу. Отношение, нормаль поверхности и радиус размытия записываются для размытия.
+// центра лампы, один gather на лампу. Отношение, радиус размытия, нормаль и глубина записываются для размытия.
 // Раскладка данных ламп и обход ячейки — контракт с local_lights_inc.gdshaderinc и local_lights_world.cpp.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -14,11 +16,8 @@ layout(set = 0, binding = 0) uniform sampler2D depth_buffer;
 layout(set = 0, binding = 1) uniform sampler2D cull_grid;
 layout(set = 0, binding = 2) uniform sampler2D cull_data;
 layout(set = 0, binding = 3) uniform sampler2D shadow_atlas;
-// Радиус размытия, м.
-layout(r16f, set = 0, binding = 4) uniform restrict writeonly image2D blur_radius;
-// rgb — затенённый свет ламп к незатенённому по каналам: лампа в тени гасит только свой цвет. a — нормаль в осях вида,
-// полусфера в октаэдре по 8 бит, ноль — у пикселя нет света ламп. Вместе, чтобы выборка размытия читала одну текстуру.
-layout(rgba16, set = 0, binding = 7) uniform restrict writeonly image2D ratio_and_normal;
+// Отношение — затенённый свет ламп к незатенённому по каналам: лампа в тени гасит только свой цвет.
+layout(rg32ui, set = 0, binding = 7) uniform restrict writeonly uimage2D ratio_surface;
 layout(set = 0, binding = 5, std140) uniform Params {
 	mat4 inverse_projection;
 	mat4 projection;
@@ -34,8 +33,6 @@ const int INDEX_W_LOG2 = 11;
 const int INDEX_W_MASK = (1 << INDEX_W_LOG2) - 1;
 const int SLOT_SHIFT = 3;
 const float MIN_FACING_WEIGHT = 0.01;
-const float MIN_RADIUS_METERS = 0.02;
-const float MAX_RADIUS_METERS = 0.2;
 
 vec3 view_point_at(ivec2 pixel, ivec2 size) {
 	float depth = texelFetch(depth_buffer, pixel, 0).r;
@@ -141,11 +138,11 @@ float spot_visibility(ivec2 sc, vec4 t4, vec4 t6, vec3 to_point, vec3 surface_no
 }
 
 // Байты 1..255: ноль остаётся за пикселем без света ламп.
-float packed_normal(vec3 normal) {
+uint packed_normal(vec3 normal) {
 	vec2 folded = normal.xy / (abs(normal.x) + abs(normal.y) + abs(normal.z));
 	vec2 octahedron = vec2(folded.x + folded.y, folded.x - folded.y);
 	uvec2 bytes = uvec2(round((octahedron * 0.5 + 0.5) * 254.0)) + uvec2(1u);
-	return float((bytes.x << 8u) | bytes.y) / 65535.0;
+	return (bytes.x << 8u) | bytes.y;
 }
 
 float color_weight(vec3 color) {
@@ -160,8 +157,7 @@ void main() {
 	}
 	// Обратный Z: ноль — дальняя плоскость, там только небо.
 	if (texelFetch(depth_buffer, pixel, 0).r <= 0.0) {
-		imageStore(blur_radius, pixel, vec4(0.0));
-		imageStore(ratio_and_normal, pixel, vec4(0.0));
+		imageStore(ratio_surface, pixel, uvec4(0u));
 		return;
 	}
 	vec3 view_point = view_point_at(pixel, size);
@@ -226,8 +222,13 @@ void main() {
 			largest_light = max(largest_light, light_weight);
 		}
 	}
-	float radius = unshadowed > 0.0 ? clamp(params.blur.x * distance_light_sum / unshadowed * (1.0 + params.blur.z * (1.0 - largest_light / unshadowed)), MIN_RADIUS_METERS, MAX_RADIUS_METERS) : 0.0;
-	imageStore(blur_radius, pixel, vec4(radius));
+	if (unshadowed <= 0.0) {
+		imageStore(ratio_surface, pixel, uvec4(0u));
+		return;
+	}
+	float radius = clamp(params.blur.x * distance_light_sum / unshadowed * (1.0 + params.blur.z * (1.0 - largest_light / unshadowed)), MIN_RADIUS_METERS, MAX_RADIUS_METERS);
 	// Канал без света ламп ничего не умножает: единица не тянет соседей в темноту при размытии.
-	imageStore(ratio_and_normal, pixel, unshadowed > 0.0 ? vec4(mix(vec3(1.0), shadowed_color / unshadowed_color, greaterThan(unshadowed_color, vec3(0.0))), packed_normal(view_normal)) : vec4(0.0));
+	vec3 ratio = mix(vec3(1.0), shadowed_color / unshadowed_color, greaterThan(unshadowed_color, vec3(0.0)));
+	uint packed_depth = uint(round(clamp(-view_point.z / SURFACE_DEPTH_RANGE_METERS, 0.0, 1.0) * 65535.0));
+	imageStore(ratio_surface, pixel, uvec4(packUnorm4x8(vec4(sqrt(ratio), (radius - MIN_RADIUS_METERS) / (MAX_RADIUS_METERS - MIN_RADIUS_METERS))), (packed_normal(view_normal) << 16u) | packed_depth, 0u, 0u));
 }

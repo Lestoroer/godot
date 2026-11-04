@@ -157,7 +157,7 @@ LocalLightsWorld::~LocalLightsWorld() {
 	for (const KeyValue<RD::VertexFormatID, RID> &entry : caster_pipelines) {
 		rd->free_rid(entry.value);
 	}
-	for (const RID &rid : { map_atlas, grid_rd, data_rd, blur_radius, ratio_and_normal, blurred_ratio, params_buffer, ratio_pipeline, blur_pipeline }) {
+	for (const RID &rid : { map_atlas, grid_rd, data_rd, ratio_surface, blurred_ratio, params_buffer, ratio_pipeline, blur_pipeline }) {
 		if (rid.is_valid()) {
 			rd->free_rid(rid);
 		}
@@ -1043,16 +1043,13 @@ void LocalLightsWorld::_ensure_screen_textures(const Size2i &p_size) {
 	screen_size = Size2i(MAX(p_size.x, screen_size.x), MAX(p_size.y, screen_size.y));
 	_retire_texture(blurred_ratio, blurred_ratio_texture);
 	RID no_wrapper;
-	_retire_texture(blur_radius, no_wrapper);
-	_retire_texture(ratio_and_normal, no_wrapper);
+	_retire_texture(ratio_surface, no_wrapper);
 	RD::TextureFormat format;
 	format.width = screen_size.x;
 	format.height = screen_size.y;
 	format.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
-	format.format = RD::DATA_FORMAT_R16_SFLOAT;
-	blur_radius = rd->texture_create(format, RD::TextureView());
-	format.format = RD::DATA_FORMAT_R16G16B16A16_UNORM;
-	ratio_and_normal = rd->texture_create(format, RD::TextureView());
+	format.format = RD::DATA_FORMAT_R32G32_UINT;
+	ratio_surface = rd->texture_create(format, RD::TextureView());
 	format.format = RD::DATA_FORMAT_A2B10G10R10_UNORM_PACK32;
 	format.usage_bits |= RD::TEXTURE_USAGE_SAMPLING_BIT;
 	blurred_ratio = rd->texture_create(format, RD::TextureView());
@@ -1107,8 +1104,7 @@ void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
 		rd->capture_timestamp("LocalLights ratio");
 	}
 	RID ratio_set = uniform_sets->get_cache(ratio_rd_shader, 0, sampled_uniform(0, sampler, depth), sampled_uniform(1, sampler, grid_rd), sampled_uniform(2, sampler, data_rd),
-			sampled_uniform(3, sampler, map_atlas.is_valid() ? map_atlas : no_atlas), image_uniform(4, blur_radius), buffer_uniform(5, params_buffer),
-			image_uniform(7, ratio_and_normal));
+			sampled_uniform(3, sampler, map_atlas.is_valid() ? map_atlas : no_atlas), buffer_uniform(5, params_buffer), image_uniform(7, ratio_surface));
 	RD::ComputeListID compute = rd->compute_list_begin();
 	rd->compute_list_bind_compute_pipeline(compute, ratio_pipeline);
 	rd->compute_list_bind_uniform_set(compute, ratio_set, 0);
@@ -1118,7 +1114,7 @@ void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
 	if (settings.gpu_timestamps) {
 		rd->capture_timestamp("LocalLights blur");
 	}
-	RID blur_set = uniform_sets->get_cache(blur_rd_shader, 0, sampled_uniform(0, sampler, depth), image_uniform(1, blur_radius), image_uniform(2, blurred_ratio), buffer_uniform(3, params_buffer), image_uniform(4, ratio_and_normal));
+	RID blur_set = uniform_sets->get_cache(blur_rd_shader, 0, image_uniform(1, ratio_surface), image_uniform(2, blurred_ratio), buffer_uniform(3, params_buffer));
 	compute = rd->compute_list_begin();
 	rd->compute_list_bind_compute_pipeline(compute, blur_pipeline);
 	rd->compute_list_bind_uniform_set(compute, blur_set, 0);
@@ -1135,7 +1131,7 @@ Dictionary LocalLightsWorld::memory_report() const {
 	report["atlasBytes"] = uint64_t(ATLAS_WIDTH) * atlas_height * 2;
 	report["atlasHeight"] = atlas_height;
 	report["atlasUsedHeight"] = atlas_used_height;
-	report["screenBytes"] = uint64_t(screen_size.x) * screen_size.y * (2 + 8 + 4);
+	report["screenBytes"] = uint64_t(screen_size.x) * screen_size.y * (8 + 4);
 	report["gridBytes"] = uint64_t(grid_bytes.size());
 	report["dataBytes"] = uint64_t(data_bytes.size());
 	uint64_t cpu = uint64_t(grid_bytes.size()) + uint64_t(data_bytes.size());
@@ -1156,8 +1152,7 @@ Dictionary LocalLightsWorld::read_screen_buffers() const {
 	Dictionary result;
 	result["size"] = screen_size;
 	if (blurred_ratio.is_valid()) {
-		result["hard"] = rd->texture_get_data(ratio_and_normal, 0);
-		result["surface"] = rd->texture_get_data(blur_radius, 0);
+		result["hard"] = rd->texture_get_data(ratio_surface, 0);
 		result["blurred"] = rd->texture_get_data(blurred_ratio, 0);
 	}
 	return result;

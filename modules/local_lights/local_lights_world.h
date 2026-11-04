@@ -194,8 +194,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 
 	// Экранные буферы: один набор по наибольшему вьюпорту, каждый вид перезаписывает его перед своим проходом.
 	Size2i screen_size;
-	RID blur_radius;
-	RID ratio_and_normal;
+	RID ratio_surface;
 	RID blurred_ratio;
 	RID blurred_ratio_texture;
 	bool globals_published = false;

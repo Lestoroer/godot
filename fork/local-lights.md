@@ -5,6 +5,7 @@
   [local_lights_world.h](../modules/local_lights/local_lights_world.h),
   [local_light_caster.glsl](../modules/local_lights/shaders/local_light_caster.glsl),
   [local_light_ratio.glsl](../modules/local_lights/shaders/local_light_ratio.glsl),
+  [local_light_ratio_surface_inc.glsl](../modules/local_lights/shaders/local_light_ratio_surface_inc.glsl),
   [local_light_blur.glsl](../modules/local_lights/shaders/local_light_blur.glsl).
 
 - **Настройка проекта, включение на мир, настройки и показатели для скриптов** —
