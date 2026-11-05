@@ -42,6 +42,12 @@ const Vector3 FACE_RIGHT[6] = { Vector3(0, 0, 1), Vector3(0, 0, 1), Vector3(1, 0
 const Vector3 FACE_UP[6] = { Vector3(0, 1, 0), Vector3(0, 1, 0), Vector3(0, 0, 1), Vector3(0, 1, 0), Vector3(0, 1, 0), Vector3(0, 0, 1) };
 const Vector3 FACE_FORWARD[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1), Vector3(0, 1, 0) };
 
+// Смещение тени общее для всех ламп, свойства лампы его не задают. Вдоль луча — меньше самой тонкой стенки 5 мм: вместе с долей текселя и шагом глубины
+// (local_light_ratio.glsl) оно закрывает её до расстояния, где тексель уже толще стенки. По нормали — постоянный сдвиг направления на тексель: убирает
+// самозатенение под любым углом, а чёрная полоса под мебелью от него не шире, чем от прежнего сдвига, который при скользящем луче был таким же.
+const float MAP_DEPTH_OFFSET_METERS = 0.003f;
+const float MAP_DIRECTION_OFFSET_TEXELS = 1.0f;
+
 RendererSceneCull *scene_cull() {
 	return static_cast<RendererSceneCull *>(RSG::scene);
 }
@@ -355,8 +361,6 @@ void LocalLightsWorld::_refresh_lamp(Lamp &r_lamp, const Instance *p_instance, u
 	r_lamp.decay = storage->light_get_param(base, RSE::LIGHT_PARAM_ATTENUATION);
 	r_lamp.cone_attenuation = spot ? 1.0f / storage->light_get_param(base, RSE::LIGHT_PARAM_SPOT_ATTENUATION) : 1.0f;
 	r_lamp.specular_amount = storage->light_get_param(base, RSE::LIGHT_PARAM_SPECULAR) * 2.0f;
-	r_lamp.shadow_bias = storage->light_get_param(base, RSE::LIGHT_PARAM_SHADOW_BIAS);
-	r_lamp.shadow_normal_bias = storage->light_get_param(base, RSE::LIGHT_PARAM_SHADOW_NORMAL_BIAS);
 	r_lamp.caster_mask = storage->light_get_shadow_caster_mask(base);
 	r_lamp.casts = storage->light_has_shadow(base);
 	r_lamp.data_dirty = true;
@@ -1027,9 +1031,11 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSetting
 	CasterPush push;
 	push.projection[2] = 0.0f;
 	push.projection[3] = 0.0f;
-	const float near_plane = map_near_plane(p_lamp.range);
-	push.extra[0] = p_lamp.range / (p_lamp.range - near_plane);
-	push.extra[1] = -near_plane * p_lamp.range / (p_lamp.range - near_plane);
+	// Шейдеры восстанавливают радиус из половинной точности данных лампы: глубина рисуется с тем же значением, иначе расшифровка разойдётся на миллиметры.
+	const float map_range = 1.0f / Math::half_to_float(Math::make_half_float(1.0f / p_lamp.range));
+	const float near_plane = map_near_plane(map_range);
+	push.extra[0] = map_range / (map_range - near_plane);
+	push.extra[1] = -near_plane * map_range / (map_range - near_plane);
 	push.extra[2] = 0.0f;
 	push.extra[3] = 0.0f;
 	push.decode_position[3] = 0.0f;
@@ -1227,8 +1233,8 @@ void LocalLightsWorld::_write_lamp_data(const Lamp &p_lamp) {
 	}
 	values[27] = -1.0f;
 	if (p_lamp.casts && p_lamp.map_valid) {
-		values[16] = p_lamp.shadow_bias;
-		values[17] = p_lamp.shadow_normal_bias;
+		values[16] = MAP_DEPTH_OFFSET_METERS;
+		values[17] = MAP_DIRECTION_OFFSET_TEXELS;
 		values[18] = float(p_lamp.map_origin.y / MAP_ORIGIN_UNIT);
 		values[19] = p_lamp.baked_inverse_range;
 		values[20] = p_lamp.spot ? p_lamp.baked_forward.x : 0.0f;

@@ -81,8 +81,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		float decay = 0.0f;
 		float cone_attenuation = 0.0f;
 		float specular_amount = 0.0f;
-		float shadow_bias = 0.0f;
-		float shadow_normal_bias = 0.0f;
 		uint32_t caster_mask = 0;
 		LocalVector<uint32_t> cells;
 		LocalVector<uint32_t> cell_slots;
