@@ -173,6 +173,20 @@ void RendererSceneCull::occluder_set_mesh(RID p_occluder, const PackedVector3Arr
 
 /* SCENARIO API */
 
+// lestoroer#local-lights
+static bool aabb_reaches_sphere(const AABB &p_aabb, const Vector3 &p_center, float p_radius) {
+	return p_center.clamp(p_aabb.position, p_aabb.get_end()).distance_squared_to(p_center) <= p_radius * p_radius;
+}
+
+// lestoroer#local-lights: запас коробки пар лампы модуля. Пары — надмножество геометрии в радиусе: модуль сам отсекает кастеры по радиусу,
+// а перестройку карты ставит только предмет, достающий до сферы лампы.
+static const float LOCAL_LIGHT_PAIR_MARGIN = 0.25f;
+
+// lestoroer#local-lights: пара, которую лампа модуля получила или потеряла из-за запаса коробки, карту не меняет.
+static bool pair_changes_local_light(const RendererSceneCull::Instance *p_geometry, const RendererSceneCull::Instance *p_light) {
+	return !p_light->uses_pair_aabb || aabb_reaches_sphere(p_geometry->transformed_aabb, p_light->transform.origin, RSG::light_storage->light_get_param(p_light->base, RSE::LIGHT_PARAM_RANGE));
+}
+
 void RendererSceneCull::_instance_pair(Instance *p_A, Instance *p_B) {
 	RendererSceneCull *self = (RendererSceneCull *)singleton;
 	Instance *A = p_A;
@@ -195,7 +209,7 @@ void RendererSceneCull::_instance_pair(Instance *p_A, Instance *p_B) {
 		geom->lights.insert(B);
 		light->geometries.insert(A);
 
-		if (geom->can_cast_shadows) {
+		if (geom->can_cast_shadows && pair_changes_local_light(A, B)) { // lestoroer#local-lights
 			light->make_shadow_dirty();
 		}
 
@@ -320,7 +334,7 @@ void RendererSceneCull::_instance_unpair(Instance *p_A, Instance *p_B) {
 		geom->lights.erase(B);
 		light->geometries.erase(A);
 
-		if (geom->can_cast_shadows) {
+		if (geom->can_cast_shadows && pair_changes_local_light(A, B)) { // lestoroer#local-lights
 			light->make_shadow_dirty();
 		}
 
@@ -1816,11 +1830,6 @@ void RendererSceneCull::instance_geometry_get_shader_parameter_list(RID p_instan
 	instance->instance_uniforms.get_property_list(*p_parameters);
 }
 
-// lestoroer#local-lights
-static bool aabb_reaches_sphere(const AABB &p_aabb, const Vector3 &p_center, float p_radius) {
-	return p_center.clamp(p_aabb.position, p_aabb.get_end()).distance_squared_to(p_center) <= p_radius * p_radius;
-}
-
 void RendererSceneCull::_update_instance(Instance *p_instance) const {
 	p_instance->version++;
 
@@ -1968,10 +1977,25 @@ void RendererSceneCull::_update_instance(Instance *p_instance) const {
 		return;
 	}
 
-	//quantize to improve moving object performance
-	AABB bvh_aabb = p_instance->transformed_aabb;
+	// lestoroer#local-lights: лампа модуля, чья коробка не вышла из коробки прошлых пар, не перестраивает пары и своё место в BVH.
+	const bool pairs_by_margin = p_instance->base_type == RSE::INSTANCE_LIGHT && _scenario_owns_local_light(p_instance->scenario, p_instance);
+	if (pairs_by_margin && p_instance->indexer_id.is_valid() && p_instance->uses_pair_aabb && p_instance->pair_aabb.encloses(p_instance->transformed_aabb)) {
+		p_instance->scenario->instance_aabbs[p_instance->array_index] = InstanceBounds(p_instance->transformed_aabb);
+		if (p_instance->visibility_index != -1) {
+			p_instance->scenario->instance_visibility[p_instance->visibility_index].position = p_instance->transformed_aabb.get_center();
+		}
+		p_instance->prev_transformed_aabb = p_instance->transformed_aabb;
+		return;
+	}
+	p_instance->uses_pair_aabb = pairs_by_margin;
+	if (pairs_by_margin) {
+		p_instance->pair_aabb = p_instance->transformed_aabb.grow(LOCAL_LIGHT_PAIR_MARGIN);
+	}
 
-	if (p_instance->indexer_id.is_valid() && bvh_aabb != p_instance->prev_transformed_aabb) {
+	//quantize to improve moving object performance
+	AABB bvh_aabb = p_instance->pairing_aabb(); // lestoroer#local-lights
+
+	if (!pairs_by_margin && p_instance->indexer_id.is_valid() && bvh_aabb != p_instance->prev_transformed_aabb) { // lestoroer#local-lights
 		//assume motion, see if bounds need to be quantized
 		AABB motion_aabb = bvh_aabb.merge(p_instance->prev_transformed_aabb);
 		float motion_longest_axis = motion_aabb.get_longest_axis_size();

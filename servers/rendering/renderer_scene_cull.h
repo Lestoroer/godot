@@ -458,6 +458,10 @@ public:
 		AABB aabb;
 		AABB transformed_aabb;
 		AABB prev_transformed_aabb;
+		// lestoroer#local-lights: коробка, по которой лампа модуля собрала пары с геометрией; шире своей, чтобы движение не пересобирало их каждый кадр.
+		AABB pair_aabb;
+		bool uses_pair_aabb = false;
+		const AABB &pairing_aabb() const { return uses_pair_aabb ? pair_aabb : transformed_aabb; }
 
 		InstanceUniforms instance_uniforms;
 
@@ -860,7 +864,7 @@ public:
 		_FORCE_INLINE_ bool operator()(void *p_data) {
 			Instance *p_instance = (Instance *)p_data;
 
-			if (instance != p_instance && instance->transformed_aabb.intersects(p_instance->transformed_aabb) && (pair_mask & (1 << p_instance->base_type))) {
+			if (instance != p_instance && instance->pairing_aabb().intersects(p_instance->pairing_aabb()) && (pair_mask & (1 << p_instance->base_type))) { // lestoroer#local-lights
 				//test is more coarse in indexer
 				p_instance->pair_check = pair_pass;
 				InstancePair *pair = pair_allocator->alloc();
@@ -872,11 +876,12 @@ public:
 		}
 
 		void pair() {
+			// lestoroer#local-lights
 			if (bvh) {
-				bvh->aabb_query(instance->transformed_aabb, *this);
+				bvh->aabb_query(instance->pairing_aabb(), *this);
 			}
 			if (bvh2) {
-				bvh2->aabb_query(instance->transformed_aabb, *this);
+				bvh2->aabb_query(instance->pairing_aabb(), *this);
 			}
 			while (instance->pairs.first()) {
 				InstancePair *pair = instance->pairs.first()->self();
