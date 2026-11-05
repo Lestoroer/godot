@@ -37,6 +37,7 @@ const int SLOT_SHIFT = 3;
 const int LAMPS_PER_ROW_LOG2 = 8;
 const int LAMPS_PER_ROW_MASK = (1 << LAMPS_PER_ROW_LOG2) - 1;
 const float MIN_FACING_WEIGHT = 0.000001;
+const float ENOUGH_LIGHT_IN_FRONT = 0.0001;
 
 // Глубина по оси вида. Обе проекции без наклона по z, поэтому она не зависит от положения пикселя.
 float view_z_at(ivec2 pixel) {
@@ -206,7 +207,6 @@ void main() {
 	float cell_size = params.cull_origin_and_step.w;
 	vec3 relative = world_point - params.cull_origin_and_step.xyz;
 	ivec3 cell = ivec3(floor(relative / cell_size));
-	float unshadowed = 0.0;
 	vec3 unshadowed_color = vec3(0.0);
 	vec3 shadowed_color = vec3(0.0);
 	float distance_light_sum = 0.0;
@@ -228,13 +228,14 @@ void main() {
 				continue;
 			}
 			float inverse_distance = inversesqrt(max(distance_squared, 1e-8));
-			// Лампа за плоскостью точки на отношение не влияет, пока есть лампа перед ней: иначе тень других ламп разбавлялась бы светом, которого нет.
-			// Вес не нулевой: нормаль шейдинга сглажена и бывает обращена к лампе там, где грань уже нет, и такой точке тоже нужно отношение.
-			float facing = max(dot(world_normal, to_light) * inverse_distance, MIN_FACING_WEIGHT);
-			vec4 color_decay = texelFetch(cull_data, sc + ivec2(2, 0), 0);
-			float window = 1.0 - range_ratio * range_ratio;
-			float attenuation = window * window * pow(max(distance_squared * inverse_distance, 0.0001), -color_decay.w);
+			float facing = dot(world_normal, to_light) * inverse_distance;
+			// Лампа за плоскостью точки рядом со светом спереди ничего не меняет: её вес ничтожен. Без света спереди она нужна: ткань пропускает её свет,
+			// а сглаженная нормаль шейдинга бывает обращена к ней там, где грань уже нет.
+			if (facing <= 0.0 && largest_light >= ENOUGH_LIGHT_IN_FRONT) {
+				continue;
+			}
 			bool is_spot = member >= omni_count;
+			float attenuation = 1.0;
 			if (is_spot) {
 				vec4 axis_cone = texelFetch(cull_data, sc + ivec2(1, 0), 0);
 				float along_axis = dot(-to_light, axis_cone.xyz);
@@ -243,9 +244,13 @@ void main() {
 				}
 				vec4 fin = texelFetch(cull_data, sc + ivec2(3, 0), 0);
 				float rim = max(1e-4, (1.0 - max(along_axis * inverse_distance, fin.x)) / (1.0 - fin.x));
-				attenuation *= 1.0 - pow(rim, fin.z);
+				attenuation = 1.0 - pow(rim, fin.z);
 			}
-			vec3 light_color = attenuation * facing * color_decay.rgb;
+			vec4 color_decay = texelFetch(cull_data, sc + ivec2(2, 0), 0);
+			float window = 1.0 - range_ratio * range_ratio;
+			float light_distance = distance_squared * inverse_distance;
+			attenuation *= window * window * pow(max(light_distance, 0.0001), -color_decay.w);
+			vec3 light_color = attenuation * max(facing, MIN_FACING_WEIGHT) * color_decay.rgb;
 			float light_weight = color_weight(light_color);
 			float visibility = 1.0;
 			vec4 t6 = texelFetch(cull_data, sc + ivec2(6, 0), 0);
@@ -253,15 +258,15 @@ void main() {
 				vec4 t4 = texelFetch(cull_data, sc + ivec2(4, 0), 0);
 				visibility = is_spot ? spot_visibility(sc, t4, t6, -to_light, world_normal) : omni_visibility(t4, t6, texelFetch(cull_data, sc + ivec2(7, 0), 0).w, -to_light, world_normal);
 			}
-			unshadowed += light_weight;
 			unshadowed_color += light_color;
 			shadowed_color += light_color * visibility;
 			// Несколько ламп дают один радиус: вес — незатенённый свет лампы в точке. Он известен и в свету, и в тени
 			// и меняется плавно, поэтому радиус не рвёт форму тени.
-			distance_light_sum += light_weight * sqrt(distance_squared);
+			distance_light_sum += light_weight * light_distance;
 			largest_light = max(largest_light, light_weight);
 		}
 	}
+	float unshadowed = color_weight(unshadowed_color);
 	if (unshadowed <= 0.0) {
 		imageStore(ratio_surface, pixel, uvec4(0u));
 		return;

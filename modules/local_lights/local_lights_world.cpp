@@ -463,27 +463,29 @@ void LocalLightsWorld::_compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cel
 	const Vector3i cell_min(clamp_cell(lo.x, CELL_DIMS.x), clamp_cell(lo.y, CELL_DIMS.y), clamp_cell(lo.z, CELL_DIMS.z));
 	const Vector3i cell_max(clamp_cell(hi.x, CELL_DIMS.x), clamp_cell(hi.y, CELL_DIMS.y), clamp_cell(hi.z, CELL_DIMS.z));
 	const float sin_outer = Math::sqrt(MAX(1.0f - cos_outer * cos_outer, 0.0f));
-	const float cell_bound = CELL_SIZE * 0.5f * Math::sqrt(3.0f);
+	const float half_cell = CELL_SIZE * 0.5f;
+	const float cell_bound = half_cell * Math::sqrt(3.0f);
 	const float reach = reach_range + cell_bound;
-	const float reach_sq = reach * reach;
+	const float range_sq = reach_range * reach_range;
 	const Vector3 first_center = origin + Vector3(0.5f, 0.5f, 0.5f) * CELL_SIZE;
 	const float vx_base = first_center.x - r_lamp.position.x;
 	const int dx = CELL_DIMS.x;
 	const int dxy = CELL_DIMS.x * CELL_DIMS.y;
 	for (int cz = cell_min.z; cz <= cell_max.z; cz++) {
 		const float vz = first_center.z + float(cz) * CELL_SIZE - r_lamp.position.z;
-		const float d2_z = vz * vz;
-		if (d2_z > reach_sq) {
+		const float gap_z = MAX(Math::abs(vz) - half_cell, 0.0f);
+		if (gap_z * gap_z > range_sq) {
 			continue;
 		}
 		for (int cy = cell_min.y; cy <= cell_max.y; cy++) {
 			const float vy = first_center.y + float(cy) * CELL_SIZE - r_lamp.position.y;
-			const float d2_yz = d2_z + vy * vy;
-			const float span_sq = reach_sq - d2_yz;
-			if (span_sq <= 0.0f) {
+			const float gap_y = MAX(Math::abs(vy) - half_cell, 0.0f);
+			const float span_sq = range_sq - gap_z * gap_z - gap_y * gap_y;
+			if (span_sq < 0.0f) {
 				continue;
 			}
-			const float span = Math::sqrt(span_sq);
+			// Ячейка задета, пока её ближняя грань по x внутри хорды сферы.
+			const float span = Math::sqrt(span_sq) + half_cell;
 			const int cx_lo = MAX(int(Math::ceil((-span - vx_base) / CELL_SIZE)), cell_min.x);
 			const int cx_hi = MIN(int(Math::floor((span - vx_base) / CELL_SIZE)), cell_max.x);
 			const int row = cz * dxy + cy * dx;
@@ -500,7 +502,7 @@ void LocalLightsWorld::_compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cel
 				if (axial > reach || axial < -cell_bound) {
 					continue;
 				}
-				const float d2 = vx * vx + d2_yz;
+				const float d2 = vx * vx + vy * vy + vz * vz;
 				const float side = cos_outer * Math::sqrt(MAX(d2 - axial * axial, 0.0f)) - axial * sin_outer;
 				if (side > cell_bound) {
 					continue;
