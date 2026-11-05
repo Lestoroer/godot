@@ -38,29 +38,33 @@ const int LAMPS_PER_ROW_LOG2 = 8;
 const int LAMPS_PER_ROW_MASK = (1 << LAMPS_PER_ROW_LOG2) - 1;
 const float MIN_FACING_WEIGHT = 0.000001;
 
-vec3 view_point_at(ivec2 pixel, ivec2 size) {
+// Глубина по оси вида. Обе проекции без наклона по z, поэтому она не зависит от положения пикселя.
+float view_z_at(ivec2 pixel) {
 	float depth = texelFetch(depth_buffer, pixel, 0).r;
-	vec4 view = params.inverse_projection * vec4((vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0, depth, 1.0);
-	return view.xyz / view.w;
+	return (params.inverse_projection[2][2] * depth + params.inverse_projection[3][2]) / (params.inverse_projection[2][3] * depth + params.inverse_projection[3][3]);
 }
 
-// Геометрическая нормаль по глубине: по каждой оси берётся сосед с меньшим скачком, чтобы не перешагивать край.
+vec3 view_point_at(ivec2 pixel, ivec2 size, float view_z) {
+	vec2 ndc = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
+	float clip_w = params.projection[2][3] * view_z + params.projection[3][3];
+	return vec3((ndc * clip_w - params.projection[2].xy * view_z - params.projection[3].xy) * vec2(params.inverse_projection[0][0], params.inverse_projection[1][1]), view_z);
+}
+
+// Геометрическая нормаль по глубине: по каждой оси берётся сосед с меньшим скачком, чтобы не перешагивать край. Лучи пикселей не лежат в одной плоскости,
+// поэтому векторное произведение не вырождается и его направление к камере не зависит от глубин.
 vec3 surface_normal_at(ivec2 pixel, ivec2 size, vec3 point) {
-	vec3 forward_x = view_point_at(min(pixel + ivec2(1, 0), size - 1), size) - point;
-	vec3 backward_x = point - view_point_at(max(pixel - ivec2(1, 0), ivec2(0)), size);
-	vec3 forward_y = view_point_at(min(pixel + ivec2(0, 1), size - 1), size) - point;
-	vec3 backward_y = point - view_point_at(max(pixel - ivec2(0, 1), ivec2(0)), size);
+	ivec2 next_x = min(pixel + ivec2(1, 0), size - 1);
+	ivec2 previous_x = max(pixel - ivec2(1, 0), ivec2(0));
+	ivec2 next_y = min(pixel + ivec2(0, 1), size - 1);
+	ivec2 previous_y = max(pixel - ivec2(0, 1), ivec2(0));
+	vec3 forward_x = view_point_at(next_x, size, view_z_at(next_x)) - point;
+	vec3 backward_x = point - view_point_at(previous_x, size, view_z_at(previous_x));
+	vec3 forward_y = view_point_at(next_y, size, view_z_at(next_y)) - point;
+	vec3 backward_y = point - view_point_at(previous_y, size, view_z_at(previous_y));
 	// У края кадра соседа с одной стороны нет, разность там нулевая и выбирать её нельзя.
 	vec3 along_x = pixel.x + 1 < size.x && (pixel.x == 0 || dot(forward_x, forward_x) < dot(backward_x, backward_x)) ? forward_x : backward_x;
 	vec3 along_y = pixel.y + 1 < size.y && (pixel.y == 0 || dot(forward_y, forward_y) < dot(backward_y, backward_y)) ? forward_y : backward_y;
-	vec3 perpendicular = cross(along_y, along_x);
-	float perpendicular_length = length(perpendicular);
-	// Соседи на одной прямой, например у края кадра: своей плоскости нет, точка считается обращённой к камере.
-	if (perpendicular_length <= 0.0) {
-		return -normalize(point);
-	}
-	vec3 normal = perpendicular / perpendicular_length;
-	return dot(normal, point) > 0.0 ? -normal : normal;
+	return normalize(cross(along_y, along_x));
 }
 
 // Грань снята шире своего ребра на столько текселей в сумме, по половине с каждой стороны: контракт с local_lights_world.cpp.
@@ -191,7 +195,7 @@ void main() {
 		imageStore(ratio_surface, pixel, uvec4(0u));
 		return;
 	}
-	vec3 view_point = view_point_at(pixel, size);
+	vec3 view_point = view_point_at(pixel, size, view_z_at(pixel));
 	vec3 view_normal = surface_normal_at(pixel, size, view_point);
 	vec3 world_point = (params.view_to_world * vec4(view_point, 1.0)).xyz;
 	vec3 world_normal = mat3(params.view_to_world) * view_normal;
