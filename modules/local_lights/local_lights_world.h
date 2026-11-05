@@ -248,6 +248,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	LocalVector<uint32_t> plan_order;
 	uint32_t lamps_reduced = 0;
 	LocalVector<uint32_t> place_order;
+	// Стороны мест, которых в этом кадре не нашлось.
+	LocalVector<Vector2i> failed_place_sizes;
 	Vector3 camera_position;
 	// Время движка текущего кадра, секунды: выдержки плана не зависят от частоты кадров.
 	double frame_time = 0.0;
@@ -279,6 +281,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	bool data_changed = false;
 	uint32_t data_rows = 0;
 	uint32_t list_rows = 0;
+	// Записей в списке ламп ячеек после последней раскладки.
+	uint32_t list_used = 1;
 	Vector<uint8_t> grid_bytes;
 	Vector<uint8_t> data_bytes;
 	Vector<uint8_t> list_bytes;

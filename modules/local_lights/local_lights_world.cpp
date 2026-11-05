@@ -764,8 +764,16 @@ bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 	const int width = p_side * faces;
 	const int previous_width = r_lamp.map_side * r_lamp.map_faces;
 	const bool fits_in_place = r_lamp.map_faces > 0 && width <= previous_width && p_side <= r_lamp.map_side;
+	// Прямоугольник, вмещающий уже не найденный в этом кадре, тоже не найдётся: поиск по всему атласу не повторяется.
+	bool known_to_fail = false;
+	for (const Vector2i &failed : failed_place_sizes) {
+		known_to_fail = known_to_fail || (width >= failed.x && p_side >= failed.y);
+	}
 	Vector2i place;
-	const bool allocated = _allocate_map_rect(width, p_side, place);
+	const bool allocated = !known_to_fail && _allocate_map_rect(width, p_side, place);
+	if (!allocated && !known_to_fail) {
+		failed_place_sizes.push_back(Vector2i(width, p_side));
+	}
 	// Уменьшенная карта переезжает, только если новое место ниже: старое освобождается целиком и остаётся годным крупной карте.
 	if (fits_in_place && (!allocated || place.y > r_lamp.map_origin.y || (place.y == r_lamp.map_origin.y && place.x > r_lamp.map_origin.x))) {
 		if (allocated) {
@@ -1305,6 +1313,7 @@ void LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLights
 	SortArray<uint32_t, ByPlacement> sorter;
 	sorter.compare.lamps = &lamps;
 	sorter.sort(place_order.ptr(), place_order.size());
+	failed_place_sizes.clear();
 	for (const uint32_t index : place_order) {
 		Lamp &lamp = lamps[index];
 		if (_side_change_allowed(lamp)) {
@@ -1547,17 +1556,19 @@ void LocalLightsWorld::_update_grid() {
 	if (grid_changed) {
 		rd->texture_update(grid_rd, 0, grid_bytes);
 		rd->texture_update(list_rd, 0, list_bytes);
-		rd->buffer_update(list_buffer, 0, list_bytes.size(), list_bytes.ptr());
+		// Проход отношения читает буферы только до конца списка и до последней лампы: хвост не загружается.
+		rd->buffer_update(list_buffer, 0, list_used * sizeof(float), list_bytes.ptr());
 		grid_changed = false;
 		frame_metrics.grid_uploads++;
-		frame_metrics.uploaded_bytes += grid_bytes.size() + list_bytes.size() * 2;
+		frame_metrics.uploaded_bytes += grid_bytes.size() + list_bytes.size() + list_used * sizeof(float);
 	}
 	if (data_changed) {
 		rd->texture_update(data_rd, 0, data_bytes);
-		rd->buffer_update(data_buffer, 0, data_bytes.size(), data_bytes.ptr());
+		const uint32_t data_used = MIN(uint32_t(data_bytes.size()), lamps.size() * SLOT_TEXELS * BYTES_PER_DATA_TEXEL);
+		rd->buffer_update(data_buffer, 0, data_used, data_bytes.ptr());
 		data_changed = false;
 		frame_metrics.data_uploads++;
-		frame_metrics.uploaded_bytes += data_bytes.size() * 2;
+		frame_metrics.uploaded_bytes += data_bytes.size() + data_used;
 	}
 }
 
@@ -1594,6 +1605,7 @@ void LocalLightsWorld::_repack() {
 		cell_next[cell] = list_end;
 		list_end += cell_omni[cell] + cell_spot[cell];
 	}
+	list_used = MAX(1u, list_end);
 	const uint32_t needed_rows = MAX(1u, (list_end + LIST_WIDTH - 1) / LIST_WIDTH);
 	if (needed_rows > list_rows) {
 		list_rows = Math::next_power_of_2(needed_rows);
