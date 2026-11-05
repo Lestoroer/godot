@@ -1811,6 +1811,11 @@ void RendererSceneCull::instance_geometry_get_shader_parameter_list(RID p_instan
 	instance->instance_uniforms.get_property_list(*p_parameters);
 }
 
+// lestoroer#local-lights
+static bool aabb_reaches_sphere(const AABB &p_aabb, const Vector3 &p_center, float p_radius) {
+	return p_center.clamp(p_aabb.position, p_aabb.get_end()).distance_squared_to(p_center) <= p_radius * p_radius;
+}
+
 void RendererSceneCull::_update_instance(Instance *p_instance) const {
 	p_instance->version++;
 
@@ -1909,6 +1914,7 @@ void RendererSceneCull::_update_instance(Instance *p_instance) const {
 		}
 	}
 
+	const AABB previous_aabb = p_instance->transformed_aabb; // lestoroer#local-lights
 	AABB new_aabb;
 	new_aabb = instance_xform->xform(p_instance->aabb);
 	p_instance->transformed_aabb = new_aabb;
@@ -1920,6 +1926,13 @@ void RendererSceneCull::_update_instance(Instance *p_instance) const {
 		if (geom->can_cast_shadows) {
 			for (const Instance *E : geom->lights) {
 				InstanceLightData *light = static_cast<InstanceLightData *>(E->base_data);
+				// lestoroer#local-lights: Пары строятся по кубу вокруг лампы. Предмет в углу куба, за радиусом лампы и до движения, и после, её карту не меняет.
+				if (p_instance->scenario && _scenario_owns_local_light(p_instance->scenario, E)) {
+					const float range = RSG::light_storage->light_get_param(E->base, RSE::LIGHT_PARAM_RANGE);
+					if (!aabb_reaches_sphere(previous_aabb, E->transform.origin, range) && !aabb_reaches_sphere(new_aabb, E->transform.origin, range)) {
+						continue;
+					}
+				}
 				light->make_shadow_dirty();
 			}
 		}
