@@ -5,8 +5,10 @@
 #include "core/io/json.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "servers/rendering/renderer_compositor.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
 #include "servers/rendering/rendering_server.h"
+#include "servers/rendering/rendering_server_globals.h"
 
 #include <cstring>
 
@@ -113,7 +115,7 @@ void SurfaceCacheWorldRD::render_frame() {
 	if (measure_gpu_time) {
 		read_gpu_time();
 	}
-	world_hash->call("begin_frame");
+	world_hash->call("begin_frame", RSG::rasterizer->get_frame_delta_time());
 	uint64_t start = OS::get_singleton()->get_ticks_usec();
 	int64_t previous_frame = frame;
 	update_world();

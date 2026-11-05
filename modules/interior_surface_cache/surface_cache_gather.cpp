@@ -2,6 +2,8 @@
 #include "surface_cache_gather.h"
 
 #include "core/object/class_db.h"
+#include "servers/rendering/renderer_compositor.h"
+#include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/storage/render_scene_data.h"
 
 using namespace SurfaceCache;
@@ -14,7 +16,6 @@ void SurfaceCacheGatherRD::_bind_methods() {
 	BIND_CONSTANT(VIEW_BYTES);
 	BIND_CONSTANT(VIEW_CHANGES);
 	BIND_CONSTANT(VIEW_MOVED);
-	BIND_CONSTANT(CHANGE_FRAMES);
 }
 
 bool SurfaceCacheGatherRD::initialize(RenderingDevice *p_device, const Ref<RefCounted> &p_world_hash) {
@@ -26,9 +27,6 @@ bool SurfaceCacheGatherRD::initialize(RenderingDevice *p_device, const Ref<RefCo
 		PackedStringArray defines;
 		if (i == PLACE || i == TRACE || i == CONTACT || i == REFLECTION) {
 			defines = reader;
-		}
-		if (i == REFLECTION) {
-			defines.push_back("REFLECTION_REACTIVE_FRAMES 8.0");
 		}
 		if (!kernels[i].initialize(device, names[i], defines)) {
 			error = String("Final gather shader compilation failed: ") + names[i] + ": " + kernels[i].error;
@@ -141,9 +139,9 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	r_sets.passes[INTEGRATE] = cached(kernels[INTEGRATE], bindings);
 	bindings.clear();
 	bindings.push_back(uniform(0, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.camera));
-	images(bindings, { "diffuse_raw", "depth_" + cur, "normal_" + cur, "light_" + prev, "depth_" + prev, "normal_" + prev, "light_" + cur, "contact_" + cur, "gi", "rough_radiance" });
-	bindings.push_back(uniform(11, RD::UNIFORM_TYPE_STORAGE_BUFFER, material_changes));
-	bindings.push_back(uniform(12, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.emission_change));
+	images(bindings, { "diffuse_raw", "depth_" + cur, "normal_" + cur, "light_" + prev, "depth_" + prev, "normal_" + prev, "light_" + cur, "contact_" + cur, "gi" });
+	bindings.push_back(uniform(10, RD::UNIFORM_TYPE_STORAGE_BUFFER, material_changes));
+	bindings.push_back(uniform(11, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.emission_change));
 	images(bindings, { "fast_" + prev, "fast_" + cur, "contact_light_" + cur });
 	r_sets.passes[TEMPORAL] = cached(kernels[TEMPORAL], bindings);
 	replace(scene, uniform(10, RD::UNIFORM_TYPE_IMAGE, texture("reflection_raw")));
@@ -153,7 +151,7 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	r_sets.passes[REFLECTION] = cached(kernels[REFLECTION], scene);
 	bindings.clear();
 	bindings.push_back(uniform(0, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.camera));
-	bindings.push_back(uniform(1, RD::UNIFORM_TYPE_STORAGE_BUFFER, material_changes));
+	bindings.push_back(uniform(1, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.emission_change));
 	images(bindings, { "reflection_raw", "depth_" + cur, "normal_" + cur, "reflection_material_" + cur, "reflection_" + prev, "depth_" + prev, "normal_" + prev, "reflection_material_" + prev, "reflection_" + cur, "reflection" });
 	bindings.push_back(sampled(12, sampler, normals));
 	bindings.push_back(uniform(13, RD::UNIFORM_TYPE_IMAGE, texture("rough_radiance")));
@@ -161,25 +159,25 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	r_sets.ready = true;
 }
 
-void SurfaceCacheGatherRD::take_changes(int64_t frame) {
+void SurfaceCacheGatherRD::take_changes(double now) {
 	TypedArray<AABB> fresh = world_hash->call("pending_changes");
 	if (fresh.size() > VIEW_CHANGES) {
 		AABB merged = fresh[0];
 		for (int i = 0; i < fresh.size(); ++i) {
 			merged = merged.merge(fresh[i]);
 		}
-		changes.push_back({ merged, frame, 1e30f });
+		changes.push_back({ merged, now });
 	} else {
 		for (int i = 0; i < fresh.size(); ++i) {
-			changes.push_back({ AABB(fresh[i]), frame, 1e30f });
+			changes.push_back({ AABB(fresh[i]), now });
 		}
 	}
 	if (bool(world_hash->call("sun_change_pending"))) {
-		changes.push_back({ AABB(Vector3(-1e30, -1e30, -1e30), Vector3(2e30, 2e30, 2e30)), frame, 2.0f });
+		world_light_time = now;
 	}
 	uint32_t write = 0;
 	for (uint32_t i = 0; i < changes.size(); ++i) {
-		if (frame - changes[i].frame < CHANGE_FRAMES) {
+		if (now - changes[i].time < CHANGE_SECONDS) {
 			changes[write++] = changes[i];
 		}
 	}
@@ -197,7 +195,7 @@ void SurfaceCacheGatherRD::take_changes(int64_t frame) {
 				}
 			}
 		}
-		Change merged = { changes[first].bounds.merge(changes[second].bounds), MAX(changes[first].frame, changes[second].frame), MIN(changes[first].history, changes[second].history) };
+		Change merged = { changes[first].bounds.merge(changes[second].bounds), MAX(changes[first].time, changes[second].time) };
 		changes.remove_at(second);
 		changes[first] = merged;
 	}
@@ -207,8 +205,10 @@ void SurfaceCacheGatherRD::write_changes(Parameters &p) {
 	int64_t frame = world_hash->get("frame");
 	if (changes_frame != frame) {
 		changes_frame = frame;
-		take_changes(frame);
+		clock += RSG::rasterizer->get_frame_delta_time();
+		take_changes(clock);
 	}
+	p.time[1] = clock - world_light_time;
 	p.change_count[0] = changes.size();
 	for (uint32_t i = 0; i < changes.size(); ++i) {
 		const Change &change = changes[i];
@@ -216,8 +216,6 @@ void SurfaceCacheGatherRD::write_changes(Parameters &p) {
 			p.changes[i][axis] = change.bounds.position[axis];
 			p.changes[i][4 + axis] = change.bounds.get_end()[axis];
 		}
-		p.changes[i][3] = frame - change.frame;
-		p.changes[i][7] = change.history;
 	}
 }
 
@@ -340,11 +338,17 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	p.sky[3] = settings->get("trace_distance");
 	bool diagnostics = settings->get("diagnostics");
 	bool markers = settings->get("gpu_markers");
+	// Первый кадр ещё без шага; пределы истории отражений шейдер ведёт в кадрах этой длительности.
+	double delta = RSG::rasterizer->get_frame_delta_time();
+	if (delta <= 0.0) {
+		delta = 1.0 / 60.0;
+	}
+	auto history_frames = [&](const char *p_field) { return float(MAX(1.0, double(settings->get(p_field)) / delta)); };
+	p.time[0] = delta;
 	p.history[0] = light_count;
 	p.history[1] = v.frame > 0;
-	p.history[2] = settings->get("reflection_still_history");
+	p.history[2] = int32_t(Math::round(history_frames("reflection_still_seconds")));
 	p.history[3] = diagnostics;
-	p.reflection[0] = 2;
 	p.reflection[1] = settings->get("reflection_samples");
 	p.reflection[2] = settings->get("reflection_bounces");
 	p.reflection[3] = camera_moved;
@@ -359,9 +363,8 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	matrix(p.inverse_matrices, Projection(camera) * inverse_projection);
 	matrix(p.inverse_matrices + 16, v.previous.inverse());
 	write_moves(p, moves);
-	p.limits[0] = settings->get("diffuse_still_history");
-	p.limits[1] = settings->get("diffuse_moving_history");
-	p.limits[2] = settings->get("reflection_moving_history");
+	p.limits[0] = settings->get("diffuse_history_seconds");
+	p.limits[2] = history_frames("reflection_moving_seconds");
 	p.limits[3] = settings->get("reflection_filter_radius");
 	device->buffer_update(v.camera, 0, sizeof(p), &p);
 	Sets &sets = v.sets[v.frame % 2];
