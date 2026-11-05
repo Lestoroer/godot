@@ -21,7 +21,7 @@ void SurfaceCacheGatherRD::_bind_methods() {
 bool SurfaceCacheGatherRD::initialize(RenderingDevice *p_device, const Ref<RefCounted> &p_world_hash) {
 	device = p_device;
 	world_hash = p_world_hash;
-	const char *names[PASS_COUNT] = { "screen_probe_place", "screen_probe_trace", "screen_probe_filter", "screen_probe_integrate", "screen_contact", "screen_contact_temporal", "gather_temporal", "reflection_gather", "reflection_temporal" };
+	const char *names[PASS_COUNT] = { "screen_probe_place", "screen_probe_trace", "screen_probe_filter", "screen_probe_integrate", "screen_contact", "screen_contact_filter", "gather_temporal", "reflection_gather", "reflection_temporal" };
 	PackedStringArray reader = world_hash->call("reader_defines");
 	for (int i = 0; i < PASS_COUNT; ++i) {
 		PackedStringArray defines;
@@ -43,7 +43,7 @@ bool SurfaceCacheGatherRD::initialize(RenderingDevice *p_device, const Ref<RefCo
 void SurfaceCacheGatherRD::create_resources(View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, Vector2i p_size) {
 	ScopeTimer timer(resource_ms);
 	p_buffers->clear_context(SNAME("surface_cache"));
-	const char *textures[] = { "light_0", "light_1", "depth_0", "depth_1", "normal_0", "normal_1", "diffuse_raw", "rough_radiance", "contact_raw", "contact_0", "contact_1", "contact_light_0", "contact_light_1", "gi", "reflection_raw", "reflection_0", "reflection_1", "reflection_material_0", "reflection_material_1", "reflection", "fast_0", "fast_1" };
+	const char *textures[] = { "light_0", "light_1", "depth_0", "depth_1", "normal_0", "normal_1", "diffuse_raw", "rough_radiance", "contact_raw", "contact", "contact_light", "gi", "reflection_raw", "reflection_0", "reflection_1", "reflection_material_0", "reflection_material_1", "reflection" };
 	for (const char *name : textures) {
 		String texture_name(name);
 		RD::DataFormat format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
@@ -117,7 +117,7 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	LocalVector<RD::Uniform> probe(scene);
 	probe.push_back(uniform(39, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.meta[current]));
 	probe.push_back(uniform(40, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.light));
-	probe.push_back(uniform(42, RD::UNIFORM_TYPE_IMAGE, texture("contact_" + cur)));
+	probe.push_back(uniform(42, RD::UNIFORM_TYPE_IMAGE, texture("contact")));
 	for (Pass pass : { PLACE, TRACE }) {
 		r_sets.passes[pass] = cached(kernels[pass], probe);
 	}
@@ -126,8 +126,8 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	r_sets.passes[CONTACT] = cached(kernels[CONTACT], contact);
 	LocalVector<RD::Uniform> bindings;
 	bindings.push_back(uniform(0, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.camera));
-	images(bindings, { "contact_raw", "depth_" + cur, "normal_" + cur, "depth_" + prev, "normal_" + prev, "contact_" + prev, "contact_" + cur, "contact_light_" + prev, "contact_light_" + cur });
-	r_sets.passes[CONTACT_TEMPORAL] = cached(kernels[CONTACT_TEMPORAL], bindings);
+	images(bindings, { "contact_raw", "depth_" + cur, "normal_" + cur, "contact", "contact_light" });
+	r_sets.passes[CONTACT_FILTER] = cached(kernels[CONTACT_FILTER], bindings);
 	r_sets.passes[FILTER] = cached_buffers(kernels[FILTER], { v.camera, v.meta[current], v.light, v.filtered });
 	bindings.clear();
 	bindings.push_back(uniform(0, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.camera));
@@ -135,14 +135,14 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	bindings.push_back(uniform(2, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.meta[current]));
 	bindings.push_back(uniform(3, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.filtered));
 	images(bindings, { "depth_" + cur, "normal_" + cur, "diffuse_raw", "rough_radiance" });
-	bindings.push_back(uniform(9, RD::UNIFORM_TYPE_IMAGE, texture("contact_" + cur)));
+	bindings.push_back(uniform(9, RD::UNIFORM_TYPE_IMAGE, texture("contact")));
 	r_sets.passes[INTEGRATE] = cached(kernels[INTEGRATE], bindings);
 	bindings.clear();
 	bindings.push_back(uniform(0, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.camera));
-	images(bindings, { "diffuse_raw", "depth_" + cur, "normal_" + cur, "light_" + prev, "depth_" + prev, "normal_" + prev, "light_" + cur, "contact_" + cur, "gi" });
+	images(bindings, { "diffuse_raw", "depth_" + cur, "normal_" + cur, "light_" + prev, "depth_" + prev, "normal_" + prev, "light_" + cur, "contact", "gi" });
 	bindings.push_back(uniform(10, RD::UNIFORM_TYPE_STORAGE_BUFFER, material_changes));
 	bindings.push_back(uniform(11, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.emission_change));
-	images(bindings, { "fast_" + prev, "fast_" + cur, "contact_light_" + cur });
+	images(bindings, { "contact_light" });
 	r_sets.passes[TEMPORAL] = cached(kernels[TEMPORAL], bindings);
 	replace(scene, uniform(10, RD::UNIFORM_TYPE_IMAGE, texture("reflection_raw")));
 	replace(scene, uniform(13, RD::UNIFORM_TYPE_IMAGE, texture("reflection_material_" + cur)));
@@ -385,8 +385,8 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	}
 	kernels[CONTACT].pixels(sets.passes[CONTACT], size);
 	mark("contact end", id, markers);
-	kernels[CONTACT_TEMPORAL].pixels(sets.passes[CONTACT_TEMPORAL], size);
-	mark("contact temporal end", id, markers);
+	kernels[CONTACT_FILTER].pixels(sets.passes[CONTACT_FILTER], size);
+	mark("contact filter end", id, markers);
 	world_hash->call("update", sets.hash, size);
 	mark("hash update end", id, markers);
 	world_hash->call("resolve");
