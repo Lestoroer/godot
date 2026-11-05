@@ -30,10 +30,13 @@ void LocalLights::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_caster_culling", "enabled"), &LocalLights::set_caster_culling);
 	ClassDB::bind_method(D_METHOD("set_map_sizes", "omni_face", "spot_tile"), &LocalLights::set_map_sizes);
 	ClassDB::bind_method(D_METHOD("set_map_texel_size", "meters"), &LocalLights::set_map_texel_size);
+	ClassDB::bind_method(D_METHOD("set_map_budget", "mib"), &LocalLights::set_map_budget);
+	ClassDB::bind_method(D_METHOD("get_map_budget"), &LocalLights::get_map_budget);
 	ClassDB::bind_method(D_METHOD("set_gpu_timestamps", "enabled"), &LocalLights::set_gpu_timestamps);
 	ClassDB::bind_method(D_METHOD("get_frame_metrics"), &LocalLights::get_frame_metrics);
 	ClassDB::bind_method(D_METHOD("get_memory_report", "world"), &LocalLights::get_memory_report);
 	ClassDB::bind_method(D_METHOD("read_screen_buffers", "world"), &LocalLights::read_screen_buffers);
+	ClassDB::bind_method(D_METHOD("get_map_sides", "world"), &LocalLights::get_map_sides);
 }
 
 RendererSceneCull::LocalLightsBackend *LocalLights::create_backend(RID p_scenario) {
@@ -140,6 +143,14 @@ void LocalLights::set_map_texel_size(float p_meters) {
 	settings.map_texel_size = p_meters;
 }
 
+void LocalLights::set_map_budget(float p_mib) {
+	settings.map_budget_mib = p_mib;
+}
+
+float LocalLights::get_map_budget() const {
+	return settings.map_budget_mib;
+}
+
 void LocalLights::set_gpu_timestamps(bool p_enabled) {
 	settings.gpu_timestamps = p_enabled;
 }
@@ -154,6 +165,11 @@ Dictionary LocalLights::get_frame_metrics() const {
 	result["views"] = metrics.views;
 	result["lampsInView"] = metrics.lamps_in_view;
 	result["lampsInGrid"] = metrics.lamps_in_grid;
+	result["lampsDarkInView"] = metrics.lamps_dark_in_view;
+	result["lampsReduced"] = metrics.lamps_reduced;
+	result["mapResizes"] = metrics.map_resizes;
+	result["mapPlaceFailures"] = metrics.map_place_failures;
+	result["mapFragmentedFailures"] = metrics.map_fragmented_failures;
 	result["lampsServed"] = metrics.lamps_served;
 	result["lampsServedHeld"] = metrics.lamps_served_held;
 	result["lampsServedInfluenced"] = metrics.lamps_served_influenced;
@@ -182,6 +198,12 @@ Dictionary LocalLights::get_memory_report(const Ref<World3D> &p_world) const {
 	ERR_FAIL_COND_V(p_world.is_null(), Dictionary());
 	const RendererSceneCull::LocalLightsBackend *backend = scene_cull()->scenario_get_local_lights(p_world->get_scenario());
 	return backend ? static_cast<const LocalLightsWorld *>(backend)->memory_report() : Dictionary();
+}
+
+Dictionary LocalLights::get_map_sides(const Ref<World3D> &p_world) const {
+	ERR_FAIL_COND_V(p_world.is_null(), Dictionary());
+	const RendererSceneCull::LocalLightsBackend *backend = scene_cull()->scenario_get_local_lights(p_world->get_scenario());
+	return backend ? static_cast<const LocalLightsWorld *>(backend)->read_map_sides() : Dictionary();
 }
 
 Dictionary LocalLights::read_screen_buffers(const Ref<World3D> &p_world) const {

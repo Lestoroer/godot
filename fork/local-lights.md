@@ -16,7 +16,7 @@
   [config.py](../modules/local_lights/config.py),
   [SCsub](../modules/local_lights/SCsub).
 
-- **Лампы мира уходят из штатного света в кулле камеры, GI их не учитывает, доступ модуля к флагу обновления тени, предмет за радиусом лампы её не обновляет** —
+- **Лампы мира уходят из штатного света в кулле камеры, GI их не учитывает и не получает их перемещения, доступ модуля к флагу обновления тени, предмет за радиусом лампы её не обновляет, позиция камеры вида для важности ламп в бюджете карт** —
   [renderer_scene_cull.cpp](../servers/rendering/renderer_scene_cull.cpp),
   [renderer_scene_cull.h](../servers/rendering/renderer_scene_cull.h).
 

@@ -1040,8 +1040,8 @@ public:
 	class LocalLightsBackend : public LocalLightsScreenHook {
 	public:
 		virtual bool is_enabled() const = 0;
-		// Перед главным проходом вида: лампы вида с учётом радиуса уже отобраны куллом камеры.
-		virtual void prepare_view(const LocalVector<Instance *> &p_lights) = 0;
+		// Перед главным проходом вида: лампы вида с учётом радиуса уже отобраны куллом камеры. Позиция камеры — для важности ламп в бюджете карт.
+		virtual void prepare_view(const LocalVector<Instance *> &p_lights, const Vector3 &p_camera_position) = 0;
 	};
 	typedef LocalLightsBackend *(*LocalLightsBackendFactory)(RID p_scenario);
 	static inline LocalLightsBackendFactory local_lights_backend_factory = nullptr;

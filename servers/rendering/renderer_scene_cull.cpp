@@ -3711,7 +3711,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 			}
 		}
 		if (!render_reflection_probe) {
-			scenario->local_lights->prepare_view(local_lights_view);
+			scenario->local_lights->prepare_view(local_lights_view, p_camera_data->main_transform.origin);
 			LocalLightsScreenHook::set_active_view(scenario->local_lights);
 		}
 	}

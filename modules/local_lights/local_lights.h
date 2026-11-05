@@ -47,10 +47,15 @@ public:
 	void set_caster_culling(bool p_enabled);
 	void set_map_sizes(int p_omni_face, int p_spot_tile);
 	void set_map_texel_size(float p_meters);
+	// Бюджет атласа карт, МиБ: при нехватке места снижается разрешение карт наименее важных ламп.
+	void set_map_budget(float p_mib);
+	float get_map_budget() const;
 	void set_gpu_timestamps(bool p_enabled);
 	Dictionary get_frame_metrics() const;
 	Dictionary get_memory_report(const Ref<World3D> &p_world) const;
 	Dictionary read_screen_buffers(const Ref<World3D> &p_world) const;
+	// Для проверок: RID лампы → сторона её карты, сторона, нужная по радиусу, начало места в атласе, число граней, сторона по плану, лампа в кадре.
+	Dictionary get_map_sides(const Ref<World3D> &p_world) const;
 
 	LocalLights();
 	~LocalLights();

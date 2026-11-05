@@ -23,6 +23,8 @@ struct LocalLightsSettings {
 	int omni_face_size = 256;
 	int spot_tile_size = 512;
 	float map_texel_size = 0.015f;
+	// Атлас карт не больше бюджета: при нехватке места снижается разрешение карт наименее важных ламп.
+	float map_budget_mib = 128.0f;
 	bool gpu_timestamps = false;
 };
 
@@ -31,6 +33,14 @@ struct LocalLightsFrameMetrics {
 	uint32_t views = 0;
 	uint32_t lamps_in_view = 0;
 	uint32_t lamps_in_grid = 0;
+	// Лампы кадра без света: нет готовой карты.
+	uint32_t lamps_dark_in_view = 0;
+	// Лампы с картой меньше нужной по радиусу: бюджет атласа.
+	uint32_t lamps_reduced = 0;
+	uint32_t map_resizes = 0;
+	uint32_t map_place_failures = 0;
+	// Неудачи, когда свободной площади в бюджете хватало: место раздроблено.
+	uint32_t map_fragmented_failures = 0;
 	uint32_t lamps_served = 0;
 	uint32_t lamps_served_held = 0;
 	uint32_t lamps_served_influenced = 0;
@@ -59,11 +69,14 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	typedef RendererSceneCull::Instance Instance;
 	typedef RendererSceneCull::InstanceLightData InstanceLightData;
 
-	// Порядок очереди: лампа в руках, лампы, на которые влияет предмет в руках, остальные.
+	// Порядок очереди: лампа в руках, лампы, на которые влияет предмет в руках, остальные изменившиеся в кадре; затем смена разрешения карт
+	// ламп кадра под бюджет, последним — уменьшение карт ламп вне кадра.
 	enum QueueTier : uint8_t {
 		QUEUE_TIER_HELD,
 		QUEUE_TIER_INFLUENCED,
 		QUEUE_TIER_OTHER,
+		QUEUE_TIER_RESIZE,
+		QUEUE_TIER_HIDDEN,
 	};
 
 	struct Lamp {
@@ -85,13 +98,25 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		bool in_grid = false;
 		bool data_dirty = true;
 		uint64_t last_visible_frame = 0;
+		// Размер на экране: радиус к расстоянию от камеры за вычетом радиуса.
+		float view_size = 0.0f;
 		// Очередь: кадр постановки и порядок прихода, ноль — не ждёт.
 		uint64_t queued_order = 0;
 		uint64_t queued_frame = 0;
 		QueueTier queue_tier = QUEUE_TIER_OTHER;
-		// Карта: место в атласе и снятая поза; map_faces == 0 — места нет.
+		// В очереди ради изменения лампы или её геометрии, а не только ради разрешения карты.
+		bool needs_update = false;
+		// Лампа в руках — 2, задетая предметом в руках — 1.
+		uint8_t held_rank = 0;
+		// Сторона карты по плану бюджета, не больше нужной по радиусу, и время её последней смены; ноль — плана ещё не было.
+		int planned_side = 0;
+		double planned_time = 0.0;
+		// Сторона, которую план даёт в пределах ёмкости бюджета.
+		int fit_side = 0;
+		// Карта: место в атласе, время последней смены её стороны и снятая поза; map_faces == 0 — места нет.
 		Vector2i map_origin;
 		int map_side = 0;
+		double map_changed_time = 0.0;
 		int map_faces = 0;
 		bool map_valid = false;
 		Vector3 baked_origin;
@@ -144,13 +169,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		// Кадр деформации меняет буфер вершин, а обычный параметр материала — вырез, и оба не поднимают версию экземпляра.
 		bool collect_every_pass = false;
 		LocalVector<CasterSurface> surfaces;
-	};
-
-	// Полка атласа: места одной высоты слева направо.
-	struct MapShelf {
-		int y = 0;
-		int height = 0;
-		int next_x = 0;
 	};
 
 	struct CasterPush {
@@ -214,11 +232,25 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	RID map_framebuffer;
 	int atlas_height = 0;
 	int atlas_used_height = 0;
+	// Высота атласа, которую даёт бюджет.
+	int atlas_budget_rows = 0;
 	int omni_size = 0;
 	int spot_size = 0;
 	float map_texel_size = -1.0f;
-	LocalVector<MapShelf> map_shelves;
-	HashMap<uint32_t, LocalVector<Vector2i>> free_map_rects;
+	// Карта занятости атласа: по биту на клетку, единица — свободно; строка клеток — ATLAS_ROW_WORDS слов.
+	LocalVector<uint64_t> atlas_free_cells;
+	uint64_t atlas_used_area = 0;
+	// План сторон карт: пересчёт при смене набора ламп или их радиусов, при неудачном размещении и по времени, пока движется камера.
+	bool plan_dirty = true;
+	double next_plan_time = 0.0;
+	// Доля бюджета под оценку площади; уменьшается, если размещение не нашло места.
+	float plan_fill = 0.0f;
+	LocalVector<uint32_t> plan_order;
+	uint32_t lamps_reduced = 0;
+	LocalVector<uint32_t> place_order;
+	Vector3 camera_position;
+	// Время движка текущего кадра, секунды: выдержки плана не зависят от частоты кадров.
+	double frame_time = 0.0;
 	// Вырезы текущего обхода очереди.
 	LocalVector<CasterCutout> cutout_pool;
 	// По локальному индексу RID экземпляра.
@@ -280,6 +312,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 
 	void _begin_frame(uint64_t p_frame);
 	void _take_view_lamps(const LocalVector<Instance *> &p_lights, uint64_t p_frame);
+	void _plan_map_sides(double p_now);
+	void _fit_sides(uint64_t p_capacity);
 	bool _refresh_lamp(Lamp &r_lamp, const Instance *p_instance, uint64_t p_frame);
 	void _compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cells) const;
 	void _update_window();
@@ -294,7 +328,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _apply_map_sizes(const LocalLightsSettings &p_settings);
 	int _map_side_for(const Lamp &p_lamp) const;
 	bool _place_map(Lamp &r_lamp, int p_side);
-	void _free_map_place(const Vector2i &p_origin, int p_side, int p_faces);
+	bool _side_change_allowed(const Lamp &p_lamp) const;
+	bool _allocate_map_rect(int p_width, int p_height, Vector2i &r_origin);
+	void _mark_map_rect(const Vector2i &p_origin, int p_width, int p_height, bool p_free);
 	void _ensure_atlas_height();
 	RID _pipeline_for(HashMap<RD::VertexFormatID, RID> &r_pipelines, RID p_shader, RD::VertexFormatID p_format);
 	bool _read_cutout(RID p_material, const void *p_shader_data, void *p_surface, CasterCutout &r_cutout) const;
@@ -321,7 +357,7 @@ public:
 	~LocalLightsWorld() override;
 
 	virtual bool is_enabled() const override { return enabled; }
-	virtual void prepare_view(const LocalVector<Instance *> &p_lights) override;
+	virtual void prepare_view(const LocalVector<Instance *> &p_lights, const Vector3 &p_camera_position) override;
 	virtual void render_screen_passes(RenderDataRD *p_render_data) override;
 
 	void set_held_instances(const Vector<RID> &p_instances);
@@ -329,4 +365,5 @@ public:
 	void set_enabled(bool p_enabled);
 	Dictionary memory_report() const;
 	Dictionary read_screen_buffers() const;
+	Dictionary read_map_sides() const;
 };

@@ -13,6 +13,10 @@
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 #include "servers/rendering/rendering_server_globals.h"
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+
 namespace {
 
 // Сетка покрывает охват ламп по каждой оси отдельно: интерьер плоский, и куб тратил бы ячейки на высоту. Чем мельче ячейка,
@@ -35,10 +39,24 @@ const uint32_t LAMPS_PER_DATA_ROW = DATA_WIDTH / SLOT_TEXELS;
 const uint32_t BYTES_PER_DATA_TEXEL = 16;
 const uint32_t LIST_WIDTH = 2048;
 const int ATLAS_WIDTH = 8192;
-// Атлас растёт на полку или несколько сразу: шаг в наименьшую полку не оставляет пустых строк, а за кадр высота меняется не больше раза.
+// Атлас растёт по наименьшей плитке, а за кадр его высота меняется не больше раза.
 const int ATLAS_HEIGHT_STEP = 64;
-const int ATLAS_MAX_HEIGHT = 8192;
+const int ATLAS_MAX_HEIGHT = 16384;
 const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
+// Клетка карты занятости атласа: все стороны плиток ей кратны, и место любой карты — целое число клеток.
+const int ATLAS_CELL = 32;
+const int ATLAS_COLUMNS = ATLAS_WIDTH / ATLAS_CELL;
+const int ATLAS_ROW_WORDS = ATLAS_COLUMNS / 64;
+// План сторон карт. Оценка площади берёт часть бюджета: остальное уходит на потери размещения. Повышение — только если оно поместилось бы
+// и в чуть меньшей ёмкости: движение камеры не гоняет карты туда-обратно. Времена в секундах: поведение не зависит от частоты кадров.
+const float PLAN_FILL = 0.85f;
+const float PLAN_FILL_FAILURE_STEP = 0.03f;
+const float PLAN_FILL_MIN = 0.6f;
+const float PLAN_UPGRADE_CAPACITY = 0.92f;
+const double PLAN_PERIOD_SECONDS = 0.5;
+const double PLAN_SIDE_DWELL_SECONDS = 1.0;
+// Экранный размер лампы считается по полуоктавам: мелкое движение камеры не переставляет лампы в порядке важности.
+const float VIEW_SIZE_STEPS_PER_OCTAVE = 2.0f;
 // Снимок спота шире конуса: выборка у края конуса не выходит за плитку.
 const float SPOT_MAP_MARGIN_DEGREES = 8.0f;
 const float SPOT_MAP_MAX_HALF_ANGLE_DEGREES = 75.0f;
@@ -166,6 +184,50 @@ uint32_t box_cube_faces(const Vector3 &p_low, const Vector3 &p_high, float p_gua
 			uint32_t(p_guard * p_high.z + across_z >= 0.0f) << 3 |
 			uint32_t(across_z - p_guard * p_low.z >= 0.0f) << 4 |
 			uint32_t(p_guard * p_high.y + across_y >= 0.0f) << 5;
+}
+
+int lowest_set_bit(uint64_t p_value) {
+#ifdef _MSC_VER
+	unsigned long index;
+	_BitScanForward64(&index, p_value);
+	return int(index);
+#else
+	return __builtin_ctzll(p_value);
+#endif
+}
+
+// Начало первого отрезка из p_width свободных клеток строки, минус один — такого нет.
+int first_free_run(const uint64_t *p_free, int p_width) {
+	int run_start = 0;
+	int run = 0;
+	int x = 0;
+	while (x < ATLAS_COLUMNS) {
+		const uint64_t bits = p_free[x >> 6] >> (x & 63);
+		if (bits & 1) {
+			// Сдвиг заполняет старшие биты нулями: отрезок единиц не выходит за слово.
+			const uint64_t zeros = ~bits;
+			const int ones = zeros == 0 ? 64 : lowest_set_bit(zeros);
+			run_start = run == 0 ? x : run_start;
+			run += ones;
+			x += ones;
+			if (run >= p_width) {
+				return run_start;
+			}
+		} else {
+			run = 0;
+			x += bits == 0 ? 64 - (x & 63) : lowest_set_bit(bits);
+		}
+	}
+	return -1;
+}
+
+int map_area(int p_side, bool p_spot) {
+	return p_side * p_side * (p_spot ? 1 : 6);
+}
+
+int budget_rows_for(float p_mib) {
+	const int rows = int(double(p_mib) * 1048576.0 / (double(ATLAS_WIDTH) * 2.0)) / ATLAS_HEIGHT_STEP * ATLAS_HEIGHT_STEP;
+	return CLAMP(rows, ATLAS_HEIGHT_STEP, ATLAS_MAX_HEIGHT);
 }
 
 bool grid_fits(const Vector3i &p_dims) {
@@ -322,12 +384,13 @@ void LocalLightsWorld::set_enabled(bool p_enabled) {
 	scene_cull()->scenario_queue_lights_for_surface_cache(scenario);
 }
 
-void LocalLightsWorld::prepare_view(const LocalVector<Instance *> &p_lights) {
+void LocalLightsWorld::prepare_view(const LocalVector<Instance *> &p_lights, const Vector3 &p_camera_position) {
 	const uint64_t frame = RSG::rasterizer->get_frame_number();
 	if (frame != current_frame) {
 		_begin_frame(frame);
 	}
 	frame_metrics.views++;
+	camera_position = p_camera_position;
 	uint64_t started = OS::get_singleton()->get_ticks_usec();
 	_take_view_lamps(p_lights, frame);
 	if (bake_all_lamps) {
@@ -404,11 +467,17 @@ void LocalLightsWorld::_take_view_lamps(const LocalVector<Instance *> &p_lights,
 		Lamp &lamp = lamps[index];
 		lamp.last_visible_frame = p_frame;
 		InstanceLightData *light = static_cast<InstanceLightData *>(instance->base_data);
+		if (is_new) {
+			plan_dirty = true;
+		}
 		if (is_new || refresh_all || light->is_shadow_dirty()) {
 			const bool reach_changed = _refresh_lamp(lamp, instance, p_frame);
 			light->clear_shadow_dirty();
 			form_changed = form_changed || is_new || refresh_all || reach_changed;
 		}
+		// Несколько видов за кадр: лампа важна по ближнему из них.
+		const float size = lamp.range / MAX(lamp.position.distance_to(camera_position) - lamp.range, 0.1f * lamp.range);
+		lamp.view_size = frame_metrics.views > 1 ? MAX(lamp.view_size, size) : size;
 	}
 	refresh_all = false;
 	if (form_changed) {
@@ -426,6 +495,10 @@ bool LocalLightsWorld::_refresh_lamp(Lamp &r_lamp, const Instance *p_instance, u
 	const float angle = spot ? storage->light_get_param(base, RSE::LIGHT_PARAM_SPOT_ANGLE) : 0.0f;
 	const Vector3 axis = spot ? -transform.basis.get_column(2).normalized() : Vector3();
 	const bool reach_changed = r_lamp.position != transform.origin || r_lamp.range != range;
+	const bool casts = storage->light_has_shadow(base);
+	if (r_lamp.range != range || r_lamp.angle != angle || r_lamp.spot != spot || r_lamp.casts != casts) {
+		plan_dirty = true;
+	}
 	const bool form_changed = reach_changed || r_lamp.angle != angle || r_lamp.axis != axis || r_lamp.cells.is_empty();
 	r_lamp.spot = spot;
 	r_lamp.position = transform.origin;
@@ -438,7 +511,7 @@ bool LocalLightsWorld::_refresh_lamp(Lamp &r_lamp, const Instance *p_instance, u
 	r_lamp.cone_attenuation = spot ? 1.0f / storage->light_get_param(base, RSE::LIGHT_PARAM_SPOT_ATTENUATION) : 1.0f;
 	r_lamp.specular_amount = storage->light_get_param(base, RSE::LIGHT_PARAM_SPECULAR) * 2.0f;
 	r_lamp.caster_mask = storage->light_get_shadow_caster_mask(base);
-	r_lamp.casts = storage->light_has_shadow(base);
+	r_lamp.casts = casts;
 	r_lamp.data_dirty = true;
 	if (form_changed && origin_valid) {
 		_compute_cells(r_lamp, fresh_cells);
@@ -450,10 +523,12 @@ bool LocalLightsWorld::_refresh_lamp(Lamp &r_lamp, const Instance *p_instance, u
 		}
 	}
 	if (r_lamp.casts) {
-		if (r_lamp.queued_order == 0) {
+		// Лампа ждала только смены разрешения: очередь и ожидание обновления считаются с этого изменения.
+		if (r_lamp.queued_order == 0 || !r_lamp.needs_update) {
 			r_lamp.queued_order = next_queue_order++;
 			r_lamp.queued_frame = p_frame;
 		}
+		r_lamp.needs_update = true;
 	} else {
 		r_lamp.queued_order = 0;
 		_release_map(r_lamp);
@@ -604,13 +679,9 @@ void LocalLightsWorld::_compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cel
 	}
 }
 
-void LocalLightsWorld::_free_map_place(const Vector2i &p_origin, int p_side, int p_faces) {
-	free_map_rects[uint32_t(p_side) * 8 + uint32_t(p_faces)].push_back(p_origin);
-}
-
 void LocalLightsWorld::_release_map(Lamp &r_lamp) {
 	if (r_lamp.map_faces > 0) {
-		_free_map_place(r_lamp.map_origin, r_lamp.map_side, r_lamp.map_faces);
+		_mark_map_rect(r_lamp.map_origin, r_lamp.map_side * r_lamp.map_faces, r_lamp.map_side, true);
 	}
 	if (r_lamp.map_faces > 0 || r_lamp.map_valid) {
 		r_lamp.data_dirty = true;
@@ -629,30 +700,42 @@ void LocalLightsWorld::_release_lamp(uint32_t p_index) {
 	lamp_of_instance.erase(lamp.instance);
 	lamp = Lamp();
 	free_lamps.push_back(p_index);
+	plan_dirty = true;
 }
 
 void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
-	if (p_settings.omni_face_size == omni_size && p_settings.spot_tile_size == spot_size && p_settings.map_texel_size == map_texel_size) {
+	const int budget_rows = budget_rows_for(p_settings.map_budget_mib);
+	if (p_settings.omni_face_size == omni_size && p_settings.spot_tile_size == spot_size && p_settings.map_texel_size == map_texel_size && budget_rows == atlas_budget_rows) {
 		return;
 	}
-	// Другое разрешение: снятые карты не переносятся.
+	// Другое разрешение или бюджет: снятые карты не переносятся.
 	for (Lamp &lamp : lamps) {
 		if (lamp.active && lamp.map_faces > 0) {
 			_release_map(lamp);
 			lamp.in_grid = false;
 			repack_needed = true;
-			if (lamp.casts && lamp.queued_order == 0) {
-				lamp.queued_order = next_queue_order++;
-				lamp.queued_frame = current_frame;
+			if (lamp.casts) {
+				lamp.needs_update = true;
+				if (lamp.queued_order == 0) {
+					lamp.queued_order = next_queue_order++;
+					lamp.queued_frame = current_frame;
+				}
 			}
 		}
+		lamp.planned_side = 0;
 	}
 	map_framebuffer = RID();
 	_retire_texture(map_atlas, map_atlas_texture);
 	atlas_height = 0;
 	atlas_used_height = 0;
-	map_shelves.clear();
-	free_map_rects.clear();
+	atlas_budget_rows = budget_rows;
+	atlas_free_cells.resize(budget_rows / ATLAS_CELL * ATLAS_ROW_WORDS);
+	for (uint64_t &word : atlas_free_cells) {
+		word = ~uint64_t(0);
+	}
+	atlas_used_area = 0;
+	plan_fill = PLAN_FILL;
+	plan_dirty = true;
 	omni_size = p_settings.omni_face_size;
 	spot_size = p_settings.spot_tile_size;
 	map_texel_size = p_settings.map_texel_size;
@@ -673,46 +756,99 @@ int LocalLightsWorld::_map_side_for(const Lamp &p_lamp) const {
 	return largest;
 }
 
-// Старое место лампы освобождается только после выдачи нового: при нехватке места лампа остаётся со старой картой.
+// Меньшая карта ложится в начало своего же места: ей не нужно свободное место, а старая карта светит, пока новую не нарисуют в этом же кадре.
+// Большей нужно новое место; старое освобождается только после его выдачи: при нехватке места лампа остаётся со старой картой.
 bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 	const int faces = r_lamp.spot ? 1 : 6;
-	const Vector2i previous_origin = r_lamp.map_origin;
-	const int previous_side = r_lamp.map_side;
-	const int previous_faces = r_lamp.map_faces;
-	LocalVector<Vector2i> *free_rects = free_map_rects.getptr(uint32_t(p_side) * 8 + uint32_t(faces));
-	if (free_rects && !free_rects->is_empty()) {
-		r_lamp.map_origin = (*free_rects)[free_rects->size() - 1];
-		free_rects->resize(free_rects->size() - 1);
+	const int width = p_side * faces;
+	const int previous_width = r_lamp.map_side * r_lamp.map_faces;
+	const bool fits_in_place = r_lamp.map_faces > 0 && width <= previous_width && p_side <= r_lamp.map_side;
+	Vector2i place;
+	const bool allocated = _allocate_map_rect(width, p_side, place);
+	// Уменьшенная карта переезжает, только если новое место ниже: старое освобождается целиком и остаётся годным крупной карте.
+	if (fits_in_place && (!allocated || place.y > r_lamp.map_origin.y || (place.y == r_lamp.map_origin.y && place.x > r_lamp.map_origin.x))) {
+		if (allocated) {
+			_mark_map_rect(place, width, p_side, true);
+		}
+		_mark_map_rect(r_lamp.map_origin, previous_width, r_lamp.map_side, true);
+		_mark_map_rect(r_lamp.map_origin, width, p_side, false);
+	} else if (allocated) {
+		if (r_lamp.map_faces > 0) {
+			_mark_map_rect(r_lamp.map_origin, previous_width, r_lamp.map_side, true);
+		}
+		r_lamp.map_origin = place;
 	} else {
-		const int width = p_side * faces;
-		MapShelf *shelf = nullptr;
-		for (MapShelf &candidate : map_shelves) {
-			if (candidate.height == p_side && candidate.next_x + width <= ATLAS_WIDTH) {
-				shelf = &candidate;
-				break;
-			}
+		// Лампа остаётся с прежней картой до следующей смены стороны. Площади не хватило — план ошибся с запасом на потери размещения,
+		// и следующий берёт меньшую долю бюджета; площади хватало — место раздроблено, повышение просто откладывается.
+		frame_metrics.map_place_failures++;
+		if (uint64_t(atlas_budget_rows) * ATLAS_WIDTH - atlas_used_area >= uint64_t(width) * p_side) {
+			frame_metrics.map_fragmented_failures++;
+		} else {
+			plan_fill = MAX(PLAN_FILL_MIN, plan_fill - PLAN_FILL_FAILURE_STEP);
 		}
-		if (!shelf) {
-			if (atlas_used_height + p_side > ATLAS_MAX_HEIGHT) {
-				ERR_PRINT_ONCE("В атласе локального света нет места: лампа без места не светит, пока место не освободится.");
-				return false;
-			}
-			MapShelf new_shelf;
-			new_shelf.y = atlas_used_height;
-			new_shelf.height = p_side;
-			atlas_used_height += p_side;
-			map_shelves.push_back(new_shelf);
-			shelf = &map_shelves[map_shelves.size() - 1];
+		plan_dirty = true;
+		if (r_lamp.map_faces > 0) {
+			r_lamp.planned_side = r_lamp.map_side;
+			r_lamp.planned_time = frame_time;
+		} else {
+			WARN_PRINT_ONCE("В бюджете атласа локального света не нашлось места для карты: лампа ждёт, пока план уменьшит другие карты.");
 		}
-		r_lamp.map_origin = Vector2i(shelf->next_x, shelf->y);
-		shelf->next_x += width;
+		return false;
+	}
+	if (r_lamp.map_faces > 0) {
+		frame_metrics.map_resizes++;
 	}
 	r_lamp.map_side = p_side;
 	r_lamp.map_faces = faces;
-	if (previous_faces > 0) {
-		_free_map_place(previous_origin, previous_side, previous_faces);
-	}
+	r_lamp.map_changed_time = frame_time;
 	return true;
+}
+
+// Сторона карты меняется не чаще выдержки: план мог сменить её раньше, чем лампа дошла до очереди.
+bool LocalLightsWorld::_side_change_allowed(const Lamp &p_lamp) const {
+	return p_lamp.map_faces == 0 || frame_time - p_lamp.map_changed_time >= PLAN_SIDE_DWELL_SECONDS;
+}
+
+// Первое подходящее место снизу слева в пределах бюджета. Освобождённое место годится карте любого размера.
+bool LocalLightsWorld::_allocate_map_rect(int p_width, int p_height, Vector2i &r_origin) {
+	const int columns = p_width / ATLAS_CELL;
+	const int rows = p_height / ATLAS_CELL;
+	const int row_limit = atlas_budget_rows / ATLAS_CELL;
+	for (int y = 0; y + rows <= row_limit; y++) {
+		uint64_t free[ATLAS_ROW_WORDS];
+		for (int word = 0; word < ATLAS_ROW_WORDS; word++) {
+			free[word] = ~uint64_t(0);
+		}
+		for (int row = y; row < y + rows; row++) {
+			for (int word = 0; word < ATLAS_ROW_WORDS; word++) {
+				free[word] &= atlas_free_cells[row * ATLAS_ROW_WORDS + word];
+			}
+		}
+		const int x = first_free_run(free, columns);
+		if (x >= 0) {
+			r_origin = Vector2i(x * ATLAS_CELL, y * ATLAS_CELL);
+			_mark_map_rect(r_origin, p_width, p_height, false);
+			return true;
+		}
+	}
+	return false;
+}
+
+void LocalLightsWorld::_mark_map_rect(const Vector2i &p_origin, int p_width, int p_height, bool p_free) {
+	const int column_end = (p_origin.x + p_width) / ATLAS_CELL;
+	const int row_end = (p_origin.y + p_height) / ATLAS_CELL;
+	for (int row = p_origin.y / ATLAS_CELL; row < row_end; row++) {
+		uint64_t *words = atlas_free_cells.ptr() + row * ATLAS_ROW_WORDS;
+		for (int column = p_origin.x / ATLAS_CELL; column < column_end; column++) {
+			const uint64_t bit = uint64_t(1) << (column & 63);
+			words[column >> 6] = p_free ? words[column >> 6] | bit : words[column >> 6] & ~bit;
+		}
+	}
+	const uint64_t area = uint64_t(p_width) * p_height;
+	atlas_used_area = p_free ? atlas_used_area - area : atlas_used_area + area;
+	if (!p_free) {
+		atlas_used_height = MAX(atlas_used_height, p_origin.y + p_height);
+	}
 }
 
 void LocalLightsWorld::_ensure_atlas_height() {
@@ -955,9 +1091,131 @@ const LocalLightsWorld::InstanceCasters &LocalLightsWorld::_instance_surfaces(co
 	return entry;
 }
 
+// Стороны карт в бюджете атласа. Нужная по радиусу сторона уменьшается сначала у ламп вне кадра — они не видны, затем у мелких на экране,
+// последними — у задетых предметом в руках и у лампы в руках. Другая сторона ставит лампу в очередь как обычное изменение.
+void LocalLightsWorld::_plan_map_sides(double p_now) {
+	if (!plan_dirty && p_now < next_plan_time) {
+		return;
+	}
+	plan_dirty = false;
+	next_plan_time = p_now + PLAN_PERIOD_SECONDS;
+	_assign_queue_tiers();
+	plan_order.clear();
+	for (uint32_t i = 0; i < lamps.size(); i++) {
+		if (lamps[i].active && lamps[i].casts) {
+			plan_order.push_back(i);
+		}
+	}
+	// Наименее важные первыми: вне кадра — дольше не виденные, в кадре — меньшие на экране. Номер лампы делает порядок однозначным.
+	struct ByImportance {
+		const LocalVector<Lamp> *lamps;
+		int64_t key(uint32_t p_index) const {
+			const Lamp &lamp = (*lamps)[p_index];
+			if (lamp.queue_tier == QUEUE_TIER_HIDDEN) {
+				return int64_t(lamp.last_visible_frame);
+			}
+			const int size_step = CLAMP(int(Math::floor(Math::log2(MAX(lamp.view_size, 1e-6f)) * VIEW_SIZE_STEPS_PER_OCTAVE)) + 512, 0, 1023);
+			return (int64_t(1 + lamp.held_rank) << 52) + (int64_t(size_step) << 40);
+		}
+		bool operator()(uint32_t a, uint32_t b) const {
+			const int64_t first = key(a);
+			const int64_t second = key(b);
+			return first != second ? first < second : a < b;
+		}
+	};
+	SortArray<uint32_t, ByImportance> sorter;
+	sorter.compare.lamps = &lamps;
+	sorter.sort(plan_order.ptr(), plan_order.size());
+	const uint64_t capacity = uint64_t(double(atlas_budget_rows) * ATLAS_WIDTH * plan_fill);
+	_fit_sides(capacity);
+	// Сторона лампы меняется не чаще выдержки в обе стороны: разворот камеры не гоняет карту туда-обратно. Уменьшение ставится сразу
+	// после выдержки, а повышение — только в площадь, которая свободна уже сейчас: уменьшения ламп вне кадра идут в очереди последними,
+	// и повышение раньше них не нашло бы места.
+	uint64_t committed = 0;
+	for (const uint32_t index : plan_order) {
+		Lamp &lamp = lamps[index];
+		const bool settled = p_now - lamp.planned_time >= PLAN_SIDE_DWELL_SECONDS;
+		if (lamp.planned_side == 0 || (settled && lamp.fit_side < lamp.planned_side)) {
+			lamp.planned_side = lamp.fit_side;
+			lamp.planned_time = p_now;
+		}
+		committed += map_area(MAX(lamp.planned_side, lamp.map_side), lamp.spot);
+	}
+	const uint64_t upgrade_capacity = uint64_t(double(capacity) * PLAN_UPGRADE_CAPACITY);
+	for (int64_t i = int64_t(plan_order.size()) - 1; i >= 0; i--) {
+		Lamp &lamp = lamps[plan_order[i]];
+		if (lamp.fit_side <= lamp.planned_side || p_now - lamp.planned_time < PLAN_SIDE_DWELL_SECONDS) {
+			continue;
+		}
+		const uint64_t growth = map_area(lamp.fit_side, lamp.spot) - map_area(MAX(lamp.planned_side, lamp.map_side), lamp.spot);
+		if (committed + growth <= upgrade_capacity) {
+			committed += growth;
+			lamp.planned_side = lamp.fit_side;
+			lamp.planned_time = p_now;
+		}
+	}
+	uint32_t reduced = 0;
+	for (const uint32_t index : plan_order) {
+		Lamp &lamp = lamps[index];
+		if (lamp.planned_side != lamp.map_side && lamp.queued_order == 0) {
+			lamp.queued_order = next_queue_order++;
+			lamp.queued_frame = current_frame;
+		}
+		reduced += lamp.planned_side < _map_side_for(lamp) ? 1 : 0;
+	}
+	lamps_reduced = reduced;
+}
+
+// Стороны plan_order в пределах p_capacity текселей: лампы вне кадра уменьшаются сразу до наименьшей, лампы кадра — по ступени за проход,
+// начиная с наименее важной.
+void LocalLightsWorld::_fit_sides(uint64_t p_capacity) {
+	uint64_t total = 0;
+	for (const uint32_t index : plan_order) {
+		Lamp &lamp = lamps[index];
+		int &side = lamp.fit_side;
+		side = _map_side_for(lamp);
+		total += map_area(side, lamp.spot);
+	}
+	for (const uint32_t index : plan_order) {
+		Lamp &lamp = lamps[index];
+		if (total <= p_capacity || lamp.queue_tier != QUEUE_TIER_HIDDEN) {
+			break;
+		}
+		int &side = lamp.fit_side;
+		total -= map_area(side, lamp.spot) - map_area(MAP_SIDES[0], lamp.spot);
+		side = MAP_SIDES[0];
+	}
+	bool reducing = true;
+	while (total > p_capacity && reducing) {
+		reducing = false;
+		for (const uint32_t index : plan_order) {
+			Lamp &lamp = lamps[index];
+			int &side = lamp.fit_side;
+			if (side <= MAP_SIDES[0]) {
+				continue;
+			}
+			int smaller = MAP_SIDES[0];
+			for (const int candidate : MAP_SIDES) {
+				if (candidate < side) {
+					smaller = candidate;
+				}
+			}
+			total -= map_area(side, lamp.spot) - map_area(smaller, lamp.spot);
+			side = smaller;
+			reducing = true;
+			if (total <= p_capacity) {
+				return;
+			}
+		}
+	}
+}
+
 void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	const LocalLightsSettings &settings = LocalLights::get_singleton()->get_settings();
 	frame_metrics.queue = 0;
+	_apply_map_sizes(settings);
+	frame_time = RSG::rasterizer->get_total_time();
+	_plan_map_sides(frame_time);
 	const uint32_t budget = _order_queue(settings, p_frame);
 	if (budget == 0) {
 		return;
@@ -984,12 +1242,17 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	_finish_served_lamps(budget, p_frame);
 }
 
-// Ждущие лампы вида в порядке обслуживания. Возвращает, сколько первых из них обслужить в этом кадре.
+// Ждущие лампы вида и уменьшение карт ламп вне кадра в порядке обслуживания. Возвращает, сколько первых из них обслужить в этом кадре.
 uint32_t LocalLightsWorld::_order_queue(const LocalLightsSettings &p_settings, uint64_t p_frame) {
 	serve_order.clear();
 	for (uint32_t i = 0; i < lamps.size(); i++) {
 		const Lamp &lamp = lamps[i];
-		if (lamp.active && lamp.queued_order != 0 && lamp.last_visible_frame == p_frame) {
+		if (!lamp.active || lamp.queued_order == 0) {
+			continue;
+		}
+		const bool visible = lamp.last_visible_frame == p_frame;
+		// Смена разрешения без изменения лампы ждёт выдержки: перерисовка ради стороны, которую нельзя менять, ничего не даёт.
+		if ((visible && (lamp.needs_update || _side_change_allowed(lamp))) || (!visible && lamp.planned_side < lamp.map_side && _side_change_allowed(lamp))) {
 			serve_order.push_back(i);
 		}
 	}
@@ -1014,15 +1277,37 @@ uint32_t LocalLightsWorld::_order_queue(const LocalLightsSettings &p_settings, u
 }
 
 void LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLightsSettings &p_settings, uint64_t p_frame) {
-	_apply_map_sizes(p_settings);
 	cutout_pool.clear();
 	lamp_casters.clear();
 	gather_pass++;
+	// Сначала уменьшения: они освобождают место, затем места крупным картам раньше мелких — так атлас плотнее.
+	place_order.clear();
 	for (uint32_t i = 0; i < p_budget; i++) {
-		Lamp &lamp = lamps[serve_order[i]];
-		const int side = _map_side_for(lamp);
-		if (lamp.map_side != side) {
-			_place_map(lamp, side);
+		const Lamp &lamp = lamps[serve_order[i]];
+		if (lamp.map_side != lamp.planned_side) {
+			place_order.push_back(serve_order[i]);
+		}
+	}
+	struct ByPlacement {
+		const LocalVector<Lamp> *lamps;
+		bool operator()(uint32_t a, uint32_t b) const {
+			const Lamp &first = (*lamps)[a];
+			const Lamp &second = (*lamps)[b];
+			const bool first_shrinks = first.map_faces > 0 && first.planned_side < first.map_side;
+			const bool second_shrinks = second.map_faces > 0 && second.planned_side < second.map_side;
+			if (first_shrinks != second_shrinks) {
+				return first_shrinks;
+			}
+			return map_area(first.planned_side, first.spot) > map_area(second.planned_side, second.spot);
+		}
+	};
+	SortArray<uint32_t, ByPlacement> sorter;
+	sorter.compare.lamps = &lamps;
+	sorter.sort(place_order.ptr(), place_order.size());
+	for (const uint32_t index : place_order) {
+		Lamp &lamp = lamps[index];
+		if (_side_change_allowed(lamp)) {
+			_place_map(lamp, lamp.planned_side);
 		}
 	}
 	_ensure_atlas_height();
@@ -1042,7 +1327,9 @@ void LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLights
 			lamp.baked_extent = axes.extent;
 		}
 		_gather_casters(lamp, instance, p_settings.caster_culling);
-		frame_metrics.served_wait_frames = MAX(frame_metrics.served_wait_frames, uint32_t(p_frame - lamp.queued_frame));
+		if (lamp.needs_update) {
+			frame_metrics.served_wait_frames = MAX(frame_metrics.served_wait_frames, uint32_t(p_frame - lamp.queued_frame));
+		}
 	}
 	RendererRD::MeshStorage::get_singleton()->update_mesh_instances();
 }
@@ -1059,17 +1346,21 @@ void LocalLightsWorld::_finish_served_lamps(uint32_t p_budget, uint64_t p_frame)
 			continue;
 		}
 		lamp.queued_order = 0;
+		lamp.needs_update = false;
 		lamp.map_valid = true;
 		lamp.baked_origin = lamp.position;
 		lamp.baked_range = lamp.range;
 		lamp.data_dirty = true;
-		if (!lamp.in_grid) {
+		if (!lamp.in_grid && lamp.last_visible_frame == p_frame) {
 			repack_needed = true;
 		}
 	}
 	uint32_t oldest = 0;
 	for (uint32_t i = p_budget; i < serve_order.size(); i++) {
-		oldest = MAX(oldest, uint32_t(p_frame - lamps[serve_order[i]].queued_frame));
+		const Lamp &lamp = lamps[serve_order[i]];
+		if (lamp.needs_update && lamp.last_visible_frame == p_frame) {
+			oldest = MAX(oldest, uint32_t(p_frame - lamp.queued_frame));
+		}
 	}
 	frame_metrics.oldest_wait_frames = MAX(frame_metrics.oldest_wait_frames, oldest);
 }
@@ -1081,9 +1372,11 @@ void LocalLightsWorld::set_held_instances(const Vector<RID> &p_instances) {
 	}
 }
 
+// Близость к рукам игрока ставит ступень важности любой лампе, а очередь поднимает её только ради настоящего обновления:
+// смена разрешения карты идёт после всех изменившихся ламп кадра.
 void LocalLightsWorld::_assign_queue_tiers() {
 	for (Lamp &lamp : lamps) {
-		lamp.queue_tier = QUEUE_TIER_OTHER;
+		lamp.held_rank = 0;
 	}
 	for (const RID &held : held_instances) {
 		const Instance *instance = scene_cull()->instance_owner.get_or_null(held);
@@ -1093,7 +1386,7 @@ void LocalLightsWorld::_assign_queue_tiers() {
 		if (instance->base_type == RSE::INSTANCE_LIGHT) {
 			const uint32_t *index = lamp_of_instance.getptr(held);
 			if (index) {
-				lamps[*index].queue_tier = QUEUE_TIER_HELD;
+				lamps[*index].held_rank = 2;
 			}
 			continue;
 		}
@@ -1109,9 +1402,18 @@ void LocalLightsWorld::_assign_queue_tiers() {
 			}
 			Lamp &lamp = lamps[*index];
 			const Vector3 nearest = lamp.position.clamp(bounds.position, bounds.get_end());
-			if (lamp.queue_tier == QUEUE_TIER_OTHER && nearest.distance_squared_to(lamp.position) <= lamp.range * lamp.range) {
-				lamp.queue_tier = QUEUE_TIER_INFLUENCED;
+			if (lamp.held_rank == 0 && nearest.distance_squared_to(lamp.position) <= lamp.range * lamp.range) {
+				lamp.held_rank = 1;
 			}
+		}
+	}
+	for (Lamp &lamp : lamps) {
+		if (lamp.last_visible_frame != current_frame) {
+			lamp.queue_tier = QUEUE_TIER_HIDDEN;
+		} else if (!lamp.needs_update) {
+			lamp.queue_tier = QUEUE_TIER_RESIZE;
+		} else {
+			lamp.queue_tier = lamp.held_rank == 2 ? QUEUE_TIER_HELD : (lamp.held_rank == 1 ? QUEUE_TIER_INFLUENCED : QUEUE_TIER_OTHER);
 		}
 	}
 }
@@ -1120,15 +1422,19 @@ void LocalLightsWorld::_assign_queue_tiers() {
 // При cap 1 они идут через кадр, а при cap от 2 лампа в руках обновляется каждый кадр.
 void LocalLightsWorld::_choose_lamps_to_serve(uint32_t p_budget, uint64_t p_frame) {
 	uint32_t others_first = 0;
-	while (others_first < serve_order.size() && lamps[serve_order[others_first]].queue_tier != QUEUE_TIER_OTHER) {
+	while (others_first < serve_order.size() && lamps[serve_order[others_first]].queue_tier < QUEUE_TIER_OTHER) {
 		others_first++;
 	}
-	if (others_first == 0 || others_first == serve_order.size() || others_first <= p_budget / 2) {
-		// Либо очередь однородна, либо приоритетные и так оставляют остальным больше четверти.
+	uint32_t others_end = others_first;
+	while (others_end < serve_order.size() && lamps[serve_order[others_end]].queue_tier == QUEUE_TIER_OTHER) {
+		others_end++;
+	}
+	if (others_first == 0 || others_first == others_end || others_first <= p_budget / 2) {
+		// Либо приоритетных нет, либо остальных в кадре нет, либо приоритетные и так оставляют им больше четверти.
 		return;
 	}
 	uint32_t reserved = p_budget >= 2 ? MAX(1u, p_budget / 4) : (p_frame % 2);
-	reserved = MIN(reserved, serve_order.size() - others_first);
+	reserved = MIN(reserved, others_end - others_first);
 	const uint32_t priority_served = MIN(others_first, p_budget - reserved);
 	for (uint32_t i = 0; i < reserved && priority_served + i < others_first; i++) {
 		SWAP(serve_order[priority_served + i], serve_order[others_first + i]);
@@ -1205,6 +1511,7 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp) {
 }
 
 void LocalLightsWorld::_update_grid() {
+	uint32_t dark_in_view = 0;
 	for (Lamp &lamp : lamps) {
 		if (!lamp.active) {
 			continue;
@@ -1214,7 +1521,10 @@ void LocalLightsWorld::_update_grid() {
 			lamp.in_grid = wanted;
 			repack_needed = true;
 		}
+		dark_in_view += lamp.last_visible_frame == current_frame && !wanted ? 1 : 0;
 	}
+	frame_metrics.lamps_dark_in_view = dark_in_view;
+	frame_metrics.lamps_reduced = lamps_reduced;
 	if (repack_needed) {
 		_repack();
 	}
@@ -1502,6 +1812,9 @@ Dictionary LocalLightsWorld::memory_report() const {
 	report["atlasBytes"] = uint64_t(ATLAS_WIDTH) * atlas_height * 2;
 	report["atlasHeight"] = atlas_height;
 	report["atlasUsedHeight"] = atlas_used_height;
+	report["mapBudgetBytes"] = uint64_t(ATLAS_WIDTH) * atlas_budget_rows * 2;
+	report["lampsReduced"] = lamps_reduced;
+	report["atlasOccupiedBytes"] = atlas_used_area * 2;
 	report["screenBytes"] = uint64_t(screen_size.x) * screen_size.y * (8 + 4);
 	report["gridBytes"] = uint64_t(grid_bytes.size());
 	report["dataBytes"] = uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
@@ -1512,15 +1825,25 @@ Dictionary LocalLightsWorld::memory_report() const {
 		cpu += lamp.cells.get_capacity() * sizeof(uint32_t);
 	}
 	cpu += (cell_omni.get_capacity() + cell_spot.get_capacity() + cell_next.get_capacity() + filled_cells.get_capacity() + serve_order.get_capacity()) * sizeof(uint32_t);
-	cpu += cutout_pool.get_capacity() * sizeof(CasterCutout) + instance_casters.get_capacity() * sizeof(InstanceCasters) + lamp_casters.get_capacity() * sizeof(LampCaster) + map_shelves.get_capacity() * sizeof(MapShelf);
+	cpu += cutout_pool.get_capacity() * sizeof(CasterCutout) + instance_casters.get_capacity() * sizeof(InstanceCasters) + lamp_casters.get_capacity() * sizeof(LampCaster) + atlas_free_cells.get_capacity() * sizeof(uint64_t);
+	cpu += (plan_order.get_capacity() + place_order.get_capacity()) * sizeof(uint32_t);
 	for (const InstanceCasters &entry : instance_casters) {
 		cpu += entry.surfaces.get_capacity() * sizeof(CasterSurface);
 	}
-	for (const KeyValue<uint32_t, LocalVector<Vector2i>> &entry : free_map_rects) {
-		cpu += entry.value.get_capacity() * sizeof(Vector2i);
-	}
 	report["cpuBytes"] = cpu;
 	return report;
+}
+
+// Карта каждой лампы для проверки бюджета атласа: сторона, нужная по радиусу сторона, начало места, число граней, сторона по плану
+// и попадание в кадр последнего вида.
+Dictionary LocalLightsWorld::read_map_sides() const {
+	Dictionary result;
+	for (const Lamp &lamp : lamps) {
+		if (lamp.active && lamp.casts) {
+			result[lamp.instance] = PackedInt32Array({ lamp.map_side, _map_side_for(lamp), lamp.map_origin.x, lamp.map_origin.y, lamp.map_faces, lamp.planned_side, lamp.last_visible_frame == current_frame ? 1 : 0 });
+		}
+	}
+	return result;
 }
 
 Dictionary LocalLightsWorld::read_screen_buffers() const {
