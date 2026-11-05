@@ -20,6 +20,7 @@ class LocalLights : public Object {
 
 	void _set_world_enabled_on_render_thread(RID p_scenario, bool p_enabled);
 	void _set_held_instances_on_render_thread(RID p_scenario, const Vector<RID> &p_instances);
+	void _bake_all_lamps_on_render_thread(RID p_scenario);
 
 protected:
 	static void _bind_methods();
@@ -35,6 +36,8 @@ public:
 	bool is_world_enabled(const Ref<World3D> &p_world) const;
 	// Что игрок держит в руках: лампы и геометрия этого узла и его потомков идут в очереди обновлений первыми. Пустой узел — руки пусты.
 	void set_held_item(const Ref<World3D> &p_world, Node3D *p_item);
+	// Этап загрузки: следующий кадр снимает тени всех ламп мира, вне зависимости от cap и попадания в кадр.
+	void bake_all_lamps(const Ref<World3D> &p_world);
 	void set_update_cap(int p_cap);
 	int get_update_cap() const;
 	void set_softness(float p_softness_per_meter);

@@ -222,6 +222,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	LocalVector<uint32_t> lamp_cutout_casters;
 	// Экземпляры предмета в руках: лампы и геометрия.
 	LocalVector<RID> held_instances;
+	// Следующий кадр снимает тени всех ламп мира: этап загрузки.
+	bool bake_all_lamps = false;
+	LocalVector<Instance *> scenario_lamps;
 	LocalVector<uint32_t> serve_order;
 
 	// Сетка: окно по миру и блоки ламп по ячейкам.
@@ -273,6 +276,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	RID _cutout_pipeline_for(RD::VertexFormatID p_format);
 	bool _read_cutout(RID p_material, const void *p_shader_data, void *p_surface, CasterCutout &r_cutout) const;
 	void _draw_cutout_surface(RD::DrawListID p_list, const CasterSurface &p_caster, const Transform3D &p_light_from_world, float p_extent, const float *p_depth);
+	void _collect_scenario_lamps();
 	void _assign_queue_tiers();
 	void _choose_lamps_to_serve(uint32_t p_budget, uint64_t p_frame);
 	void _gather_casters(Lamp &r_lamp, const Instance *p_instance);
@@ -297,6 +301,7 @@ public:
 	virtual void render_screen_passes(RenderDataRD *p_render_data) override;
 
 	void set_held_instances(const Vector<RID> &p_instances);
+	void request_bake_all_lamps() { bake_all_lamps = true; }
 	void set_enabled(bool p_enabled);
 	Dictionary memory_report() const;
 	Dictionary read_screen_buffers() const;

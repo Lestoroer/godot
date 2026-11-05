@@ -20,6 +20,7 @@ void LocalLights::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_world_enabled", "world", "enabled"), &LocalLights::set_world_enabled);
 	ClassDB::bind_method(D_METHOD("is_world_enabled", "world"), &LocalLights::is_world_enabled);
 	ClassDB::bind_method(D_METHOD("set_held_item", "world", "item"), &LocalLights::set_held_item);
+	ClassDB::bind_method(D_METHOD("bake_all_lamps", "world"), &LocalLights::bake_all_lamps);
 	ClassDB::bind_method(D_METHOD("set_update_cap", "cap"), &LocalLights::set_update_cap);
 	ClassDB::bind_method(D_METHOD("get_update_cap"), &LocalLights::get_update_cap);
 	ClassDB::bind_method(D_METHOD("set_softness", "softness_per_meter"), &LocalLights::set_softness);
@@ -82,6 +83,18 @@ void LocalLights::set_held_item(const Ref<World3D> &p_world, Node3D *p_item) {
 		collect_visual_instances(p_item, instances);
 	}
 	RenderingServer::get_singleton()->call_on_render_thread(callable_mp(this, &LocalLights::_set_held_instances_on_render_thread).bind(p_world->get_scenario(), instances));
+}
+
+void LocalLights::_bake_all_lamps_on_render_thread(RID p_scenario) {
+	RendererSceneCull::LocalLightsBackend *backend = scene_cull()->scenario_get_local_lights(p_scenario);
+	if (backend) {
+		static_cast<LocalLightsWorld *>(backend)->request_bake_all_lamps();
+	}
+}
+
+void LocalLights::bake_all_lamps(const Ref<World3D> &p_world) {
+	ERR_FAIL_COND(p_world.is_null());
+	RenderingServer::get_singleton()->call_on_render_thread(callable_mp(this, &LocalLights::_bake_all_lamps_on_render_thread).bind(p_world->get_scenario()));
 }
 
 bool LocalLights::is_world_enabled(const Ref<World3D> &p_world) const {

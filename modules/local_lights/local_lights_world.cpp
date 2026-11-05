@@ -248,12 +248,29 @@ void LocalLightsWorld::prepare_view(const LocalVector<Instance *> &p_lights) {
 	frame_metrics.views++;
 	uint64_t started = OS::get_singleton()->get_ticks_usec();
 	_take_view_lamps(p_lights, frame);
+	if (bake_all_lamps) {
+		_collect_scenario_lamps();
+		_take_view_lamps(scenario_lamps, frame);
+		scenario_lamps.clear();
+	}
 	frame_metrics.track_usec += OS::get_singleton()->get_ticks_usec() - started;
 	_serve_queue(frame);
+	bake_all_lamps = false;
 	started = OS::get_singleton()->get_ticks_usec();
 	_update_grid();
 	_publish_globals();
 	frame_metrics.grid_usec += OS::get_singleton()->get_ticks_usec() - started;
+}
+
+void LocalLightsWorld::_collect_scenario_lamps() {
+	RendererSceneCull::Scenario *scenario_data = scene_cull()->scenario_owner.get_or_null(scenario);
+	ERR_FAIL_NULL(scenario_data);
+	for (SelfList<Instance> *element = scenario_data->instances.first(); element; element = element->next()) {
+		Instance *instance = element->self();
+		if (instance->base_type == RSE::INSTANCE_LIGHT && instance->visible && RSG::light_storage->light_get_type(instance->base) != RSE::LIGHT_DIRECTIONAL) {
+			scenario_lamps.push_back(instance);
+		}
+	}
 }
 
 void LocalLightsWorld::_begin_frame(uint64_t p_frame) {
@@ -854,7 +871,7 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	SortArray<uint32_t, ByTierAndOrder> sorter;
 	sorter.compare.lamps = &lamps;
 	sorter.sort(serve_order.ptr(), serve_order.size());
-	const uint32_t budget = settings.update_cap > 0 ? MIN(uint32_t(settings.update_cap), serve_order.size()) : serve_order.size();
+	const uint32_t budget = settings.update_cap > 0 && !bake_all_lamps ? MIN(uint32_t(settings.update_cap), serve_order.size()) : serve_order.size();
 	_choose_lamps_to_serve(budget, p_frame);
 
 	uint64_t started = OS::get_singleton()->get_ticks_usec();
