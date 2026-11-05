@@ -243,6 +243,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	RID grid_rd;
 	RID data_rd;
 	RID list_rd;
+	// Те же байты для прохода отношения: чтение из буфера в вычислительном шейдере дешевле выборки из текстуры, а лампы читаются много раз на пиксель.
+	RID data_buffer;
+	RID list_buffer;
 	RID grid_texture;
 	RID data_texture;
 	RID list_texture;

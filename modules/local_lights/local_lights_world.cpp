@@ -110,6 +110,14 @@ RD::Uniform image_uniform(int p_binding, RID p_texture) {
 	return uniform;
 }
 
+RD::Uniform storage_uniform(int p_binding, RID p_buffer) {
+	RD::Uniform uniform;
+	uniform.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+	uniform.binding = p_binding;
+	uniform.append_id(p_buffer);
+	return uniform;
+}
+
 RD::Uniform buffer_uniform(int p_binding, RID p_buffer) {
 	RD::Uniform uniform;
 	uniform.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
@@ -191,7 +199,7 @@ LocalLightsWorld::~LocalLightsWorld() {
 	for (const KeyValue<RD::VertexFormatID, RID> &entry : cutout_pipelines) {
 		rd->free_rid(entry.value);
 	}
-	for (const RID &rid : { map_atlas, grid_rd, data_rd, list_rd, ratio_surface, blurred_ratio, params_buffer, ratio_pipeline, blur_pipeline }) {
+	for (const RID &rid : { data_buffer, list_buffer, map_atlas, grid_rd, data_rd, list_rd, ratio_surface, blurred_ratio, params_buffer, ratio_pipeline, blur_pipeline }) {
 		if (rid.is_valid()) {
 			rd->free_rid(rid);
 		}
@@ -1126,12 +1134,14 @@ void LocalLightsWorld::_update_grid() {
 	if (grid_changed) {
 		rd->texture_update(grid_rd, 0, grid_bytes);
 		rd->texture_update(list_rd, 0, list_bytes);
+		rd->buffer_update(list_buffer, 0, list_bytes.size(), list_bytes.ptr());
 		grid_changed = false;
 		frame_metrics.grid_uploads++;
 		frame_metrics.uploaded_bytes += grid_bytes.size() + list_bytes.size();
 	}
 	if (data_changed) {
 		rd->texture_update(data_rd, 0, data_bytes);
+		rd->buffer_update(data_buffer, 0, data_bytes.size(), data_bytes.ptr());
 		data_changed = false;
 		frame_metrics.data_uploads++;
 		frame_metrics.uploaded_bytes += data_bytes.size();
@@ -1180,6 +1190,10 @@ void LocalLightsWorld::_repack() {
 		list_rd = rd->texture_create(format, RD::TextureView());
 		list_texture = _wrap_texture(list_rd, RSE::TEXTURE_LAYERED_2D_ARRAY);
 		list_bytes.resize(LIST_WIDTH * list_rows * sizeof(float));
+		if (list_buffer.is_valid()) {
+			rd->free_rid(list_buffer);
+		}
+		list_buffer = rd->storage_buffer_create(list_bytes.size());
 		globals_published = false;
 	}
 	float *list = reinterpret_cast<float *>(list_bytes.ptrw());
@@ -1213,6 +1227,10 @@ void LocalLightsWorld::_ensure_data_table() {
 	data_texture = _wrap_texture(data_rd, RSE::TEXTURE_LAYERED_2D_ARRAY);
 	data_bytes.resize(DATA_WIDTH * data_rows * BYTES_PER_DATA_TEXEL);
 	memset(data_bytes.ptrw(), 0, data_bytes.size());
+	if (data_buffer.is_valid()) {
+		rd->free_rid(data_buffer);
+	}
+	data_buffer = rd->storage_buffer_create(data_bytes.size());
 	for (Lamp &lamp : lamps) {
 		lamp.data_dirty = true;
 	}
@@ -1351,8 +1369,8 @@ void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
 	if (settings.gpu_timestamps) {
 		rd->capture_timestamp("LocalLights ratio");
 	}
-	RID ratio_set = uniform_sets->get_cache(ratio_rd_shader, 0, sampled_uniform(0, sampler, depth), sampled_uniform(1, sampler, grid_rd), sampled_uniform(2, sampler, data_rd),
-			sampled_uniform(3, sampler, map_atlas.is_valid() ? map_atlas : no_atlas), sampled_uniform(4, sampler, list_rd), buffer_uniform(5, params_buffer), image_uniform(7, ratio_surface));
+	RID ratio_set = uniform_sets->get_cache(ratio_rd_shader, 0, sampled_uniform(0, sampler, depth), sampled_uniform(1, sampler, grid_rd), storage_uniform(2, data_buffer),
+			sampled_uniform(3, sampler, map_atlas.is_valid() ? map_atlas : no_atlas), storage_uniform(4, list_buffer), buffer_uniform(5, params_buffer), image_uniform(7, ratio_surface));
 	RD::ComputeListID compute = rd->compute_list_begin();
 	rd->compute_list_bind_compute_pipeline(compute, ratio_pipeline);
 	rd->compute_list_bind_uniform_set(compute, ratio_set, 0);
@@ -1362,7 +1380,7 @@ void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
 	if (settings.gpu_timestamps) {
 		rd->capture_timestamp("LocalLights blur");
 	}
-	RID blur_set = uniform_sets->get_cache(blur_rd_shader, 0, image_uniform(1, ratio_surface), image_uniform(2, blurred_ratio), buffer_uniform(3, params_buffer));
+	RID blur_set = uniform_sets->get_cache(blur_rd_shader, 0, image_uniform(1, ratio_surface), image_uniform(2, blurred_ratio), buffer_uniform(5, params_buffer));
 	compute = rd->compute_list_begin();
 	rd->compute_list_bind_compute_pipeline(compute, blur_pipeline);
 	rd->compute_list_bind_uniform_set(compute, blur_set, 0);

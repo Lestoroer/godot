@@ -14,41 +14,23 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform sampler2D depth_buffer;
 layout(set = 0, binding = 1) uniform sampler2D cull_grid;
-layout(set = 0, binding = 2) uniform sampler2D cull_data;
+layout(set = 0, binding = 2, std430) restrict readonly buffer LampTable {
+	vec4 lamp_table[];
+};
 layout(set = 0, binding = 3) uniform sampler2D shadow_atlas;
-layout(set = 0, binding = 4) uniform sampler2D lamp_list;
+layout(set = 0, binding = 4, std430) restrict readonly buffer LampList {
+	float lamp_list[];
+};
 // Отношение — затенённый свет ламп к незатенённому по каналам: лампа в тени гасит только свой цвет.
 layout(rg32ui, set = 0, binding = 7) uniform restrict writeonly uimage2D ratio_surface;
-layout(set = 0, binding = 5, std140) uniform Params {
-	mat4 inverse_projection;
-	mat4 projection;
-	mat4 view_to_world;
-	vec4 cull_origin_and_step;
-	ivec4 cull_dims;
-	// x — радиус размытия на метр расстояния от лампы до точки; z — рост радиуса, когда свет точки не от одной лампы.
-	vec4 blur;
-	ivec4 view_size;
-} params;
-
-// Список ламп ячеек: индекс лампы в текселе. Таблица ламп: восемь текселей на лампу, в строке 256 ламп.
-const int LIST_WIDTH_LOG2 = 11;
-const int LIST_WIDTH_MASK = (1 << LIST_WIDTH_LOG2) - 1;
+// Таблица ламп: восемь векторов на лампу.
 const int SLOT_SHIFT = 3;
-const int LAMPS_PER_ROW_LOG2 = 8;
-const int LAMPS_PER_ROW_MASK = (1 << LAMPS_PER_ROW_LOG2) - 1;
 const float MIN_FACING_WEIGHT = 0.000001;
 const float ENOUGH_LIGHT_IN_FRONT = 0.0001;
 
-// Глубина по оси вида. Обе проекции без наклона по z, поэтому она не зависит от положения пикселя.
 float view_z_at(ivec2 pixel) {
 	float depth = texelFetch(depth_buffer, pixel, 0).r;
 	return (params.inverse_projection[2][2] * depth + params.inverse_projection[3][2]) / (params.inverse_projection[2][3] * depth + params.inverse_projection[3][3]);
-}
-
-vec3 view_point_at(ivec2 pixel, ivec2 size, float view_z) {
-	vec2 ndc = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
-	float clip_w = params.projection[2][3] * view_z + params.projection[3][3];
-	return vec3((ndc * clip_w - params.projection[2].xy * view_z - params.projection[3].xy) * vec2(params.inverse_projection[0][0], params.inverse_projection[1][1]), view_z);
 }
 
 // Геометрическая нормаль по глубине: по каждой оси берётся сосед с меньшим скачком, чтобы не перешагивать край. Лучи пикселей не лежат в одной плоскости,
@@ -58,10 +40,10 @@ vec3 surface_normal_at(ivec2 pixel, ivec2 size, vec3 point) {
 	ivec2 previous_x = max(pixel - ivec2(1, 0), ivec2(0));
 	ivec2 next_y = min(pixel + ivec2(0, 1), size - 1);
 	ivec2 previous_y = max(pixel - ivec2(0, 1), ivec2(0));
-	vec3 forward_x = view_point_at(next_x, size, view_z_at(next_x)) - point;
-	vec3 backward_x = point - view_point_at(previous_x, size, view_z_at(previous_x));
-	vec3 forward_y = view_point_at(next_y, size, view_z_at(next_y)) - point;
-	vec3 backward_y = point - view_point_at(previous_y, size, view_z_at(previous_y));
+	vec3 forward_x = view_point_at(next_x, view_z_at(next_x)) - point;
+	vec3 backward_x = point - view_point_at(previous_x, view_z_at(previous_x));
+	vec3 forward_y = view_point_at(next_y, view_z_at(next_y)) - point;
+	vec3 backward_y = point - view_point_at(previous_y, view_z_at(previous_y));
 	// У края кадра соседа с одной стороны нет, разность там нулевая и выбирать её нельзя.
 	vec3 along_x = pixel.x + 1 < size.x && (pixel.x == 0 || dot(forward_x, forward_x) < dot(backward_x, backward_x)) ? forward_x : backward_x;
 	vec3 along_y = pixel.y + 1 < size.y && (pixel.y == 0 || dot(forward_y, forward_y) < dot(backward_y, backward_y)) ? forward_y : backward_y;
@@ -152,11 +134,11 @@ float omni_visibility(vec4 t4, vec4 t6, float side, vec3 to_point, vec3 surface_
 	return open_share(vec2(t6.w, t4.z) + vec2((face + 0.5) * side, 0.5 * side) + tangent / texel_tangent, tangent, texel_tangent, reach * local.z, local.z, dot(surface_normal, p), local_normal, t4.x, t4.w);
 }
 
-float spot_visibility(ivec2 sc, vec4 t4, vec4 t6, vec3 to_point, vec3 surface_normal) {
+float spot_visibility(int slot, vec4 t4, vec4 t6, vec3 to_point, vec3 surface_normal) {
 	vec3 p = to_point + t6.xyz;
 	float reach = length(p);
-	vec4 t5 = texelFetch(cull_data, sc + ivec2(5, 0), 0);
-	vec4 t7 = texelFetch(cull_data, sc + ivec2(7, 0), 0);
+	vec4 t5 = lamp_table[slot + 5];
+	vec4 t7 = lamp_table[slot + 7];
 	float side = t7.w;
 	float texel_tangent = 2.0 / (side * t5.w);
 	vec3 sample_direction = normalize(p / reach + surface_normal * NORMAL_OFFSET_TEXELS * texel_tangent);
@@ -199,7 +181,8 @@ void main() {
 		imageStore(ratio_surface, pixel, uvec4(0u));
 		return;
 	}
-	vec3 view_point = view_point_at(pixel, size, view_z_at(pixel));
+	ndc_per_pixel = 2.0 / vec2(size);
+	vec3 view_point = view_point_at(pixel, view_z_at(pixel));
 	vec3 view_normal = surface_normal_at(pixel, size, view_point);
 	vec3 world_point = (params.view_to_world * vec4(view_point, 1.0)).xyz;
 	vec3 world_normal = mat3(params.view_to_world) * view_normal;
@@ -217,10 +200,8 @@ void main() {
 		int omni_count = int(members.g);
 		int spot_count = int(members.b);
 		for (int member = 0; member < omni_count + spot_count; member++) {
-			int list_index = offset + member;
-			int lamp = int(texelFetch(lamp_list, ivec2(list_index & LIST_WIDTH_MASK, list_index >> LIST_WIDTH_LOG2), 0).r);
-			ivec2 sc = ivec2((lamp & LAMPS_PER_ROW_MASK) << SLOT_SHIFT, lamp >> LAMPS_PER_ROW_LOG2);
-			vec4 position_and_range = texelFetch(cull_data, sc, 0);
+			int slot = int(lamp_list[offset + member]) << SLOT_SHIFT;
+			vec4 position_and_range = lamp_table[slot];
 			vec3 to_light = position_and_range.xyz - world_point;
 			float distance_squared = dot(to_light, to_light);
 			float range_ratio = distance_squared * position_and_range.w;
@@ -237,26 +218,26 @@ void main() {
 			bool is_spot = member >= omni_count;
 			float attenuation = 1.0;
 			if (is_spot) {
-				vec4 axis_cone = texelFetch(cull_data, sc + ivec2(1, 0), 0);
+				vec4 axis_cone = lamp_table[slot + 1];
 				float along_axis = dot(-to_light, axis_cone.xyz);
 				if (along_axis <= 0.0 || along_axis * along_axis < axis_cone.w * distance_squared) {
 					continue;
 				}
-				vec4 fin = texelFetch(cull_data, sc + ivec2(3, 0), 0);
+				vec4 fin = lamp_table[slot + 3];
 				float rim = max(1e-4, (1.0 - max(along_axis * inverse_distance, fin.x)) / (1.0 - fin.x));
 				attenuation = 1.0 - pow(rim, fin.z);
 			}
-			vec4 color_decay = texelFetch(cull_data, sc + ivec2(2, 0), 0);
+			vec4 color_decay = lamp_table[slot + 2];
 			float window = 1.0 - range_ratio * range_ratio;
 			float light_distance = distance_squared * inverse_distance;
 			attenuation *= window * window * pow(max(light_distance, 0.0001), -color_decay.w);
 			vec3 light_color = attenuation * max(facing, MIN_FACING_WEIGHT) * color_decay.rgb;
 			float light_weight = color_weight(light_color);
 			float visibility = 1.0;
-			vec4 t6 = texelFetch(cull_data, sc + ivec2(6, 0), 0);
+			vec4 t6 = lamp_table[slot + 6];
 			if (t6.w >= 0.0) {
-				vec4 t4 = texelFetch(cull_data, sc + ivec2(4, 0), 0);
-				visibility = is_spot ? spot_visibility(sc, t4, t6, -to_light, world_normal) : omni_visibility(t4, t6, texelFetch(cull_data, sc + ivec2(7, 0), 0).w, -to_light, world_normal);
+				vec4 t4 = lamp_table[slot + 4];
+				visibility = is_spot ? spot_visibility(slot, t4, t6, -to_light, world_normal) : omni_visibility(t4, t6, lamp_table[slot + 7].w, -to_light, world_normal);
 			}
 			unshadowed_color += light_color;
 			shadowed_color += light_color * visibility;
