@@ -35,7 +35,8 @@ const uint32_t LAMPS_PER_DATA_ROW = DATA_WIDTH / SLOT_TEXELS;
 const uint32_t BYTES_PER_DATA_TEXEL = 16;
 const uint32_t LIST_WIDTH = 2048;
 const int ATLAS_WIDTH = 8192;
-const int ATLAS_HEIGHT_STEP = 512;
+// Атлас растёт на полку или несколько сразу: шаг в наименьшую полку не оставляет пустых строк, а за кадр высота меняется не больше раза.
+const int ATLAS_HEIGHT_STEP = 64;
 const int ATLAS_MAX_HEIGHT = 8192;
 const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
 // Снимок спота шире конуса: выборка у края конуса не выходит за плитку.
