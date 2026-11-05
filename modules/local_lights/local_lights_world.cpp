@@ -16,19 +16,19 @@
 namespace {
 
 const Vector3i CELL_DIMS(20, 20, 20);
-const double CELL_SIZE_EXACT = 1.6;
-const float CELL_SIZE = float(CELL_SIZE_EXACT);
+const float CELL_SIZE = 1.6f;
 const float RECENTER_CELLS = 4.0f;
+// Таблица ламп: восемь текселей на лампу, в строке 256 ламп. Список ламп ячеек: индекс лампы в текселе. Контракт с local_light_ratio.glsl и local_lights_inc.gdshaderinc.
 const uint32_t DATA_WIDTH = 2048;
 const uint32_t SLOT_TEXELS = 8;
 const uint32_t SLOT_FLOATS = SLOT_TEXELS * 4;
-const uint32_t BYTES_PER_DATA_TEXEL = 8;
+const uint32_t LAMPS_PER_DATA_ROW = DATA_WIDTH / SLOT_TEXELS;
+const uint32_t BYTES_PER_DATA_TEXEL = 16;
+const uint32_t LIST_WIDTH = 2048;
 const int ATLAS_WIDTH = 8192;
 const int ATLAS_HEIGHT_STEP = 512;
 const int ATLAS_MAX_HEIGHT = 8192;
 const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
-// Начало плитки хранится в этих единицах: половинная точность хранит целые точно. Контракт с local_light_ratio.glsl.
-const int MAP_ORIGIN_UNIT = 32;
 const float SPOT_HOTSPOT = 0.5f;
 // Снимок спота шире конуса: выборка у края конуса не выходит за плитку.
 const float SPOT_MAP_MARGIN_DEGREES = 8.0f;
@@ -41,12 +41,6 @@ const uint32_t NOISE_FRAME_PERIOD = 1024;
 const Vector3 FACE_RIGHT[6] = { Vector3(0, 0, 1), Vector3(0, 0, 1), Vector3(1, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 0) };
 const Vector3 FACE_UP[6] = { Vector3(0, 1, 0), Vector3(0, 1, 0), Vector3(0, 0, 1), Vector3(0, 1, 0), Vector3(0, 1, 0), Vector3(0, 0, 1) };
 const Vector3 FACE_FORWARD[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1), Vector3(0, 1, 0) };
-
-// Смещение тени общее для всех ламп, свойства лампы его не задают. Вдоль луча — меньше самой тонкой стенки 5 мм: вместе с долей текселя и шагом глубины
-// (local_light_ratio.glsl) оно закрывает её до расстояния, где тексель уже толще стенки. По нормали — постоянный сдвиг направления на тексель: убирает
-// самозатенение под любым углом, а чёрная полоса под мебелью от него не шире, чем от прежнего сдвига, который при скользящем луче был таким же.
-const float MAP_DEPTH_OFFSET_METERS = 0.003f;
-const float MAP_DIRECTION_OFFSET_TEXELS = 1.0f;
 
 RendererSceneCull *scene_cull() {
 	return static_cast<RendererSceneCull *>(RSG::scene);
@@ -72,9 +66,24 @@ Variant material_value(RID p_material, const SceneShader::ShaderData *p_shader_d
 }
 
 // Ближняя плоскость карты: как можно ближе к лампе, но шаг 16 бит на дальнем конце остаётся меньше половины смещения тени.
-// Контракт с local_light_ratio.glsl и local_lights_inc.gdshaderinc.
 float map_near_plane(float p_range) {
 	return MAX(MIN(p_range / 64.0f, 0.03f), p_range * p_range / (65536.0f * 0.0125f));
+}
+
+struct SpotMapAxes {
+	Vector3 right;
+	Vector3 up;
+	// Тангенс половины угла снимка.
+	float extent = 0.0f;
+};
+
+SpotMapAxes spot_map_axes(const Vector3 &p_forward, float p_angle) {
+	SpotMapAxes axes;
+	const Vector3 helper = Math::abs(p_forward.y) < 0.999f ? Vector3(0, 1, 0) : Vector3(0, 0, 1);
+	axes.right = helper.cross(p_forward).normalized();
+	axes.up = p_forward.cross(axes.right);
+	axes.extent = Math::tan(Math::deg_to_rad(MIN(p_angle + SPOT_MAP_MARGIN_DEGREES, SPOT_MAP_MAX_HALF_ANGLE_DEGREES)));
+	return axes;
 }
 
 Basis rows_of(const Vector3 &p_right, const Vector3 &p_up, const Vector3 &p_forward) {
@@ -174,6 +183,7 @@ LocalLightsWorld::~LocalLightsWorld() {
 	_free_retired_textures();
 	_free_wrapped(grid_texture);
 	_free_wrapped(data_texture);
+	_free_wrapped(list_texture);
 	_free_wrapped(map_atlas_texture);
 	_free_wrapped(blurred_ratio_texture);
 	for (const KeyValue<RD::VertexFormatID, RID> &entry : caster_pipelines) {
@@ -182,7 +192,7 @@ LocalLightsWorld::~LocalLightsWorld() {
 	for (const KeyValue<RD::VertexFormatID, RID> &entry : cutout_pipelines) {
 		rd->free_rid(entry.value);
 	}
-	for (const RID &rid : { map_atlas, grid_rd, data_rd, ratio_surface, blurred_ratio, params_buffer, ratio_pipeline, blur_pipeline }) {
+	for (const RID &rid : { map_atlas, grid_rd, data_rd, list_rd, ratio_surface, blurred_ratio, params_buffer, ratio_pipeline, blur_pipeline }) {
 		if (rid.is_valid()) {
 			rd->free_rid(rid);
 		}
@@ -415,15 +425,13 @@ void LocalLightsWorld::_update_window() {
 		return;
 	}
 	const Vector3 corner = center - Vector3(CELL_DIMS) * 0.5f * CELL_SIZE;
-	origin_cell = Vector3i((corner / CELL_SIZE).floor());
-	origin = Vector3(origin_cell) * CELL_SIZE;
+	origin = (corner / CELL_SIZE).floor() * CELL_SIZE;
 	window_center = origin + Vector3(CELL_DIMS) * 0.5f * CELL_SIZE;
 	origin_valid = true;
 	globals_published = false;
 	for (Lamp &lamp : lamps) {
 		if (lamp.active) {
 			_compute_cells(lamp, lamp.cells);
-			lamp.data_dirty = true;
 		}
 	}
 	repack_needed = true;
@@ -644,8 +652,8 @@ void LocalLightsWorld::_ensure_atlas_height() {
 	globals_published = false;
 }
 
-RID LocalLightsWorld::_pipeline_for(RD::VertexFormatID p_format) {
-	const RID *existing = caster_pipelines.getptr(p_format);
+RID LocalLightsWorld::_pipeline_for(HashMap<RD::VertexFormatID, RID> &r_pipelines, RID p_shader, RD::VertexFormatID p_format) {
+	const RID *existing = r_pipelines.getptr(p_format);
 	if (existing) {
 		return *existing;
 	}
@@ -657,26 +665,8 @@ RID LocalLightsWorld::_pipeline_for(RD::VertexFormatID p_format) {
 	depth.enable_depth_test = true;
 	depth.enable_depth_write = true;
 	depth.depth_compare_operator = RD::COMPARE_OP_LESS;
-	RD::PipelineColorBlendState blend;
-	RID pipeline = rd->render_pipeline_create(caster_rd_shader, rd->framebuffer_get_format(map_framebuffer), p_format, RD::RENDER_PRIMITIVE_TRIANGLES, raster, RD::PipelineMultisampleState(), depth, blend);
-	caster_pipelines.insert(p_format, pipeline);
-	return pipeline;
-}
-
-RID LocalLightsWorld::_cutout_pipeline_for(RD::VertexFormatID p_format) {
-	const RID *existing = cutout_pipelines.getptr(p_format);
-	if (existing) {
-		return *existing;
-	}
-	RD::PipelineRasterizationState raster;
-	raster.cull_mode = RD::POLYGON_CULL_DISABLED;
-	raster.enable_depth_clamp = true;
-	RD::PipelineDepthStencilState depth;
-	depth.enable_depth_test = true;
-	depth.enable_depth_write = true;
-	depth.depth_compare_operator = RD::COMPARE_OP_LESS;
-	RID pipeline = rd->render_pipeline_create(cutout_rd_shader, rd->framebuffer_get_format(map_framebuffer), p_format, RD::RENDER_PRIMITIVE_TRIANGLES, raster, RD::PipelineMultisampleState(), depth, RD::PipelineColorBlendState());
-	cutout_pipelines.insert(p_format, pipeline);
+	RID pipeline = rd->render_pipeline_create(p_shader, rd->framebuffer_get_format(map_framebuffer), p_format, RD::RENDER_PRIMITIVE_TRIANGLES, raster, RD::PipelineMultisampleState(), depth, RD::PipelineColorBlendState());
+	r_pipelines.insert(p_format, pipeline);
 	return pipeline;
 }
 
@@ -728,7 +718,7 @@ bool LocalLightsWorld::_read_cutout(RID p_material, const void *p_shader_data, v
 
 void LocalLightsWorld::_draw_cutout_surface(RD::DrawListID p_list, const CasterSurface &p_caster, const Transform3D &p_light_from_world, float p_extent, const float *p_depth) {
 	const CasterCutout &cutout = cutout_pool[p_caster.cutout];
-	rd->draw_list_bind_render_pipeline(p_list, _cutout_pipeline_for(p_caster.format));
+	rd->draw_list_bind_render_pipeline(p_list, _pipeline_for(cutout_pipelines, cutout_rd_shader, p_caster.format));
 	rd->draw_list_bind_uniform_set(p_list, cutout.uniform_set, 0);
 	rd->draw_list_bind_vertex_array(p_list, p_caster.vertex_array);
 	if (p_caster.index_array.is_valid()) {
@@ -928,14 +918,12 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 		lamp.queued_order = 0;
 		lamp.map_valid = true;
 		lamp.baked_origin = lamp.position;
-		lamp.baked_inverse_range = 1.0f / lamp.range;
+		lamp.baked_range = lamp.range;
 		if (lamp.spot) {
-			const Vector3 helper = Math::abs(lamp.axis.y) < 0.999f ? Vector3(0, 1, 0) : Vector3(0, 0, 1);
-			const Vector3 right = helper.cross(lamp.axis).normalized();
+			const SpotMapAxes axes = spot_map_axes(lamp.axis, lamp.angle);
 			lamp.baked_forward = lamp.axis;
-			lamp.baked_up = lamp.axis.cross(right);
-			const float half_angle = Math::deg_to_rad(MIN(lamp.angle + SPOT_MAP_MARGIN_DEGREES, SPOT_MAP_MAX_HALF_ANGLE_DEGREES));
-			lamp.baked_inverse_tangent = 1.0f / Math::tan(half_angle);
+			lamp.baked_up = axes.up;
+			lamp.baked_inverse_tangent = 1.0f / axes.extent;
 		}
 		lamp.data_dirty = true;
 		if (!lamp.in_grid) {
@@ -1031,11 +1019,9 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSetting
 	CasterPush push;
 	push.projection[2] = 0.0f;
 	push.projection[3] = 0.0f;
-	// Шейдеры восстанавливают радиус из половинной точности данных лампы: глубина рисуется с тем же значением, иначе расшифровка разойдётся на миллиметры.
-	const float map_range = 1.0f / Math::half_to_float(Math::make_half_float(1.0f / p_lamp.range));
-	const float near_plane = map_near_plane(map_range);
-	push.extra[0] = map_range / (map_range - near_plane);
-	push.extra[1] = -near_plane * map_range / (map_range - near_plane);
+	const float near_plane = map_near_plane(p_lamp.range);
+	push.extra[0] = p_lamp.range / (p_lamp.range - near_plane);
+	push.extra[1] = -near_plane * p_lamp.range / (p_lamp.range - near_plane);
 	push.extra[2] = 0.0f;
 	push.extra[3] = 0.0f;
 	push.decode_position[3] = 0.0f;
@@ -1048,10 +1034,10 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSetting
 		Vector3 normals[4];
 		if (p_lamp.spot) {
 			forward = p_lamp.axis;
-			const Vector3 helper = Math::abs(forward.y) < 0.999f ? Vector3(0, 1, 0) : Vector3(0, 0, 1);
-			right = helper.cross(forward).normalized();
-			up = forward.cross(right);
-			extent = Math::tan(Math::deg_to_rad(MIN(p_lamp.angle + SPOT_MAP_MARGIN_DEGREES, SPOT_MAP_MAX_HALF_ANGLE_DEGREES)));
+			const SpotMapAxes axes = spot_map_axes(forward, p_lamp.angle);
+			right = axes.right;
+			up = axes.up;
+			extent = axes.extent;
 			// Лучи вне конуса не читаются: кастер отсекается по конусу с небольшим запасом, плитка шире.
 			const float cone_extent = 1.0f / Math::tan(Math::deg_to_rad(MIN(p_lamp.angle + 1.0f, SPOT_MAP_MAX_HALF_ANGLE_DEGREES)));
 			pyramid_normals(right, up, forward, 1.0f / cone_extent, normals);
@@ -1085,7 +1071,7 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSetting
 				continue;
 			}
 			if (caster.format != bound_format) {
-				rd->draw_list_bind_render_pipeline(list, _pipeline_for(caster.format));
+				rd->draw_list_bind_render_pipeline(list, _pipeline_for(caster_pipelines, caster_rd_shader, caster.format));
 				bound_format = caster.format;
 			}
 			rd->draw_list_bind_vertex_array(list, caster.vertex_array);
@@ -1121,14 +1107,16 @@ void LocalLightsWorld::_update_grid() {
 	if (repack_needed) {
 		_repack();
 	}
+	_ensure_data_table();
 	uint32_t in_grid = 0;
-	for (Lamp &lamp : lamps) {
+	for (uint32_t i = 0; i < lamps.size(); i++) {
+		Lamp &lamp = lamps[i];
 		if (!lamp.active || !lamp.in_grid) {
 			continue;
 		}
 		in_grid++;
 		if (lamp.data_dirty) {
-			_write_lamp_data(lamp);
+			_write_lamp_data(i);
 			lamp.data_dirty = false;
 			data_changed = true;
 		}
@@ -1136,11 +1124,12 @@ void LocalLightsWorld::_update_grid() {
 	frame_metrics.lamps_in_grid = in_grid;
 	if (grid_changed) {
 		rd->texture_update(grid_rd, 0, grid_bytes);
+		rd->texture_update(list_rd, 0, list_bytes);
 		grid_changed = false;
 		frame_metrics.grid_uploads++;
-		frame_metrics.uploaded_bytes += grid_bytes.size();
+		frame_metrics.uploaded_bytes += grid_bytes.size() + list_bytes.size();
 	}
-	if (data_changed && data_rd.is_valid()) {
+	if (data_changed) {
 		rd->texture_update(data_rd, 0, data_bytes);
 		data_changed = false;
 		frame_metrics.data_uploads++;
@@ -1148,7 +1137,7 @@ void LocalLightsWorld::_update_grid() {
 	}
 }
 
-// Блоки ячеек: сначала Omni, затем Spot. Данные лампы копируются в её слот каждой ячейки со смещением от центра ячейки.
+// В блоке ячейки сначала Omni, затем Spot: материал обходит их разными циклами.
 void LocalLightsWorld::_repack() {
 	repack_needed = false;
 	frame_metrics.repacks++;
@@ -1178,97 +1167,103 @@ void LocalLightsWorld::_repack() {
 		cell_next[cell] = list_end;
 		list_end += cell_omni[cell] + cell_spot[cell];
 	}
-	// Omni занимают начало блока: первый проход их, второй Spot.
+	const uint32_t needed_rows = MAX(1u, (list_end + LIST_WIDTH - 1) / LIST_WIDTH);
+	if (needed_rows > list_rows) {
+		list_rows = Math::next_power_of_2(needed_rows);
+		_retire_texture(list_rd, list_texture);
+		RD::TextureFormat format;
+		format.format = RD::DATA_FORMAT_R32_SFLOAT;
+		format.width = LIST_WIDTH;
+		format.height = list_rows;
+		format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+		list_rd = rd->texture_create(format, RD::TextureView());
+		list_texture = _wrap_texture(list_rd, RSE::TEXTURE_LAYERED_2D_ARRAY);
+		list_bytes.resize(LIST_WIDTH * list_rows * sizeof(float));
+		globals_published = false;
+	}
+	float *list = reinterpret_cast<float *>(list_bytes.ptrw());
 	for (int pass = 0; pass < 2; pass++) {
-		for (Lamp &lamp : lamps) {
+		for (uint32_t i = 0; i < lamps.size(); i++) {
+			const Lamp &lamp = lamps[i];
 			if (!lamp.active || !lamp.in_grid || lamp.spot != (pass == 1)) {
 				continue;
 			}
-			lamp.cell_slots.resize(lamp.cells.size());
-			for (uint32_t i = 0; i < lamp.cells.size(); i++) {
-				lamp.cell_slots[i] = cell_next[lamp.cells[i]]++;
+			for (const uint32_t cell : lamp.cells) {
+				list[cell_next[cell]++] = float(i);
 			}
-			lamp.data_dirty = true;
 		}
 	}
-	const uint32_t needed_rows = MAX(1u, (list_end * SLOT_TEXELS + DATA_WIDTH - 1) / DATA_WIDTH);
-	if (needed_rows > data_rows || !data_rd.is_valid()) {
-		data_rows = Math::next_power_of_2(needed_rows);
-		_retire_texture(data_rd, data_texture);
-		RD::TextureFormat format;
-		format.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
-		format.width = DATA_WIDTH;
-		format.height = data_rows;
-		format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
-		data_rd = rd->texture_create(format, RD::TextureView());
-		data_texture = _wrap_texture(data_rd, RSE::TEXTURE_LAYERED_2D_ARRAY);
-		data_bytes.resize(DATA_WIDTH * data_rows * BYTES_PER_DATA_TEXEL);
-		memset(data_bytes.ptrw(), 0, data_bytes.size());
-		globals_published = false;
-	}
 	grid_changed = true;
-	data_changed = true;
 }
 
-void LocalLightsWorld::_write_lamp_data(const Lamp &p_lamp) {
+void LocalLightsWorld::_ensure_data_table() {
+	const uint32_t needed_rows = MAX(1u, (lamps.size() + LAMPS_PER_DATA_ROW - 1) / LAMPS_PER_DATA_ROW);
+	if (needed_rows <= data_rows) {
+		return;
+	}
+	data_rows = Math::next_power_of_2(needed_rows);
+	_retire_texture(data_rd, data_texture);
+	RD::TextureFormat format;
+	format.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
+	format.width = DATA_WIDTH;
+	format.height = data_rows;
+	format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+	data_rd = rd->texture_create(format, RD::TextureView());
+	data_texture = _wrap_texture(data_rd, RSE::TEXTURE_LAYERED_2D_ARRAY);
+	data_bytes.resize(DATA_WIDTH * data_rows * BYTES_PER_DATA_TEXEL);
+	memset(data_bytes.ptrw(), 0, data_bytes.size());
+	for (Lamp &lamp : lamps) {
+		lamp.data_dirty = true;
+	}
+	globals_published = false;
+}
+
+void LocalLightsWorld::_write_lamp_data(uint32_t p_index) {
+	const Lamp &lamp = lamps[p_index];
 	float values[SLOT_FLOATS] = {};
-	// Половинная точность отбрасывает лишние биты: ошибка одинарного округления у значения на границе шага сдвигала бы край охвата на целый шаг.
-	values[3] = float(1.0 / (double(p_lamp.range) * double(p_lamp.range)));
-	values[8] = p_lamp.linear_color.r * p_lamp.energy;
-	values[9] = p_lamp.linear_color.g * p_lamp.energy;
-	values[10] = p_lamp.linear_color.b * p_lamp.energy;
-	values[11] = p_lamp.decay;
-	values[14] = p_lamp.cone_attenuation;
-	values[15] = p_lamp.specular_amount;
-	if (p_lamp.spot) {
-		const float outer = Math::deg_to_rad(MIN(p_lamp.angle, 89.0f));
+	values[0] = lamp.position.x;
+	values[1] = lamp.position.y;
+	values[2] = lamp.position.z;
+	values[3] = 1.0f / (lamp.range * lamp.range);
+	values[8] = lamp.linear_color.r * lamp.energy;
+	values[9] = lamp.linear_color.g * lamp.energy;
+	values[10] = lamp.linear_color.b * lamp.energy;
+	values[11] = lamp.decay;
+	values[14] = lamp.cone_attenuation;
+	values[15] = lamp.specular_amount;
+	if (lamp.spot) {
+		const float outer = Math::deg_to_rad(MIN(lamp.angle, 89.0f));
 		const float cos_outer = Math::cos(outer);
 		const float cos_inner = Math::cos(outer * SPOT_HOTSPOT);
-		values[4] = p_lamp.axis.x;
-		values[5] = p_lamp.axis.y;
-		values[6] = p_lamp.axis.z;
+		values[4] = lamp.axis.x;
+		values[5] = lamp.axis.y;
+		values[6] = lamp.axis.z;
 		values[7] = cos_outer * cos_outer;
 		values[12] = cos_outer;
 		values[13] = 1.0f / MAX(cos_inner - cos_outer, 1e-4f);
 	}
 	values[27] = -1.0f;
-	if (p_lamp.casts && p_lamp.map_valid) {
-		values[16] = MAP_DEPTH_OFFSET_METERS;
-		values[17] = MAP_DIRECTION_OFFSET_TEXELS;
-		values[18] = float(p_lamp.map_origin.y / MAP_ORIGIN_UNIT);
-		values[19] = p_lamp.baked_inverse_range;
-		values[20] = p_lamp.spot ? p_lamp.baked_forward.x : 0.0f;
-		values[21] = p_lamp.spot ? p_lamp.baked_forward.y : 0.0f;
-		values[22] = p_lamp.spot ? p_lamp.baked_forward.z : 1.0f;
-		values[23] = p_lamp.spot ? p_lamp.baked_inverse_tangent : 0.0f;
-		const Vector3 delta = p_lamp.position - p_lamp.baked_origin;
+	if (lamp.casts && lamp.map_valid) {
+		values[16] = map_near_plane(lamp.baked_range);
+		values[18] = float(lamp.map_origin.y);
+		values[19] = lamp.baked_range;
+		values[20] = lamp.spot ? lamp.baked_forward.x : 0.0f;
+		values[21] = lamp.spot ? lamp.baked_forward.y : 0.0f;
+		values[22] = lamp.spot ? lamp.baked_forward.z : 1.0f;
+		values[23] = lamp.spot ? lamp.baked_inverse_tangent : 0.0f;
+		const Vector3 delta = lamp.position - lamp.baked_origin;
 		values[24] = delta.x;
 		values[25] = delta.y;
 		values[26] = delta.z;
-		values[27] = float(p_lamp.map_origin.x / MAP_ORIGIN_UNIT);
-		values[28] = p_lamp.spot ? p_lamp.baked_up.x : 0.0f;
-		values[29] = p_lamp.spot ? p_lamp.baked_up.y : 1.0f;
-		values[30] = p_lamp.spot ? p_lamp.baked_up.z : 0.0f;
-		values[31] = float(p_lamp.map_side);
+		values[27] = float(lamp.map_origin.x);
+		values[28] = lamp.spot ? lamp.baked_up.x : 0.0f;
+		values[29] = lamp.spot ? lamp.baked_up.y : 1.0f;
+		values[30] = lamp.spot ? lamp.baked_up.z : 0.0f;
+		values[31] = float(lamp.map_side);
 	}
-	uint16_t halves[SLOT_FLOATS];
-	for (uint32_t i = 3; i < SLOT_FLOATS; i++) {
-		halves[i] = Math::make_half_float(values[i]);
-	}
-	uint8_t *data = data_bytes.ptrw();
-	const int dx = CELL_DIMS.x;
-	const int dy = CELL_DIMS.y;
-	for (uint32_t i = 0; i < p_lamp.cells.size(); i++) {
-		const uint32_t cell = p_lamp.cells[i];
-		const int cx = cell % dx;
-		const int cy = (cell / dx) % dy;
-		const int cz = cell / (dx * dy);
-		// Центр ячейки считается от целых номеров: по той же причине, что и 1/r², смещение на границе шага не должно зависеть от положения окна.
-		halves[0] = Math::make_half_float(float(double(p_lamp.position.x) - (double(origin_cell.x + cx) + 0.5) * CELL_SIZE_EXACT));
-		halves[1] = Math::make_half_float(float(double(p_lamp.position.y) - (double(origin_cell.y + cy) + 0.5) * CELL_SIZE_EXACT));
-		halves[2] = Math::make_half_float(float(double(p_lamp.position.z) - (double(origin_cell.z + cz) + 0.5) * CELL_SIZE_EXACT));
-		memcpy(data + uint64_t(p_lamp.cell_slots[i]) * SLOT_TEXELS * BYTES_PER_DATA_TEXEL, halves, sizeof(halves));
-	}
+	const uint64_t row = p_index / LAMPS_PER_DATA_ROW;
+	const uint64_t column = p_index % LAMPS_PER_DATA_ROW;
+	memcpy(data_bytes.ptrw() + (row * DATA_WIDTH + column * SLOT_TEXELS) * BYTES_PER_DATA_TEXEL, values, sizeof(values));
 }
 
 void LocalLightsWorld::_publish_globals() {
@@ -1278,12 +1273,14 @@ void LocalLightsWorld::_publish_globals() {
 	globals_published = true;
 	RendererRD::MaterialStorage *materials = RendererRD::MaterialStorage::get_singleton();
 	materials->global_shader_parameter_set("local_light_origin", origin);
-	materials->global_shader_parameter_set("local_light_cell_size", CELL_SIZE);
 	materials->global_shader_parameter_set("local_light_inverse_cell_size", 1.0f / CELL_SIZE);
 	materials->global_shader_parameter_set("local_light_dims", CELL_DIMS);
 	materials->global_shader_parameter_set("local_light_grid", grid_texture);
 	if (data_texture.is_valid()) {
 		materials->global_shader_parameter_set("local_light_data", data_texture);
+	}
+	if (list_texture.is_valid()) {
+		materials->global_shader_parameter_set("local_light_list", list_texture);
 	}
 	if (map_atlas_texture.is_valid()) {
 		materials->global_shader_parameter_set("local_light_map_atlas", map_atlas_texture);
@@ -1361,7 +1358,7 @@ void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
 		rd->capture_timestamp("LocalLights ratio");
 	}
 	RID ratio_set = uniform_sets->get_cache(ratio_rd_shader, 0, sampled_uniform(0, sampler, depth), sampled_uniform(1, sampler, grid_rd), sampled_uniform(2, sampler, data_rd),
-			sampled_uniform(3, sampler, map_atlas.is_valid() ? map_atlas : no_atlas), buffer_uniform(5, params_buffer), image_uniform(7, ratio_surface));
+			sampled_uniform(3, sampler, map_atlas.is_valid() ? map_atlas : no_atlas), sampled_uniform(4, sampler, list_rd), buffer_uniform(5, params_buffer), image_uniform(7, ratio_surface));
 	RD::ComputeListID compute = rd->compute_list_begin();
 	rd->compute_list_bind_compute_pipeline(compute, ratio_pipeline);
 	rd->compute_list_bind_uniform_set(compute, ratio_set, 0);
@@ -1390,11 +1387,11 @@ Dictionary LocalLightsWorld::memory_report() const {
 	report["atlasUsedHeight"] = atlas_used_height;
 	report["screenBytes"] = uint64_t(screen_size.x) * screen_size.y * (8 + 4);
 	report["gridBytes"] = uint64_t(grid_bytes.size());
-	report["dataBytes"] = uint64_t(data_bytes.size());
-	uint64_t cpu = uint64_t(grid_bytes.size()) + uint64_t(data_bytes.size());
+	report["dataBytes"] = uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
+	uint64_t cpu = uint64_t(grid_bytes.size()) + uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
 	cpu += lamps.get_capacity() * sizeof(Lamp);
 	for (const Lamp &lamp : lamps) {
-		cpu += (lamp.cells.get_capacity() + lamp.cell_slots.get_capacity()) * sizeof(uint32_t);
+		cpu += lamp.cells.get_capacity() * sizeof(uint32_t);
 	}
 	cpu += (cell_omni.get_capacity() + cell_spot.get_capacity() + cell_next.get_capacity() + filled_cells.get_capacity() + serve_order.get_capacity()) * sizeof(uint32_t);
 	cpu += caster_pool.get_capacity() * sizeof(CasterSurface) + cutout_pool.get_capacity() * sizeof(CasterCutout) + instance_casters.get_capacity() * sizeof(InstanceCasters) + lamp_casters.get_capacity() * sizeof(uint32_t) + map_shelves.get_capacity() * sizeof(MapShelf);

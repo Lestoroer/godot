@@ -83,7 +83,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		float specular_amount = 0.0f;
 		uint32_t caster_mask = 0;
 		LocalVector<uint32_t> cells;
-		LocalVector<uint32_t> cell_slots;
 		bool in_grid = false;
 		bool data_dirty = true;
 		uint64_t last_visible_frame = 0;
@@ -97,7 +96,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		int map_faces = 0;
 		bool map_valid = false;
 		Vector3 baked_origin;
-		float baked_inverse_range = 0.0f;
+		float baked_range = 0.0f;
 		Vector3 baked_up;
 		Vector3 baked_forward;
 		float baked_inverse_tangent = 0.0f;
@@ -225,25 +224,28 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	LocalVector<Instance *> scenario_lamps;
 	LocalVector<uint32_t> serve_order;
 
-	// Сетка: окно по миру и блоки ламп по ячейкам.
+	// Сетка: окно по миру и список ламп ячеек; таблица ламп: одна строка данных на лампу, по её индексу в lamps.
 	Vector3 origin;
-	Vector3i origin_cell;
 	bool origin_valid = false;
 	Vector3 window_center;
 	bool repack_needed = false;
 	bool grid_changed = false;
 	bool data_changed = false;
 	uint32_t data_rows = 0;
+	uint32_t list_rows = 0;
 	Vector<uint8_t> grid_bytes;
 	Vector<uint8_t> data_bytes;
+	Vector<uint8_t> list_bytes;
 	LocalVector<uint32_t> cell_omni;
 	LocalVector<uint32_t> cell_spot;
 	LocalVector<uint32_t> cell_next;
 	LocalVector<uint32_t> filled_cells;
 	RID grid_rd;
 	RID data_rd;
+	RID list_rd;
 	RID grid_texture;
 	RID data_texture;
+	RID list_texture;
 
 	// Экранные буферы: один набор по наибольшему вьюпорту, каждый вид перезаписывает его перед своим проходом.
 	Size2i screen_size;
@@ -270,8 +272,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	bool _place_map(Lamp &r_lamp, int p_side);
 	void _free_map_place(const Lamp &p_lamp);
 	void _ensure_atlas_height();
-	RID _pipeline_for(RD::VertexFormatID p_format);
-	RID _cutout_pipeline_for(RD::VertexFormatID p_format);
+	RID _pipeline_for(HashMap<RD::VertexFormatID, RID> &r_pipelines, RID p_shader, RD::VertexFormatID p_format);
 	bool _read_cutout(RID p_material, const void *p_shader_data, void *p_surface, CasterCutout &r_cutout) const;
 	void _draw_cutout_surface(RD::DrawListID p_list, const CasterSurface &p_caster, const Transform3D &p_light_from_world, float p_extent, const float *p_depth);
 	void _collect_scenario_lamps();
@@ -282,7 +283,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _record_lamp(const Lamp &p_lamp, const LocalLightsSettings &p_settings);
 	void _update_grid();
 	void _repack();
-	void _write_lamp_data(const Lamp &p_lamp);
+	void _ensure_data_table();
+	void _write_lamp_data(uint32_t p_index);
 	void _publish_globals();
 	void _ensure_screen_textures(const Size2i &p_size);
 	RID _wrap_texture(RID p_rd_texture, RSE::TextureLayeredType p_type) const;

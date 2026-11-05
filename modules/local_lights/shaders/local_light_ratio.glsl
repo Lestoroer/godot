@@ -16,6 +16,7 @@ layout(set = 0, binding = 0) uniform sampler2D depth_buffer;
 layout(set = 0, binding = 1) uniform sampler2D cull_grid;
 layout(set = 0, binding = 2) uniform sampler2D cull_data;
 layout(set = 0, binding = 3) uniform sampler2D shadow_atlas;
+layout(set = 0, binding = 4) uniform sampler2D lamp_list;
 // Отношение — затенённый свет ламп к незатенённому по каналам: лампа в тени гасит только свой цвет.
 layout(rg32ui, set = 0, binding = 7) uniform restrict writeonly uimage2D ratio_surface;
 layout(set = 0, binding = 5, std140) uniform Params {
@@ -29,10 +30,13 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	ivec4 view_size;
 } params;
 
-const int INDEX_W_LOG2 = 11;
-const int INDEX_W_MASK = (1 << INDEX_W_LOG2) - 1;
+// Список ламп ячеек: индекс лампы в текселе. Таблица ламп: восемь текселей на лампу, в строке 256 ламп.
+const int LIST_WIDTH_LOG2 = 11;
+const int LIST_WIDTH_MASK = (1 << LIST_WIDTH_LOG2) - 1;
 const int SLOT_SHIFT = 3;
-const float MIN_FACING_WEIGHT = 0.01;
+const int LAMPS_PER_ROW_LOG2 = 8;
+const int LAMPS_PER_ROW_MASK = (1 << LAMPS_PER_ROW_LOG2) - 1;
+const float MIN_FACING_WEIGHT = 0.000001;
 
 vec3 view_point_at(ivec2 pixel, ivec2 size) {
 	float depth = texelFetch(depth_buffer, pixel, 0).r;
@@ -61,97 +65,111 @@ vec3 surface_normal_at(ivec2 pixel, ivec2 size, vec3 point) {
 
 // Запас грани сверх её ребра, тексели: контракт с local_lights_world.cpp.
 const float CUBE_GUARD_TEXELS = 4.0;
-// Единица начала плитки в атласе: контракт с local_lights_world.cpp.
-const float MAP_ORIGIN_UNIT = 32.0;
-// Доля текселя в смещении вдоль луча: складки мельче текселя карта не различает. Контракт с local_lights_inc.gdshaderinc, как и две следующие.
-const float DEPTH_OFFSET_TEXELS = 0.125;
+// Запас вдоль луча меньше самой тонкой стенки 5 мм. Доля текселя добавляется только до предела, иначе вдали запас станет толще стенки.
+const float WALL_MARGIN_METERS = 0.003;
+const float BEND_MARGIN_TEXELS = 0.125;
+const float BEND_MARGIN_LIMIT_METERS = 0.0015;
+// Сдвиг направления выборки по нормали на тексель убирает самозатенение под любым наклоном и не пускает свет сквозь стенку: у обратной стороны он ведёт глубже в тень.
+const float NORMAL_OFFSET_TEXELS = 1.0;
 // Разброс глубин в пределах стольких текселей считается одной поверхностью: наклон до 70°.
 const float SAME_SURFACE_TEXELS = 4.0;
+// Насколько тексель может отойти от плоскости точки и считаться её поверхностью.
+const float OWN_SURFACE_TEXELS = 0.25;
 const float MAP_DEPTH_STEPS = 65535.0;
-const float THIN_WALL_TEXEL_METERS = 0.02;
 
-// Ближняя плоскость карты: контракт с map_near_plane в local_lights_world.cpp.
-float map_near_plane(float range) {
-	return max(min(range / 64.0, 0.03), range * range / (65536.0 * 0.0125));
-}
-
-// Открытая доля по одному gather. axis_depth — глубина точки вдоль оси карты, texel_size — размер текселя на единицу этой глубины.
-// Смещение — метры из данных лампы, доля текселя и половина шага записанной глубины: шаг растёт как квадрат расстояния, без него на стенах появляются кольца.
-// Записанный ноль значит кастер ближе ближней плоскости, его глубина неизвестна: точка за этой плоскостью закрыта, смещение тут не даёт запаса.
-float compare_depth(vec2 atlas_texel, float axis_depth, float axis_cosine, float depth_offset, float texel_size, float range) {
+// Открытая доля лампы по четырём ближайшим текселям карты. sample_tangent — направление выборки в осях карты (x/z, y/z), texel_tangent — его шаг на тексель,
+// axis_depth — глубина точки вдоль оси карты; local_point и local_normal — точка и её нормаль в этих же осях.
+float open_share(vec2 atlas_texel, vec2 sample_tangent, float texel_tangent, float axis_depth, float axis_cosine, vec3 local_point, vec3 local_normal, float near_plane, float range) {
 	// Выборка точно между четырьмя центрами: округление координаты в gather не выбирает другую четвёрку, чем считают веса.
 	vec2 below = floor(atlas_texel - 0.5);
 	vec4 stored = textureGather(shadow_atlas, (below + 1.0) / vec2(textureSize(shadow_atlas, 0)), 0);
-	float near_plane = map_near_plane(range);
-	float depth_bias = depth_offset * axis_cosine + axis_depth * (DEPTH_OFFSET_TEXELS * texel_size + axis_depth / (near_plane * MAP_DEPTH_STEPS * 2.0));
-	float compared_distance = axis_depth - depth_bias;
+	// Половина шага записанной глубины: шаг растёт как квадрат расстояния, без него на стенах появляются кольца.
+	float margin = (WALL_MARGIN_METERS + min(BEND_MARGIN_TEXELS * texel_tangent * axis_depth, BEND_MARGIN_LIMIT_METERS)) * axis_cosine + axis_depth * axis_depth / (near_plane * MAP_DEPTH_STEPS * 2.0);
+	float compared_depth = axis_depth - margin;
 	vec4 depth = 1.0 / ((1.0 - stored) / near_plane + stored / range);
-	depth = mix(depth, vec4(near_plane - depth_bias), vec4(lessThanEqual(stored, vec4(0.0))));
+	// Записанный ноль значит кастер ближе ближней плоскости, его глубина неизвестна: точка за этой плоскостью закрыта.
+	depth = mix(depth, vec4(near_plane - margin), vec4(lessThanEqual(stored, vec4(0.0))));
 	vec2 fraction = atlas_texel - 0.5 - below;
 	vec4 weights = vec4((1.0 - fraction.x) * fraction.y, fraction.x * fraction.y, fraction.x * (1.0 - fraction.y), (1.0 - fraction.x) * (1.0 - fraction.y));
-	// Четыре глубины одной поверхности: сравнивается её глубина точно в точке, записанное значение на плоскости линейно. Соседний тексель наклонной стенки
-	// глубже точки за ней, поэтому раздельное сравнение пропускало бы свет, а сама поверхность затеняла бы себя. На разрыве глубин — PCF 2×2.
-	float nearest = min(min(depth.x, depth.y), min(depth.z, depth.w));
-	float farthest = max(max(depth.x, depth.y), max(depth.z, depth.w));
-	float same_surface_depth = SAME_SURFACE_TEXELS * texel_size * axis_depth;
-	if (farthest - nearest < same_surface_depth) {
+	float spread = max(max(depth.x, depth.y), max(depth.z, depth.w)) - min(min(depth.x, depth.y), min(depth.z, depth.w));
+	if (spread < SAME_SURFACE_TEXELS * texel_tangent * axis_depth) {
+		// Одна поверхность: записанное значение на плоскости линейно, поэтому сравнивается её глубина точно в точке. Иначе соседний тексель наклонной
+		// стенки оказался бы глубже точки за ней и пропустил свет.
 		float stored_at_point = dot(stored, weights);
-		return 1.0 / ((1.0 - stored_at_point) / near_plane + stored_at_point / range) >= compared_distance ? 1.0 : 0.0;
+		return 1.0 / ((1.0 - stored_at_point) / near_plane + stored_at_point / range) >= compared_depth ? 1.0 : 0.0;
 	}
-	float open_share = dot(vec4(greaterThanEqual(depth, vec4(compared_distance))), weights);
-	// Тексель крупнее тонкой стенки: её край занимает один-два текселя, и в соседних луч проходит мимо неё и мимо самой точки. Если поверхности точки нет ни в одном
-	// из четырёх, а преграда есть, точка за преградой. Вблизи лампы правило не нужно и вредно: у тонких предметов своя поверхность тоже не попадает в тексели.
-	if (open_share < 1.0 && texel_size * axis_depth > THIN_WALL_TEXEL_METERS && !any(lessThan(abs(depth - vec4(axis_depth)), vec4(same_surface_depth)))) {
-		return 0.0;
+	// Разрыв глубин. Если открытый тексель лежит на плоскости самой точки, это край настоящей тени, его сгладит доля открытых текселей.
+	// Если нет, точка за преградой или у края чужого силуэта, а открытые тексели смотрят мимо неё: закрывает любой более близкий тексель.
+	vec4 open_texels = vec4(greaterThanEqual(depth, vec4(compared_depth)));
+	vec4 ray_x = sample_tangent.x + (vec4(0.0, 1.0, 1.0, 0.0) - fraction.x) * texel_tangent;
+	vec4 ray_y = sample_tangent.y + (vec4(1.0, 1.0, 0.0, 0.0) - fraction.y) * texel_tangent;
+	vec4 plane_depth = dot(local_normal, local_point) / (local_normal.x * ray_x + local_normal.y * ray_y + local_normal.z);
+	vec4 own_texels = vec4(lessThanEqual(abs(depth - plane_depth), vec4(margin + OWN_SURFACE_TEXELS * texel_tangent * axis_depth)));
+	if (dot(open_texels, own_texels) <= 0.0) {
+		return all(greaterThan(open_texels, vec4(0.5))) ? 1.0 : 0.0;
 	}
-	return open_share;
+	return dot(open_texels, weights);
 }
 
-// t4.xy: смещение вдоль луча, метры, и сдвиг направления по нормали, тексели; t6.w и t4.z: начало места в атласе, side: сторона плитки. Контракт с local_lights_world.cpp.
+// t4.x — ближняя плоскость карты, t4.w — её радиус; t6.w и t4.z — начало места в атласе; side — сторона плитки. Контракт с local_lights_world.cpp.
 float omni_visibility(vec4 t4, vec4 t6, float side, vec3 to_point, vec3 surface_normal) {
 	vec3 p = to_point + t6.xyz;
 	float reach = length(p);
-	vec3 direction = p / reach;
-	float texel_size = 2.0 / side;
-	vec3 sample_direction = normalize(direction + surface_normal * t4.y * texel_size);
+	float face_span = 1.0 + CUBE_GUARD_TEXELS / side;
+	float texel_tangent = 2.0 * face_span / side;
+	vec3 sample_direction = normalize(p / reach + surface_normal * NORMAL_OFFSET_TEXELS * texel_tangent);
 	vec3 magnitude = abs(sample_direction);
 	// Оси граней — контракт с local_lights_world.cpp.
 	float face;
 	vec3 local;
+	vec3 local_point;
+	vec3 local_normal;
 	if (magnitude.x >= magnitude.y && magnitude.x >= magnitude.z) {
 		face = sample_direction.x > 0.0 ? 0.0 : 1.0;
+		float side_sign = sign(sample_direction.x);
 		local = vec3(sample_direction.z, sample_direction.y, magnitude.x);
+		local_point = vec3(p.z, p.y, side_sign * p.x);
+		local_normal = vec3(surface_normal.z, surface_normal.y, side_sign * surface_normal.x);
 	} else if (magnitude.y >= magnitude.z) {
 		face = sample_direction.y < 0.0 ? 2.0 : 5.0;
+		float side_sign = sign(sample_direction.y);
 		local = vec3(sample_direction.x, sample_direction.z, magnitude.y);
+		local_point = vec3(p.x, p.z, side_sign * p.y);
+		local_normal = vec3(surface_normal.x, surface_normal.z, side_sign * surface_normal.y);
 	} else {
 		face = sample_direction.z > 0.0 ? 3.0 : 4.0;
+		float side_sign = sign(sample_direction.z);
 		local = vec3(sample_direction.x, sample_direction.y, magnitude.z);
+		local_point = vec3(p.x, p.y, side_sign * p.z);
+		local_normal = vec3(surface_normal.x, surface_normal.y, side_sign * surface_normal.z);
 	}
-	vec2 uv = local.xy / local.z / (1.0 + CUBE_GUARD_TEXELS / side) * 0.5 + 0.5;
-	return compare_depth(vec2(t6.w, t4.z) * MAP_ORIGIN_UNIT + vec2(face * side, 0.0) + uv * side, reach * local.z, local.z, t4.x, texel_size, 1.0 / t4.w);
+	vec2 tangent = local.xy / local.z;
+	vec2 uv = tangent / face_span * 0.5 + 0.5;
+	return open_share(vec2(t6.w, t4.z) + vec2(face * side, 0.0) + uv * side, tangent, texel_tangent, reach * local.z, local.z, local_point, local_normal, t4.x, t4.w);
 }
 
-// Смещения как у Spot в Godot: нормаль сдвигает саму точку пропорционально расстоянию; shadow_bias / 100 прибавлен к
-// перспективной глубине с ближней плоскостью SPOT_SHADOW_NEAR, поэтому в метрах он растёт вместе с расстоянием.
 float spot_visibility(ivec2 sc, vec4 t4, vec4 t6, vec3 to_point, vec3 surface_normal) {
 	vec3 p = to_point + t6.xyz;
 	float reach = length(p);
 	vec4 t5 = texelFetch(cull_data, sc + ivec2(5, 0), 0);
 	vec4 t7 = texelFetch(cull_data, sc + ivec2(7, 0), 0);
 	float side = t7.w;
-	float texel_size = 2.0 / (side * t5.w);
-	vec3 sample_direction = normalize(p / reach + surface_normal * t4.y * texel_size);
-	vec3 point = vec3(dot(sample_direction, cross(t7.xyz, t5.xyz)), dot(sample_direction, t7.xyz), dot(sample_direction, t5.xyz));
-	if (point.z <= 0.0) {
+	float texel_tangent = 2.0 / (side * t5.w);
+	vec3 sample_direction = normalize(p / reach + surface_normal * NORMAL_OFFSET_TEXELS * texel_tangent);
+	vec3 map_right = cross(t7.xyz, t5.xyz);
+	vec3 local = vec3(dot(sample_direction, map_right), dot(sample_direction, t7.xyz), dot(sample_direction, t5.xyz));
+	if (local.z <= 0.0) {
 		return 0.0;
 	}
-	vec2 ndc = point.xy * (t5.w / point.z);
+	vec2 tangent = local.xy / local.z;
+	vec2 ndc = tangent * t5.w;
 	if (any(greaterThan(abs(ndc), vec2(1.0)))) {
 		return 0.0;
 	}
+	vec3 local_point = vec3(dot(p, map_right), dot(p, t7.xyz), dot(p, t5.xyz));
+	vec3 local_normal = vec3(dot(surface_normal, map_right), dot(surface_normal, t7.xyz), dot(surface_normal, t5.xyz));
 	vec2 uv = ndc * 0.5 + 0.5;
-	return compare_depth(vec2(t6.w, t4.z) * MAP_ORIGIN_UNIT + uv * side, reach * point.z, point.z, t4.x, texel_size, 1.0 / t4.w);
+	return open_share(vec2(t6.w, t4.z) + uv * side, tangent, texel_tangent, reach * local.z, local.z, local_point, local_normal, t4.x, t4.w);
 }
 
 // Байты 1..255: ноль остаётся за пикселем без света ламп.
@@ -187,8 +205,6 @@ void main() {
 	float unshadowed = 0.0;
 	vec3 unshadowed_color = vec3(0.0);
 	vec3 shadowed_color = vec3(0.0);
-	vec3 behind_unshadowed_color = vec3(0.0);
-	vec3 behind_shadowed_color = vec3(0.0);
 	float distance_light_sum = 0.0;
 	float largest_light = 0.0;
 	if (all(lessThan(uvec3(cell), uvec3(params.cull_dims.xyz)))) {
@@ -196,21 +212,21 @@ void main() {
 		int offset = int(members.r);
 		int omni_count = int(members.g);
 		int spot_count = int(members.b);
-		vec3 point_in_cell = relative - (vec3(cell) + vec3(0.5)) * cell_size;
 		for (int member = 0; member < omni_count + spot_count; member++) {
-			int texel = (offset + member) << SLOT_SHIFT;
-			ivec2 sc = ivec2(texel & INDEX_W_MASK, texel >> INDEX_W_LOG2);
+			int list_index = offset + member;
+			int lamp = int(texelFetch(lamp_list, ivec2(list_index & LIST_WIDTH_MASK, list_index >> LIST_WIDTH_LOG2), 0).r);
+			ivec2 sc = ivec2((lamp & LAMPS_PER_ROW_MASK) << SLOT_SHIFT, lamp >> LAMPS_PER_ROW_LOG2);
 			vec4 position_and_range = texelFetch(cull_data, sc, 0);
-			vec3 to_light = position_and_range.xyz - point_in_cell;
+			vec3 to_light = position_and_range.xyz - world_point;
 			float distance_squared = dot(to_light, to_light);
 			float range_ratio = distance_squared * position_and_range.w;
 			if (range_ratio >= 1.0) {
 				continue;
 			}
 			float inverse_distance = inversesqrt(max(distance_squared, 1e-8));
-			// Нормаль шейдинга сглажена и бывает обращена к лампе там, где грань уже нет: такой точке тоже нужно отношение.
-			float geometric_facing = dot(world_normal, to_light) * inverse_distance;
-			float facing = max(geometric_facing, MIN_FACING_WEIGHT);
+			// Лампа за плоскостью точки на отношение не влияет, пока есть лампа перед ней: иначе тень других ламп разбавлялась бы светом, которого нет.
+			// Вес не нулевой: нормаль шейдинга сглажена и бывает обращена к лампе там, где грань уже нет, и такой точке тоже нужно отношение.
+			float facing = max(dot(world_normal, to_light) * inverse_distance, MIN_FACING_WEIGHT);
 			vec4 color_decay = texelFetch(cull_data, sc + ivec2(2, 0), 0);
 			float window = 1.0 - range_ratio * range_ratio;
 			float attenuation = window * window * pow(max(distance_squared * inverse_distance, 0.0001), -color_decay.w);
@@ -234,13 +250,8 @@ void main() {
 				visibility = is_spot ? spot_visibility(sc, t4, t6, -to_light, world_normal) : omni_visibility(t4, t6, texelFetch(cull_data, sc + ivec2(7, 0), 0).w, -to_light, world_normal);
 			}
 			unshadowed += light_weight;
-			if (geometric_facing > 0.0) {
-				unshadowed_color += light_color;
-				shadowed_color += light_color * visibility;
-			} else {
-				behind_unshadowed_color += light_color;
-				behind_shadowed_color += light_color * visibility;
-			}
+			unshadowed_color += light_color;
+			shadowed_color += light_color * visibility;
 			// Несколько ламп дают один радиус: вес — незатенённый свет лампы в точке. Он известен и в свету, и в тени
 			// и меняется плавно, поэтому радиус не рвёт форму тени.
 			distance_light_sum += light_weight * sqrt(distance_squared);
@@ -252,11 +263,6 @@ void main() {
 		return;
 	}
 	float radius = clamp(params.blur.x * distance_light_sum / unshadowed * (1.0 + params.blur.z * (1.0 - largest_light / unshadowed)), MIN_RADIUS_METERS, MAX_RADIUS_METERS);
-	// Лампа за поверхностью за тонкой стенкой может показаться открытой: сравнение знает глубину только с точностью до текселя и смещения.
-	// Пока в точке есть лампа перед поверхностью, отношение считается только по таким лампам. Лампы за поверхностью важны одни: сглаженная нормаль бывает обращена к ним.
-	bvec3 only_behind = lessThanEqual(unshadowed_color, vec3(0.0));
-	unshadowed_color = mix(unshadowed_color, behind_unshadowed_color, only_behind);
-	shadowed_color = mix(shadowed_color, behind_shadowed_color, only_behind);
 	// Канал без света ламп ничего не умножает: единица не тянет соседей в темноту при размытии.
 	vec3 ratio = mix(vec3(1.0), shadowed_color / unshadowed_color, greaterThan(unshadowed_color, vec3(0.0)));
 	uint packed_depth = uint(round(clamp(-view_point.z / SURFACE_DEPTH_RANGE_METERS, 0.0, 1.0) * 65535.0));

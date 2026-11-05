@@ -132,7 +132,6 @@ void LocalLights::set_caster_culling(bool p_enabled) {
 }
 
 void LocalLights::set_map_sizes(int p_omni_face, int p_spot_tile) {
-	ERR_FAIL_COND_MSG(p_omni_face % 32 != 0 || p_spot_tile % 32 != 0, "Сторона плитки локального света кратна 32: начало плитки хранится в этих единицах.");
 	settings.omni_face_size = p_omni_face;
 	settings.spot_tile_size = p_spot_tile;
 }
