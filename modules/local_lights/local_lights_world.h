@@ -101,7 +101,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		Vector3 baked_forward;
 		// Тангенс половины угла снимка Spot.
 		float baked_extent = 0.0f;
-		float baked_inverse_tangent = 0.0f;
 		// Кастеры текущего снимка в общем пуле.
 		uint32_t caster_first = 0;
 		uint32_t caster_count = 0;

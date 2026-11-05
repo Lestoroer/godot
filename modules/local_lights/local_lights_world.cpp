@@ -756,7 +756,6 @@ void LocalLightsWorld::_draw_cutout_surface(RD::DrawListID p_list, const CasterS
 	rd->draw_list_draw(p_list, p_caster.index_array.is_valid(), 1);
 }
 
-// Снимаемая поза Spot считается здесь один раз: она нужна и отбору, и записи, и данным лампы.
 void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance, bool p_cull) {
 	r_lamp.caster_first = lamp_casters.size();
 	const InstanceLightData *light = static_cast<const InstanceLightData *>(p_instance->base_data);
@@ -766,14 +765,8 @@ void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance,
 	const uint32_t all_faces = (1u << r_lamp.map_faces) - 1;
 	Vector3 cone_normals[4];
 	if (r_lamp.spot) {
-		const SpotMapAxes axes = spot_map_axes(r_lamp.axis, r_lamp.angle);
-		r_lamp.baked_right = axes.right;
-		r_lamp.baked_up = axes.up;
-		r_lamp.baked_forward = r_lamp.axis;
-		r_lamp.baked_extent = axes.extent;
-		r_lamp.baked_inverse_tangent = 1.0f / axes.extent;
 		// Лучи вне конуса не читаются: кастер отсекается по конусу с небольшим запасом, плитка шире.
-		pyramid_normals(axes.right, axes.up, r_lamp.axis, Math::tan(Math::deg_to_rad(MIN(r_lamp.angle + 1.0f, SPOT_MAP_MAX_HALF_ANGLE_DEGREES))), cone_normals);
+		pyramid_normals(r_lamp.baked_right, r_lamp.baked_up, r_lamp.baked_forward, Math::tan(Math::deg_to_rad(MIN(r_lamp.angle + 1.0f, SPOT_MAP_MAX_HALF_ANGLE_DEGREES))), cone_normals);
 	}
 	for (const Instance *geometry : light->geometries) {
 		if (geometry->base_type != RSE::INSTANCE_MESH || geometry->cast_shadows == RSE::SHADOW_CASTING_SETTING_OFF || !(geometry->layer_mask & r_lamp.caster_mask)) {
@@ -962,6 +955,14 @@ void LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLights
 		}
 		const Instance *instance = scene_cull()->instance_owner.get_or_null(lamp.instance);
 		ERR_CONTINUE(!instance);
+		if (lamp.spot) {
+			// Снимаемая поза считается один раз: она нужна отбору, записи и данным лампы.
+			const SpotMapAxes axes = spot_map_axes(lamp.axis, lamp.angle);
+			lamp.baked_right = axes.right;
+			lamp.baked_up = axes.up;
+			lamp.baked_forward = lamp.axis;
+			lamp.baked_extent = axes.extent;
+		}
 		_gather_casters(lamp, instance, p_settings.caster_culling);
 		frame_metrics.served_wait_frames = MAX(frame_metrics.served_wait_frames, uint32_t(p_frame - lamp.queued_frame));
 	}
@@ -1282,7 +1283,7 @@ void LocalLightsWorld::_write_lamp_data(uint32_t p_index) {
 		values[20] = lamp.spot ? lamp.baked_forward.x : 0.0f;
 		values[21] = lamp.spot ? lamp.baked_forward.y : 0.0f;
 		values[22] = lamp.spot ? lamp.baked_forward.z : 1.0f;
-		values[23] = lamp.spot ? lamp.baked_inverse_tangent : 0.0f;
+		values[23] = lamp.spot ? 1.0f / lamp.baked_extent : 0.0f;
 		const Vector3 delta = lamp.position - lamp.baked_origin;
 		values[24] = delta.x;
 		values[25] = delta.y;
