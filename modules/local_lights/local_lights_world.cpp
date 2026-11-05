@@ -375,10 +375,9 @@ void LocalLightsWorld::_refresh_lamp(Lamp &r_lamp, const Instance *p_instance, u
 	r_lamp.casts = storage->light_has_shadow(base);
 	r_lamp.data_dirty = true;
 	if (form_changed && origin_valid) {
-		LocalVector<uint32_t> cells;
-		_compute_cells(r_lamp, cells);
-		if (cells.size() != r_lamp.cells.size() || (cells.size() > 0 && memcmp(cells.ptr(), r_lamp.cells.ptr(), cells.size() * sizeof(uint32_t)) != 0)) {
-			r_lamp.cells = cells;
+		_compute_cells(r_lamp, fresh_cells);
+		if (fresh_cells.size() != r_lamp.cells.size() || (fresh_cells.size() > 0 && memcmp(fresh_cells.ptr(), r_lamp.cells.ptr(), fresh_cells.size() * sizeof(uint32_t)) != 0)) {
+			SWAP(r_lamp.cells, fresh_cells);
 			if (r_lamp.in_grid) {
 				repack_needed = true;
 			}

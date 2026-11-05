@@ -240,6 +240,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	LocalVector<uint32_t> cell_spot;
 	LocalVector<uint32_t> cell_next;
 	LocalVector<uint32_t> filled_cells;
+	// Ячейки обновляемой лампы до сравнения с её текущими: лампа в движении считает их каждый кадр.
+	LocalVector<uint32_t> fresh_cells;
 	RID grid_rd;
 	RID data_rd;
 	RID list_rd;
