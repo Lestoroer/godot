@@ -1189,14 +1189,14 @@ void LocalLightsWorld::_update_grid() {
 		rd->buffer_update(list_buffer, 0, list_bytes.size(), list_bytes.ptr());
 		grid_changed = false;
 		frame_metrics.grid_uploads++;
-		frame_metrics.uploaded_bytes += grid_bytes.size() + list_bytes.size();
+		frame_metrics.uploaded_bytes += grid_bytes.size() + list_bytes.size() * 2;
 	}
 	if (data_changed) {
 		rd->texture_update(data_rd, 0, data_bytes);
 		rd->buffer_update(data_buffer, 0, data_bytes.size(), data_bytes.ptr());
 		data_changed = false;
 		frame_metrics.data_uploads++;
-		frame_metrics.uploaded_bytes += data_bytes.size();
+		frame_metrics.uploaded_bytes += data_bytes.size() * 2;
 	}
 }
 

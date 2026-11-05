@@ -26,9 +26,9 @@ float view_z_of(uint surface) {
 	return -float(surface & 65535u) / 65535.0 * SURFACE_DEPTH_RANGE_METERS;
 }
 
-// Строки z и шаблон матрицы проекции здесь не нужны: хватает x, y и w.
+// Обе проекции без наклона: из матрицы нужны только x, y и w.
 vec2 screen_position_of(vec3 view_point) {
-	vec2 clip = params.projection[0].x * vec2(view_point.x, 0.0) + vec2(0.0, params.projection[1].y * view_point.y) + params.projection[2].xy * view_point.z + params.projection[3].xy;
+	vec2 clip = vec2(params.projection[0].x, params.projection[1].y) * view_point.xy + params.projection[2].xy * view_point.z + params.projection[3].xy;
 	float clip_w = params.projection[2][3] * view_point.z + params.projection[3][3];
 	return (clip / clip_w + 1.0) / ndc_per_pixel;
 }
