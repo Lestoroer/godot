@@ -683,6 +683,11 @@ Dictionary RendererSceneCull::instance_get_deformed_surface(RID p_instance, int 
 }
 
 void RendererSceneCull::_instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies, bool p_surface_cache) const {
+	// lestoroer#local-lights: GI не учитывает лампы модуля, поэтому их перемещение ему не сообщается. Смену базы и параметров он получает:
+	// после неё лампа может перестать принадлежать модулю.
+	if (p_surface_cache && !p_update_dependencies && p_instance->base_type == RSE::INSTANCE_LIGHT && p_instance->scenario && _scenario_owns_local_light(p_instance->scenario, p_instance)) {
+		p_surface_cache = false;
+	}
 	if (p_surface_cache) {
 		_surface_cache_queue(p_instance, (p_update_aabb ? 2u : 4u) | (p_update_dependencies ? 1u : 0u));
 	}
