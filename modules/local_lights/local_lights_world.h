@@ -113,7 +113,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		AABB bounds;
 		RID vertex_array;
 		RID index_array;
-		RD::VertexFormatID format = 0;
+		RID pipeline;
 		Vector3 decode_position;
 		Vector3 decode_size;
 		uint32_t triangles = 0;
@@ -121,9 +121,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		int32_t cutout = -1;
 	};
 
-	// Поверхность в снимке лампы: индекс в caster_pool и грани, куда она попадает, по биту на грань.
+	// Поверхность в снимке лампы и грани, куда она попадает, по биту на грань.
 	struct LampCaster {
-		uint32_t surface = 0;
+		const CasterSurface *surface = nullptr;
 		uint32_t face_mask = 0;
 	};
 
@@ -138,11 +138,14 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		Vector2 uv_offset;
 	};
 
-	// Отрезок caster_pool с поверхностями экземпляра: лампы видят одни и те же предметы, поверхности собираются один раз за обход очереди.
+	// Поверхности экземпляра. Лампы видят одни и те же предметы, поэтому собираются они один раз и живут, пока сцена не поднимет версию экземпляра.
 	struct InstanceCasters {
+		RID instance;
+		uint64_t version = 0;
 		uint64_t gather_pass = 0;
-		uint32_t first = 0;
-		uint32_t count = 0;
+		// Кадр деформации меняет буфер вершин, а обычный параметр материала — вырез, и оба не поднимают версию экземпляра.
+		bool collect_every_pass = false;
+		LocalVector<CasterSurface> surfaces;
 	};
 
 	// Полка атласа: места одной высоты слева направо.
@@ -218,7 +221,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	float map_texel_size = -1.0f;
 	LocalVector<MapShelf> map_shelves;
 	HashMap<uint32_t, LocalVector<Vector2i>> free_map_rects;
-	LocalVector<CasterSurface> caster_pool;
+	// Вырезы текущего обхода очереди.
 	LocalVector<CasterCutout> cutout_pool;
 	// По локальному индексу RID экземпляра.
 	LocalVector<InstanceCasters> instance_casters;

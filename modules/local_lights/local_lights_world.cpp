@@ -732,7 +732,6 @@ bool LocalLightsWorld::_read_cutout(RID p_material, const void *p_shader_data, v
 
 void LocalLightsWorld::_draw_cutout_surface(RD::DrawListID p_list, const CasterSurface &p_caster, const Transform3D &p_light_from_world, float p_extent, const float *p_depth) {
 	const CasterCutout &cutout = cutout_pool[p_caster.cutout];
-	rd->draw_list_bind_render_pipeline(p_list, _pipeline_for(cutout_pipelines, cutout_rd_shader, p_caster.format));
 	rd->draw_list_bind_uniform_set(p_list, cutout.uniform_set, 0);
 	rd->draw_list_bind_vertex_array(p_list, p_caster.vertex_array);
 	if (p_caster.index_array.is_valid()) {
@@ -785,13 +784,12 @@ void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance,
 		if (geometry->base_type != RSE::INSTANCE_MESH || geometry->cast_shadows == RSE::SHADOW_CASTING_SETTING_OFF || !(geometry->layer_mask & r_lamp.caster_mask)) {
 			continue;
 		}
-		const InstanceCasters &surfaces = _instance_surfaces(geometry);
-		for (uint32_t index = surfaces.first; index < surfaces.first + surfaces.count; index++) {
+		for (const CasterSurface &surface : _instance_surfaces(geometry).surfaces) {
 			LampCaster entry;
-			entry.surface = index;
+			entry.surface = &surface;
 			entry.face_mask = all_faces;
 			if (p_cull) {
-				const AABB &bounds = caster_pool[index].bounds;
+				const AABB &bounds = surface.bounds;
 				const Vector3 low = bounds.position - position;
 				const Vector3 high = bounds.get_end() - position;
 				const Vector3 nearest(CLAMP(0.0f, low.x, high.x), CLAMP(0.0f, low.y, high.y), CLAMP(0.0f, low.z, high.z));
@@ -810,7 +808,7 @@ void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance,
 					continue;
 				}
 			}
-			if (caster_pool[index].cutout >= 0) {
+			if (surface.cutout >= 0) {
 				lamp_cutout_casters.push_back(entry);
 			} else {
 				lamp_casters.push_back(entry);
@@ -835,7 +833,13 @@ const LocalLightsWorld::InstanceCasters &LocalLightsWorld::_instance_surfaces(co
 		return entry;
 	}
 	entry.gather_pass = gather_pass;
-	entry.first = caster_pool.size();
+	if (!entry.collect_every_pass && entry.instance == p_geometry->self && entry.version == p_geometry->version) {
+		return entry;
+	}
+	entry.instance = p_geometry->self;
+	entry.version = p_geometry->version;
+	entry.collect_every_pass = p_geometry->mesh_instance.is_valid();
+	entry.surfaces.clear();
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
 	const uint64_t position_mask = 1ull << RSE::ARRAY_VERTEX;
 	const uint64_t cutout_mask = position_mask | (1ull << RSE::ARRAY_COLOR) | (1ull << RSE::ARRAY_TEX_UV);
@@ -862,24 +866,28 @@ const LocalLightsWorld::InstanceCasters &LocalLightsWorld::_instance_surfaces(co
 		caster.instance = p_geometry;
 		caster.bounds = p_geometry->transform.xform(local_bounds);
 		CasterCutout cutout;
-		if (shader_data && shader_data->uses_alpha_clip && _read_cutout(material, shader_data, surface, cutout)) {
-			caster.cutout = cutout_pool.size();
-			cutout_pool.push_back(cutout);
+		if (shader_data && shader_data->uses_alpha_clip) {
+			entry.collect_every_pass = true;
+			if (_read_cutout(material, shader_data, surface, cutout)) {
+				caster.cutout = cutout_pool.size();
+				cutout_pool.push_back(cutout);
+			}
 		}
 		const uint64_t attributes = caster.cutout >= 0 ? cutout_mask : position_mask;
+		RD::VertexFormatID format = 0;
 		if (p_geometry->mesh_instance.is_valid()) {
-			mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(p_geometry->mesh_instance, index, attributes, false, false, caster.vertex_array, caster.format);
+			mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(p_geometry->mesh_instance, index, attributes, false, false, caster.vertex_array, format);
 		} else {
-			mesh_storage->mesh_surface_get_vertex_arrays_and_format(surface, attributes, false, false, caster.vertex_array, caster.format);
+			mesh_storage->mesh_surface_get_vertex_arrays_and_format(surface, attributes, false, false, caster.vertex_array, format);
 		}
+		caster.pipeline = caster.cutout >= 0 ? _pipeline_for(cutout_pipelines, cutout_rd_shader, format) : _pipeline_for(caster_pipelines, caster_rd_shader, format);
 		caster.index_array = mesh_storage->mesh_surface_get_index_array(surface, 0);
 		const bool compressed = mesh_storage->mesh_surface_get_format(surface) & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES;
 		caster.decode_position = compressed ? local_bounds.position : Vector3();
 		caster.decode_size = compressed ? local_bounds.size : Vector3(1, 1, 1);
 		caster.triangles = mesh_storage->mesh_surface_get_vertices_drawn_count(surface) / 3;
-		caster_pool.push_back(caster);
+		entry.surfaces.push_back(caster);
 	}
-	entry.count = caster_pool.size() - entry.first;
 	return entry;
 }
 
@@ -913,7 +921,6 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 
 	uint64_t started = OS::get_singleton()->get_ticks_usec();
 	_apply_map_sizes(settings);
-	caster_pool.clear();
 	cutout_pool.clear();
 	lamp_casters.clear();
 	gather_pass++;
@@ -1044,7 +1051,7 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp) {
 	const int side = p_lamp.map_side;
 	const Rect2 region(p_lamp.map_origin, Vector2i(side * p_lamp.map_faces, side));
 	RD::DrawListID list = rd->draw_list_begin(map_framebuffer, RD::DRAW_CLEAR_DEPTH, VectorView<Color>(), 1.0f, 0, region);
-	RD::VertexFormatID bound_format = 0;
+	RID bound_pipeline;
 	CasterPush push;
 	push.projection[2] = 0.0f;
 	push.projection[3] = 0.0f;
@@ -1077,18 +1084,17 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp) {
 				frame_metrics.surfaces_culled++;
 				continue;
 			}
-			const CasterSurface &caster = caster_pool[casters[i].surface];
+			const CasterSurface &caster = *casters[i].surface;
 			frame_metrics.surfaces_drawn++;
 			frame_metrics.triangles_drawn += caster.triangles;
+			if (caster.pipeline != bound_pipeline) {
+				rd->draw_list_bind_render_pipeline(list, caster.pipeline);
+				bound_pipeline = caster.pipeline;
+			}
 			if (caster.cutout >= 0) {
 				_draw_cutout_surface(list, caster, light_from_world, extent, push.extra);
-				bound_format = 0;
 				frame_metrics.cutout_surfaces_drawn++;
 				continue;
-			}
-			if (caster.format != bound_format) {
-				rd->draw_list_bind_render_pipeline(list, _pipeline_for(caster_pipelines, caster_rd_shader, caster.format));
-				bound_format = caster.format;
 			}
 			rd->draw_list_bind_vertex_array(list, caster.vertex_array);
 			if (caster.index_array.is_valid()) {
@@ -1411,7 +1417,10 @@ Dictionary LocalLightsWorld::memory_report() const {
 		cpu += lamp.cells.get_capacity() * sizeof(uint32_t);
 	}
 	cpu += (cell_omni.get_capacity() + cell_spot.get_capacity() + cell_next.get_capacity() + filled_cells.get_capacity() + serve_order.get_capacity()) * sizeof(uint32_t);
-	cpu += caster_pool.get_capacity() * sizeof(CasterSurface) + cutout_pool.get_capacity() * sizeof(CasterCutout) + instance_casters.get_capacity() * sizeof(InstanceCasters) + lamp_casters.get_capacity() * sizeof(uint32_t) + map_shelves.get_capacity() * sizeof(MapShelf);
+	cpu += cutout_pool.get_capacity() * sizeof(CasterCutout) + instance_casters.get_capacity() * sizeof(InstanceCasters) + lamp_casters.get_capacity() * sizeof(LampCaster) + map_shelves.get_capacity() * sizeof(MapShelf);
+	for (const InstanceCasters &entry : instance_casters) {
+		cpu += entry.surfaces.get_capacity() * sizeof(CasterSurface);
+	}
 	for (const KeyValue<uint32_t, LocalVector<Vector2i>> &entry : free_map_rects) {
 		cpu += entry.value.get_capacity() * sizeof(Vector2i);
 	}
