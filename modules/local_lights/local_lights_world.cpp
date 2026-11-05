@@ -137,6 +137,21 @@ void pyramid_normals(const Vector3 &p_right, const Vector3 &p_up, const Vector3 
 	r_normals[3] = (-p_up + p_forward * p_extent).normalized();
 }
 
+// Грани куба, в снимок которых попадает коробка, по биту на грань в порядке FACE_FORWARD; углы коробки заданы относительно лампы.
+// Грань видит точку, когда обе боковые координаты по модулю не больше глубины, умноженной на запас грани.
+uint32_t box_cube_faces(const Vector3 &p_low, const Vector3 &p_high, float p_guard) {
+	const Vector3 inside(MIN(p_high.x, -p_low.x), MIN(p_high.y, -p_low.y), MIN(p_high.z, -p_low.z));
+	const float across_x = MIN(inside.y, inside.z);
+	const float across_y = MIN(inside.x, inside.z);
+	const float across_z = MIN(inside.x, inside.y);
+	return uint32_t(p_guard * p_high.x + across_x >= 0.0f) |
+			uint32_t(across_x - p_guard * p_low.x >= 0.0f) << 1 |
+			uint32_t(across_y - p_guard * p_low.y >= 0.0f) << 2 |
+			uint32_t(p_guard * p_high.z + across_z >= 0.0f) << 3 |
+			uint32_t(across_z - p_guard * p_low.z >= 0.0f) << 4 |
+			uint32_t(p_guard * p_high.y + across_y >= 0.0f) << 5;
+}
+
 } // namespace
 
 LocalLightsWorld::LocalLightsWorld(RID p_scenario) {
@@ -747,35 +762,64 @@ void LocalLightsWorld::_draw_cutout_surface(RD::DrawListID p_list, const CasterS
 	rd->draw_list_draw(p_list, p_caster.index_array.is_valid(), 1);
 }
 
-void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance) {
-	const LocalLightsSettings &settings = LocalLights::get_singleton()->get_settings();
+// Снимаемая поза Spot считается здесь один раз: она нужна и отбору, и записи, и данным лампы.
+void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance, bool p_cull) {
 	r_lamp.caster_first = lamp_casters.size();
 	const InstanceLightData *light = static_cast<const InstanceLightData *>(p_instance->base_data);
+	const Vector3 position = r_lamp.position;
 	const float range_sq = r_lamp.range * r_lamp.range;
+	const float cube_guard = 1.0f + CUBE_GUARD_TEXELS / float(r_lamp.map_side);
+	const uint32_t all_faces = (1u << r_lamp.map_faces) - 1;
+	Vector3 cone_normals[4];
+	if (r_lamp.spot) {
+		const SpotMapAxes axes = spot_map_axes(r_lamp.axis, r_lamp.angle);
+		r_lamp.baked_right = axes.right;
+		r_lamp.baked_up = axes.up;
+		r_lamp.baked_forward = r_lamp.axis;
+		r_lamp.baked_extent = axes.extent;
+		r_lamp.baked_inverse_tangent = 1.0f / axes.extent;
+		// Лучи вне конуса не читаются: кастер отсекается по конусу с небольшим запасом, плитка шире.
+		pyramid_normals(axes.right, axes.up, r_lamp.axis, Math::tan(Math::deg_to_rad(MIN(r_lamp.angle + 1.0f, SPOT_MAP_MAX_HALF_ANGLE_DEGREES))), cone_normals);
+	}
 	for (const Instance *geometry : light->geometries) {
 		if (geometry->base_type != RSE::INSTANCE_MESH || geometry->cast_shadows == RSE::SHADOW_CASTING_SETTING_OFF || !(geometry->layer_mask & r_lamp.caster_mask)) {
 			continue;
 		}
 		const InstanceCasters &surfaces = _instance_surfaces(geometry);
 		for (uint32_t index = surfaces.first; index < surfaces.first + surfaces.count; index++) {
-			if (settings.caster_culling) {
+			LampCaster entry;
+			entry.surface = index;
+			entry.face_mask = all_faces;
+			if (p_cull) {
 				const AABB &bounds = caster_pool[index].bounds;
-				const Vector3 nearest = r_lamp.position.clamp(bounds.position, bounds.get_end());
-				if (nearest.distance_squared_to(r_lamp.position) > range_sq) {
+				const Vector3 low = bounds.position - position;
+				const Vector3 high = bounds.get_end() - position;
+				const Vector3 nearest(CLAMP(0.0f, low.x, high.x), CLAMP(0.0f, low.y, high.y), CLAMP(0.0f, low.z, high.z));
+				if (nearest.length_squared() > range_sq) {
 					frame_metrics.surfaces_culled++;
+					continue;
+				}
+				if (r_lamp.spot) {
+					const Vector3 half = bounds.size * 0.5f;
+					entry.face_mask = box_outside_planes(cone_normals, 4, bounds.position + half - position, half) ? 0 : 1;
+				} else {
+					entry.face_mask = box_cube_faces(low, high, cube_guard);
+				}
+				if (entry.face_mask == 0) {
+					frame_metrics.surfaces_culled += r_lamp.map_faces;
 					continue;
 				}
 			}
 			if (caster_pool[index].cutout >= 0) {
-				lamp_cutout_casters.push_back(index);
+				lamp_cutout_casters.push_back(entry);
 			} else {
-				lamp_casters.push_back(index);
+				lamp_casters.push_back(entry);
 			}
 		}
 	}
 	// Вырез рисуется последним: его отбрасывание выключает ранний тест, а готовая глубина отсекает закрытое до чтения карты.
-	for (const uint32_t index : lamp_cutout_casters) {
-		lamp_casters.push_back(index);
+	for (const LampCaster &entry : lamp_cutout_casters) {
+		lamp_casters.push_back(entry);
 	}
 	lamp_cutout_casters.clear();
 	r_lamp.caster_count = lamp_casters.size() - r_lamp.caster_first;
@@ -888,7 +932,7 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 		}
 		const Instance *instance = scene_cull()->instance_owner.get_or_null(lamp.instance);
 		ERR_CONTINUE(!instance);
-		_gather_casters(lamp, instance);
+		_gather_casters(lamp, instance, settings.caster_culling);
 		frame_metrics.served_wait_frames = MAX(frame_metrics.served_wait_frames, uint32_t(p_frame - lamp.queued_frame));
 	}
 	RendererRD::MeshStorage::get_singleton()->update_mesh_instances();
@@ -901,7 +945,7 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	for (uint32_t i = 0; i < budget; i++) {
 		const Lamp &lamp = lamps[serve_order[i]];
 		if (lamp.map_faces > 0) {
-			_record_lamp(lamp, settings);
+			_record_lamp(lamp);
 		}
 	}
 	if (settings.gpu_timestamps) {
@@ -909,43 +953,30 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	}
 	frame_metrics.record_usec += OS::get_singleton()->get_ticks_usec() - started;
 
+	frame_metrics.lamps_served += budget;
+	frame_metrics.queue = serve_order.size() - budget;
 	for (uint32_t i = 0; i < budget; i++) {
 		Lamp &lamp = lamps[serve_order[i]];
+		frame_metrics.lamps_served_held += lamp.queue_tier == QUEUE_TIER_HELD ? 1 : 0;
+		frame_metrics.lamps_served_influenced += lamp.queue_tier == QUEUE_TIER_INFLUENCED ? 1 : 0;
 		if (lamp.map_faces == 0) {
+			frame_metrics.queue++;
 			continue;
 		}
 		lamp.queued_order = 0;
 		lamp.map_valid = true;
 		lamp.baked_origin = lamp.position;
 		lamp.baked_range = lamp.range;
-		if (lamp.spot) {
-			const SpotMapAxes axes = spot_map_axes(lamp.axis, lamp.angle);
-			lamp.baked_forward = lamp.axis;
-			lamp.baked_up = axes.up;
-			lamp.baked_inverse_tangent = 1.0f / axes.extent;
-		}
 		lamp.data_dirty = true;
 		if (!lamp.in_grid) {
 			repack_needed = true;
 		}
-	}
-	frame_metrics.lamps_served += budget;
-	for (uint32_t i = 0; i < budget; i++) {
-		const QueueTier tier = lamps[serve_order[i]].queue_tier;
-		frame_metrics.lamps_served_held += tier == QUEUE_TIER_HELD ? 1 : 0;
-		frame_metrics.lamps_served_influenced += tier == QUEUE_TIER_INFLUENCED ? 1 : 0;
 	}
 	uint32_t oldest = 0;
 	for (uint32_t i = budget; i < serve_order.size(); i++) {
 		oldest = MAX(oldest, uint32_t(p_frame - lamps[serve_order[i]].queued_frame));
 	}
 	frame_metrics.oldest_wait_frames = MAX(frame_metrics.oldest_wait_frames, oldest);
-	frame_metrics.queue = serve_order.size() - budget;
-	for (uint32_t i = 0; i < budget; i++) {
-		if (lamps[serve_order[i]].map_faces == 0) {
-			frame_metrics.queue++;
-		}
-	}
 }
 
 void LocalLightsWorld::set_held_instances(const Vector<RID> &p_instances) {
@@ -1009,9 +1040,8 @@ void LocalLightsWorld::_choose_lamps_to_serve(uint32_t p_budget, uint64_t p_fram
 	}
 }
 
-void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSettings &p_settings) {
+void LocalLightsWorld::_record_lamp(const Lamp &p_lamp) {
 	const int side = p_lamp.map_side;
-	const float guard_extent = 1.0f + CUBE_GUARD_TEXELS / float(side);
 	const Rect2 region(p_lamp.map_origin, Vector2i(side * p_lamp.map_faces, side));
 	RD::DrawListID list = rd->draw_list_begin(map_framebuffer, RD::DRAW_CLEAR_DEPTH, VectorView<Color>(), 1.0f, 0, region);
 	RD::VertexFormatID bound_format = 0;
@@ -1025,48 +1055,35 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSetting
 	push.extra[3] = 0.0f;
 	push.decode_position[3] = 0.0f;
 	push.decode_size[3] = 0.0f;
+	const float extent = p_lamp.spot ? p_lamp.baked_extent : 1.0f + CUBE_GUARD_TEXELS / float(side);
+	push.projection[0] = extent;
+	push.projection[1] = extent;
+	const LampCaster *casters = lamp_casters.ptr() + p_lamp.caster_first;
 	for (int face = 0; face < p_lamp.map_faces; face++) {
-		rd->draw_list_set_viewport(list, Rect2(p_lamp.map_origin.x + face * side, p_lamp.map_origin.y, side, side));
-		rd->draw_list_disable_scissor(list);
-		Vector3 right, up, forward;
-		float extent;
-		Vector3 normals[4];
+		Basis rows;
 		if (p_lamp.spot) {
-			forward = p_lamp.axis;
-			const SpotMapAxes axes = spot_map_axes(forward, p_lamp.angle);
-			right = axes.right;
-			up = axes.up;
-			extent = axes.extent;
-			// Лучи вне конуса не читаются: кастер отсекается по конусу с небольшим запасом, плитка шире.
-			const float cone_extent = 1.0f / Math::tan(Math::deg_to_rad(MIN(p_lamp.angle + 1.0f, SPOT_MAP_MAX_HALF_ANGLE_DEGREES)));
-			pyramid_normals(right, up, forward, 1.0f / cone_extent, normals);
+			rows = rows_of(p_lamp.baked_right, p_lamp.baked_up, p_lamp.baked_forward);
 		} else {
-			right = FACE_RIGHT[face];
-			up = FACE_UP[face];
-			forward = FACE_FORWARD[face];
-			extent = guard_extent;
-			pyramid_normals(right, up, forward, guard_extent, normals);
+			// Ножницы остаются на всю карту лампы: за плитку не выходит и так, примитивы отсекаются окном вывода.
+			rd->draw_list_set_viewport(list, Rect2(p_lamp.map_origin.x + face * side, p_lamp.map_origin.y, side, side));
+			rows = rows_of(FACE_RIGHT[face], FACE_UP[face], FACE_FORWARD[face]);
 		}
-		const Basis rows = rows_of(right, up, forward);
 		const Transform3D light_from_world(rows, rows.xform(-p_lamp.position));
-		push.projection[0] = extent;
-		push.projection[1] = extent;
+		const uint32_t face_bit = 1u << face;
+		// Поверхности экземпляра идут подряд и делят одно преобразование.
+		const Instance *transformed_instance = nullptr;
 		for (uint32_t i = 0; i < p_lamp.caster_count; i++) {
-			const CasterSurface &caster = caster_pool[lamp_casters[p_lamp.caster_first + i]];
-			if (p_settings.caster_culling) {
-				const Vector3 half = caster.bounds.size * 0.5f;
-				const Vector3 center = caster.bounds.position + half - p_lamp.position;
-				if (box_outside_planes(normals, 4, center, half)) {
-					frame_metrics.surfaces_culled++;
-					continue;
-				}
+			if (!(casters[i].face_mask & face_bit)) {
+				frame_metrics.surfaces_culled++;
+				continue;
 			}
+			const CasterSurface &caster = caster_pool[casters[i].surface];
+			frame_metrics.surfaces_drawn++;
+			frame_metrics.triangles_drawn += caster.triangles;
 			if (caster.cutout >= 0) {
 				_draw_cutout_surface(list, caster, light_from_world, extent, push.extra);
 				bound_format = 0;
-				frame_metrics.surfaces_drawn++;
 				frame_metrics.cutout_surfaces_drawn++;
-				frame_metrics.triangles_drawn += caster.triangles;
 				continue;
 			}
 			if (caster.format != bound_format) {
@@ -1077,15 +1094,16 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSetting
 			if (caster.index_array.is_valid()) {
 				rd->draw_list_bind_index_array(list, caster.index_array);
 			}
-			RendererRD::MaterialStorage::store_transform(light_from_world * caster.instance->transform, push.to_light);
+			if (caster.instance != transformed_instance) {
+				RendererRD::MaterialStorage::store_transform(light_from_world * caster.instance->transform, push.to_light);
+				transformed_instance = caster.instance;
+			}
 			for (int axis = 0; axis < 3; axis++) {
 				push.decode_position[axis] = caster.decode_position[axis];
 				push.decode_size[axis] = caster.decode_size[axis];
 			}
 			rd->draw_list_set_push_constant(list, &push, sizeof(CasterPush));
 			rd->draw_list_draw(list, caster.index_array.is_valid(), 1);
-			frame_metrics.surfaces_drawn++;
-			frame_metrics.triangles_drawn += caster.triangles;
 		}
 		frame_metrics.faces_baked++;
 	}

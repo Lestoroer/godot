@@ -97,8 +97,11 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		bool map_valid = false;
 		Vector3 baked_origin;
 		float baked_range = 0.0f;
+		Vector3 baked_right;
 		Vector3 baked_up;
 		Vector3 baked_forward;
+		// Тангенс половины угла снимка Spot.
+		float baked_extent = 0.0f;
 		float baked_inverse_tangent = 0.0f;
 		// Кастеры текущего снимка в общем пуле.
 		uint32_t caster_first = 0;
@@ -116,6 +119,12 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		uint32_t triangles = 0;
 		// Индекс в cutout_pool, минус один — материал без выреза.
 		int32_t cutout = -1;
+	};
+
+	// Поверхность в снимке лампы: индекс в caster_pool и грани, куда она попадает, по биту на грань.
+	struct LampCaster {
+		uint32_t surface = 0;
+		uint32_t face_mask = 0;
 	};
 
 	// Что вырезу нужно из материала и поверхности.
@@ -214,9 +223,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	// По локальному индексу RID экземпляра.
 	LocalVector<InstanceCasters> instance_casters;
 	uint64_t gather_pass = 0;
-	// Индексы caster_pool по лампам: отрезок лампы — caster_first и caster_count.
-	LocalVector<uint32_t> lamp_casters;
-	LocalVector<uint32_t> lamp_cutout_casters;
+	// Поверхности в снимках ламп: отрезок лампы — caster_first и caster_count.
+	LocalVector<LampCaster> lamp_casters;
+	LocalVector<LampCaster> lamp_cutout_casters;
 	// Экземпляры предмета в руках: лампы и геометрия.
 	LocalVector<RID> held_instances;
 	// Следующий кадр снимает тени всех ламп мира: этап загрузки.
@@ -280,9 +289,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _collect_scenario_lamps();
 	void _assign_queue_tiers();
 	void _choose_lamps_to_serve(uint32_t p_budget, uint64_t p_frame);
-	void _gather_casters(Lamp &r_lamp, const Instance *p_instance);
+	void _gather_casters(Lamp &r_lamp, const Instance *p_instance, bool p_cull);
 	const InstanceCasters &_instance_surfaces(const Instance *p_geometry);
-	void _record_lamp(const Lamp &p_lamp, const LocalLightsSettings &p_settings);
+	void _record_lamp(const Lamp &p_lamp);
 	void _update_grid();
 	void _repack();
 	void _ensure_data_table();
