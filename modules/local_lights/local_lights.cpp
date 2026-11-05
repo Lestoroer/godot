@@ -119,6 +119,7 @@ Dictionary LocalLights::get_frame_metrics() const {
 	result["servedWaitFrames"] = metrics.served_wait_frames;
 	result["facesBaked"] = metrics.faces_baked;
 	result["surfacesDrawn"] = metrics.surfaces_drawn;
+	result["cutoutSurfacesDrawn"] = metrics.cutout_surfaces_drawn;
 	result["surfacesCulled"] = metrics.surfaces_culled;
 	result["trianglesDrawn"] = metrics.triangles_drawn;
 	result["repacks"] = metrics.repacks;

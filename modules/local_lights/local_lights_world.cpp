@@ -46,11 +46,23 @@ RendererSceneCull *scene_cull() {
 	return static_cast<RendererSceneCull *>(RSG::scene);
 }
 
-// Карта рисует только позиции и не исполняет материал: материал прохода прозрачности тень не отбрасывает, альфа-вырез отбрасывает целиком.
-bool material_casts_in_maps(RID p_material) {
-	typedef RendererSceneRenderImplementation::SceneShaderForwardClustered SceneShader;
+typedef RendererSceneRenderImplementation::SceneShaderForwardClustered SceneShader;
+
+const SceneShader::ShaderData *spatial_shader_data(RID p_material) {
 	const SceneShader::MaterialData *data = static_cast<const SceneShader::MaterialData *>(RendererRD::MaterialStorage::get_singleton()->material_get_data(p_material, RendererRD::MaterialStorage::SHADER_TYPE_3D));
-	return !data || !data->shader_data || !data->shader_data->uses_alpha_pass();
+	return data ? data->shader_data : nullptr;
+}
+
+// Значение параметра материала, а если он его не задаёт, значение по умолчанию из шейдера. Имена параметров — граница с материалом.
+Variant material_value(RID p_material, const SceneShader::ShaderData *p_shader_data, const StringName &p_name) {
+	const Variant value = RSG::material_storage->material_get_param(p_material, p_name);
+	return value.get_type() != Variant::NIL ? value : p_shader_data->get_default_parameter(p_name);
+}
+
+// Первое имя — мастер-материал, второе — BaseMaterial3D.
+Variant material_value(RID p_material, const SceneShader::ShaderData *p_shader_data, const StringName &p_master_name, const StringName &p_base_name) {
+	const Variant value = material_value(p_material, p_shader_data, p_master_name);
+	return value.get_type() != Variant::NIL ? value : material_value(p_material, p_shader_data, p_base_name);
 }
 
 // Ближняя плоскость карты: как можно ближе к лампе, но шаг 16 бит на дальнем конце остаётся меньше половины смещения тени.
@@ -115,11 +127,15 @@ void pyramid_normals(const Vector3 &p_right, const Vector3 &p_up, const Vector3 
 LocalLightsWorld::LocalLightsWorld(RID p_scenario) {
 	scenario = p_scenario;
 	rd = RD::get_singleton();
-	Vector<String> modes;
-	modes.push_back("");
-	caster_shader.initialize(modes);
+	Vector<String> caster_modes;
+	caster_modes.push_back("");
+	caster_modes.push_back("\n#define MAP_CUTOUT\n");
+	caster_shader.initialize(caster_modes);
 	caster_shader_version = caster_shader.version_create();
 	caster_rd_shader = caster_shader.version_get_shader(caster_shader_version, 0);
+	cutout_rd_shader = caster_shader.version_get_shader(caster_shader_version, 1);
+	Vector<String> modes;
+	modes.push_back("");
 	ratio_shader.initialize(modes);
 	ratio_shader_version = ratio_shader.version_create();
 	ratio_rd_shader = ratio_shader.version_get_shader(ratio_shader_version, 0);
@@ -155,6 +171,9 @@ LocalLightsWorld::~LocalLightsWorld() {
 	_free_wrapped(map_atlas_texture);
 	_free_wrapped(blurred_ratio_texture);
 	for (const KeyValue<RD::VertexFormatID, RID> &entry : caster_pipelines) {
+		rd->free_rid(entry.value);
+	}
+	for (const KeyValue<RD::VertexFormatID, RID> &entry : cutout_pipelines) {
 		rd->free_rid(entry.value);
 	}
 	for (const RID &rid : { map_atlas, grid_rd, data_rd, ratio_surface, blurred_ratio, params_buffer, ratio_pipeline, blur_pipeline }) {
@@ -623,6 +642,101 @@ RID LocalLightsWorld::_pipeline_for(RD::VertexFormatID p_format) {
 	return pipeline;
 }
 
+RID LocalLightsWorld::_cutout_pipeline_for(RD::VertexFormatID p_format) {
+	const RID *existing = cutout_pipelines.getptr(p_format);
+	if (existing) {
+		return *existing;
+	}
+	RD::PipelineRasterizationState raster;
+	raster.cull_mode = RD::POLYGON_CULL_DISABLED;
+	raster.enable_depth_clamp = true;
+	RD::PipelineDepthStencilState depth;
+	depth.enable_depth_test = true;
+	depth.enable_depth_write = true;
+	depth.depth_compare_operator = RD::COMPARE_OP_LESS;
+	RID pipeline = rd->render_pipeline_create(cutout_rd_shader, rd->framebuffer_get_format(map_framebuffer), p_format, RD::RENDER_PRIMITIVE_TRIANGLES, raster, RD::PipelineMultisampleState(), depth, RD::PipelineColorBlendState());
+	cutout_pipelines.insert(p_format, pipeline);
+	return pipeline;
+}
+
+// Альфа мастер-материала: альфа цвета × альфа карты × альфа вершины. Другой шейдер с вырезом отбрасывает тень целиком и сообщает об этом.
+bool LocalLightsWorld::_read_cutout(RID p_material, const void *p_shader_data, void *p_surface, CasterCutout &r_cutout) const {
+	const SceneShader::ShaderData *shader_data = static_cast<const SceneShader::ShaderData *>(p_shader_data);
+	static const StringName alpha_scissor_threshold = "alpha_scissor_threshold";
+	static const StringName albedo_texture = "albedo_texture";
+	static const StringName texture_albedo = "texture_albedo";
+	static const StringName use_albedo_texture = "use_albedo_texture";
+	static const StringName albedo_color = "albedo_color";
+	static const StringName albedo = "albedo";
+	static const StringName use_vertex_color = "use_vertex_color";
+	static const StringName uv_scale = "uv_scale";
+	static const StringName uv1_scale = "uv1_scale";
+	static const StringName uv_offset = "uv_offset";
+	static const StringName uv1_offset = "uv1_offset";
+	const Variant threshold = material_value(p_material, shader_data, alpha_scissor_threshold);
+	if (threshold.get_type() == Variant::NIL) {
+		WARN_PRINT_ONCE("Local lights: the shader of an alpha cutout material has no alpha_scissor_threshold parameter, its shadow has no holes.");
+		return false;
+	}
+	r_cutout.threshold = threshold;
+	const Variant color = material_value(p_material, shader_data, albedo_color, albedo);
+	r_cutout.alpha = color.get_type() == Variant::COLOR ? Color(color).a : 1.0f;
+	r_cutout.vertex_alpha = bool(material_value(p_material, shader_data, use_vertex_color));
+	const Variant scale = material_value(p_material, shader_data, uv_scale, uv1_scale);
+	r_cutout.uv_scale = scale.get_type() != Variant::NIL ? Vector2(scale) : Vector2(1, 1);
+	const Variant offset = material_value(p_material, shader_data, uv_offset, uv1_offset);
+	r_cutout.uv_offset = offset.get_type() != Variant::NIL ? Vector2(offset) : Vector2();
+	const Vector4 mesh_uv_scale = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_uv_scale(p_surface);
+	r_cutout.mesh_uv_decode = Vector2(mesh_uv_scale.x, mesh_uv_scale.y);
+	RendererRD::TextureStorage *textures = RendererRD::TextureStorage::get_singleton();
+	const Variant use_texture = material_value(p_material, shader_data, use_albedo_texture);
+	RID alpha_texture;
+	if (use_texture.get_type() == Variant::NIL || bool(use_texture)) {
+		const Variant texture = material_value(p_material, shader_data, albedo_texture, texture_albedo);
+		if (texture.get_type() == Variant::RID) {
+			alpha_texture = textures->texture_get_rd_texture(RID(texture));
+		}
+	}
+	if (alpha_texture.is_null()) {
+		alpha_texture = textures->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
+	}
+	const RID sampler = RendererRD::MaterialStorage::get_singleton()->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS, RSE::CANVAS_ITEM_TEXTURE_REPEAT_ENABLED);
+	r_cutout.uniform_set = UniformSetCacheRD::get_singleton()->get_cache(cutout_rd_shader, 0, sampled_uniform(0, sampler, alpha_texture));
+	return true;
+}
+
+void LocalLightsWorld::_draw_cutout_surface(RD::DrawListID p_list, const CasterSurface &p_caster, const Transform3D &p_light_from_world, float p_extent, const float *p_depth) {
+	const CasterCutout &cutout = cutout_pool[p_caster.cutout];
+	rd->draw_list_bind_render_pipeline(p_list, _cutout_pipeline_for(p_caster.format));
+	rd->draw_list_bind_uniform_set(p_list, cutout.uniform_set, 0);
+	rd->draw_list_bind_vertex_array(p_list, p_caster.vertex_array);
+	if (p_caster.index_array.is_valid()) {
+		rd->draw_list_bind_index_array(p_list, p_caster.index_array);
+	}
+	CutoutPush push;
+	RendererRD::MaterialStorage::store_transform_transposed_3x4(p_light_from_world * p_caster.instance->transform, push.to_light);
+	push.projection_and_cut[0] = p_extent;
+	push.projection_and_cut[1] = p_extent;
+	push.projection_and_cut[2] = cutout.threshold;
+	push.projection_and_cut[3] = cutout.alpha;
+	push.extra[0] = p_depth[0];
+	push.extra[1] = p_depth[1];
+	push.extra[2] = cutout.mesh_uv_decode.x;
+	push.extra[3] = cutout.mesh_uv_decode.y;
+	for (int axis = 0; axis < 3; axis++) {
+		push.decode_position[axis] = p_caster.decode_position[axis];
+		push.decode_size[axis] = p_caster.decode_size[axis];
+	}
+	push.decode_position[3] = cutout.vertex_alpha ? 1.0f : 0.0f;
+	push.decode_size[3] = 0.0f;
+	push.uv_transform[0] = cutout.uv_scale.x;
+	push.uv_transform[1] = cutout.uv_scale.y;
+	push.uv_transform[2] = cutout.uv_offset.x;
+	push.uv_transform[3] = cutout.uv_offset.y;
+	rd->draw_list_set_push_constant(p_list, &push, sizeof(CutoutPush));
+	rd->draw_list_draw(p_list, p_caster.index_array.is_valid(), 1);
+}
+
 void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance) {
 	const LocalLightsSettings &settings = LocalLights::get_singleton()->get_settings();
 	r_lamp.caster_first = lamp_casters.size();
@@ -642,9 +756,18 @@ void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance)
 					continue;
 				}
 			}
-			lamp_casters.push_back(index);
+			if (caster_pool[index].cutout >= 0) {
+				lamp_cutout_casters.push_back(index);
+			} else {
+				lamp_casters.push_back(index);
+			}
 		}
 	}
+	// Вырез рисуется последним: его отбрасывание выключает ранний тест, а готовая глубина отсекает закрытое до чтения карты.
+	for (const uint32_t index : lamp_cutout_casters) {
+		lamp_casters.push_back(index);
+	}
+	lamp_cutout_casters.clear();
 	r_lamp.caster_count = lamp_casters.size() - r_lamp.caster_first;
 }
 
@@ -661,6 +784,7 @@ const LocalLightsWorld::InstanceCasters &LocalLightsWorld::_instance_surfaces(co
 	entry.first = caster_pool.size();
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
 	const uint64_t position_mask = 1ull << RSE::ARRAY_VERTEX;
+	const uint64_t cutout_mask = position_mask | (1ull << RSE::ARRAY_COLOR) | (1ull << RSE::ARRAY_TEX_UV);
 	const uint32_t surface_count = mesh_storage->mesh_get_surface_count(p_geometry->base);
 	if (p_geometry->mesh_instance.is_valid()) {
 		mesh_storage->mesh_instance_check_for_update(p_geometry->mesh_instance);
@@ -674,17 +798,25 @@ const LocalLightsWorld::InstanceCasters &LocalLightsWorld::_instance_surfaces(co
 		if (material.is_null()) {
 			material = index < uint32_t(p_geometry->materials.size()) && p_geometry->materials[index].is_valid() ? p_geometry->materials[index] : mesh_storage->mesh_surface_get_material(p_geometry->base, index);
 		}
-		if (material.is_valid() && !material_casts_in_maps(material)) {
+		const SceneShader::ShaderData *shader_data = material.is_valid() ? spatial_shader_data(material) : nullptr;
+		// Материал прохода прозрачности тень не отбрасывает.
+		if (shader_data && shader_data->uses_alpha_pass()) {
 			continue;
 		}
 		const AABB local_bounds = mesh_storage->mesh_surface_get_aabb(surface);
 		CasterSurface caster;
 		caster.instance = p_geometry;
 		caster.bounds = p_geometry->transform.xform(local_bounds);
+		CasterCutout cutout;
+		if (shader_data && shader_data->uses_alpha_clip && _read_cutout(material, shader_data, surface, cutout)) {
+			caster.cutout = cutout_pool.size();
+			cutout_pool.push_back(cutout);
+		}
+		const uint64_t attributes = caster.cutout >= 0 ? cutout_mask : position_mask;
 		if (p_geometry->mesh_instance.is_valid()) {
-			mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(p_geometry->mesh_instance, index, position_mask, false, false, caster.vertex_array, caster.format);
+			mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(p_geometry->mesh_instance, index, attributes, false, false, caster.vertex_array, caster.format);
 		} else {
-			mesh_storage->mesh_surface_get_vertex_arrays_and_format(surface, position_mask, false, false, caster.vertex_array, caster.format);
+			mesh_storage->mesh_surface_get_vertex_arrays_and_format(surface, attributes, false, false, caster.vertex_array, caster.format);
 		}
 		caster.index_array = mesh_storage->mesh_surface_get_index_array(surface, 0);
 		const bool compressed = mesh_storage->mesh_surface_get_format(surface) & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES;
@@ -722,6 +854,7 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	uint64_t started = OS::get_singleton()->get_ticks_usec();
 	_apply_map_sizes(settings);
 	caster_pool.clear();
+	cutout_pool.clear();
 	lamp_casters.clear();
 	gather_pass++;
 	for (uint32_t i = 0; i < budget; i++) {
@@ -847,6 +980,14 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp, const LocalLightsSetting
 					frame_metrics.surfaces_culled++;
 					continue;
 				}
+			}
+			if (caster.cutout >= 0) {
+				_draw_cutout_surface(list, caster, light_from_world, extent, push.extra);
+				bound_format = 0;
+				frame_metrics.surfaces_drawn++;
+				frame_metrics.cutout_surfaces_drawn++;
+				frame_metrics.triangles_drawn += caster.triangles;
+				continue;
 			}
 			if (caster.format != bound_format) {
 				rd->draw_list_bind_render_pipeline(list, _pipeline_for(caster.format));
@@ -1161,7 +1302,7 @@ Dictionary LocalLightsWorld::memory_report() const {
 		cpu += (lamp.cells.get_capacity() + lamp.cell_slots.get_capacity()) * sizeof(uint32_t);
 	}
 	cpu += (cell_omni.get_capacity() + cell_spot.get_capacity() + cell_next.get_capacity() + filled_cells.get_capacity() + serve_order.get_capacity()) * sizeof(uint32_t);
-	cpu += caster_pool.get_capacity() * sizeof(CasterSurface) + instance_casters.get_capacity() * sizeof(InstanceCasters) + lamp_casters.get_capacity() * sizeof(uint32_t) + map_shelves.get_capacity() * sizeof(MapShelf);
+	cpu += caster_pool.get_capacity() * sizeof(CasterSurface) + cutout_pool.get_capacity() * sizeof(CasterCutout) + instance_casters.get_capacity() * sizeof(InstanceCasters) + lamp_casters.get_capacity() * sizeof(uint32_t) + map_shelves.get_capacity() * sizeof(MapShelf);
 	for (const KeyValue<uint32_t, LocalVector<Vector2i>> &entry : free_map_rects) {
 		cpu += entry.value.get_capacity() * sizeof(Vector2i);
 	}
