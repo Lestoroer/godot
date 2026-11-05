@@ -16,7 +16,12 @@
 namespace {
 
 const Vector3i CELL_DIMS(20, 20, 20);
-const float CELL_SIZE = 1.6f;
+// Сетка покрывает охват ламп: чем он меньше, тем мельче ячейки и короче их списки материалов и прохода отношения.
+// Ячейка меняется ступенями, чтобы движущаяся лампа не пересчитывала все ячейки на каждом кадре.
+const float CELL_SIZES[] = { 0.8f, 1.13f, 1.6f };
+// Окно шире охвата: лампы двигаются без пересчёта. Вернуться к меньшей ячейке можно только с запасом побольше.
+const float WINDOW_SLACK = 1.1f;
+const float CELL_RETURN_SLACK = 1.4f;
 const float RECENTER_CELLS = 4.0f;
 // Таблица ламп: восемь текселей на лампу, в строке 256 ламп. Список ламп ячеек: индекс лампы в текселе. Контракт с local_light_ratio.glsl и local_lights_inc.gdshaderinc.
 const uint32_t DATA_WIDTH = 2048;
@@ -410,19 +415,32 @@ void LocalLightsWorld::_update_window() {
 		if (!lamp.active) {
 			continue;
 		}
+		const AABB reach(lamp.position - Vector3(lamp.range, lamp.range, lamp.range), Vector3(lamp.range, lamp.range, lamp.range) * 2.0f);
 		if (first) {
-			bounds = AABB(lamp.position, Vector3());
+			bounds = reach;
 			first = false;
 		} else {
-			bounds.expand_to(lamp.position);
+			bounds.merge_with(reach);
 		}
 	}
 	if (first) {
 		return;
 	}
+	const float extent = bounds.get_longest_axis_size();
+	float wanted_cell = CELL_SIZES[0];
+	for (const float size : CELL_SIZES) {
+		wanted_cell = size;
+		// Текущая ступень остаётся, пока охват в неё входит; меньшая берётся с запасом побольше.
+		if (extent * (size < cell_size ? CELL_RETURN_SLACK : WINDOW_SLACK) <= CELL_DIMS.x * size) {
+			break;
+		}
+	}
 	const Vector3 center = bounds.get_center();
 	const Vector3 drift = (center - window_center).abs();
-	if (origin_valid && MAX(drift.x, MAX(drift.y, drift.z)) <= RECENTER_CELLS * CELL_SIZE) {
+	const float half_window = CELL_DIMS.x * cell_size * 0.5f;
+	// Охват шире самого большого окна: окно следует за центром ламп с запасом в несколько ячеек.
+	const float allowed_drift = extent * 0.5f <= half_window ? half_window - extent * 0.5f : RECENTER_CELLS * cell_size;
+	if (origin_valid && wanted_cell == cell_size && MAX(drift.x, MAX(drift.y, drift.z)) <= allowed_drift) {
 		// Лампа могла появиться до первого окна: её ячейки посчитаны в _refresh_lamp.
 		for (Lamp &lamp : lamps) {
 			if (lamp.active && lamp.cells.is_empty()) {
@@ -431,9 +449,10 @@ void LocalLightsWorld::_update_window() {
 		}
 		return;
 	}
-	const Vector3 corner = center - Vector3(CELL_DIMS) * 0.5f * CELL_SIZE;
-	origin = (corner / CELL_SIZE).floor() * CELL_SIZE;
-	window_center = origin + Vector3(CELL_DIMS) * 0.5f * CELL_SIZE;
+	cell_size = wanted_cell;
+	const Vector3 corner = center - Vector3(CELL_DIMS) * 0.5f * cell_size;
+	origin = (corner / cell_size).floor() * cell_size;
+	window_center = origin + Vector3(CELL_DIMS) * 0.5f * cell_size;
 	origin_valid = true;
 	globals_published = false;
 	for (Lamp &lamp : lamps) {
@@ -461,32 +480,32 @@ void LocalLightsWorld::_compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cel
 		const Vector3 high(MAX(r_lamp.position.x, base.x + extent.x), MAX(r_lamp.position.y, base.y + extent.y), MAX(r_lamp.position.z, base.z + extent.z));
 		box = AABB(low, high - low);
 	}
-	const Vector3 window = Vector3(CELL_DIMS) * CELL_SIZE;
+	const Vector3 window = Vector3(CELL_DIMS) * cell_size;
 	const Vector3 lo = box.position - origin;
 	const Vector3 hi = box.get_end() - origin;
 	if (hi.x < 0.0f || hi.y < 0.0f || hi.z < 0.0f || lo.x > window.x || lo.y > window.y || lo.z > window.z) {
 		return;
 	}
-	const auto clamp_cell = [](float p_value, int p_dim) { return CLAMP(int(Math::floor(p_value / CELL_SIZE)), 0, p_dim - 1); };
+	const auto clamp_cell = [this](float p_value, int p_dim) { return CLAMP(int(Math::floor(p_value / cell_size)), 0, p_dim - 1); };
 	const Vector3i cell_min(clamp_cell(lo.x, CELL_DIMS.x), clamp_cell(lo.y, CELL_DIMS.y), clamp_cell(lo.z, CELL_DIMS.z));
 	const Vector3i cell_max(clamp_cell(hi.x, CELL_DIMS.x), clamp_cell(hi.y, CELL_DIMS.y), clamp_cell(hi.z, CELL_DIMS.z));
 	const float sin_outer = Math::sqrt(MAX(1.0f - cos_outer * cos_outer, 0.0f));
-	const float half_cell = CELL_SIZE * 0.5f;
+	const float half_cell = cell_size * 0.5f;
 	const float cell_bound = half_cell * Math::sqrt(3.0f);
 	const float reach = reach_range + cell_bound;
 	const float range_sq = reach_range * reach_range;
-	const Vector3 first_center = origin + Vector3(0.5f, 0.5f, 0.5f) * CELL_SIZE;
+	const Vector3 first_center = origin + Vector3(0.5f, 0.5f, 0.5f) * cell_size;
 	const float vx_base = first_center.x - r_lamp.position.x;
 	const int dx = CELL_DIMS.x;
 	const int dxy = CELL_DIMS.x * CELL_DIMS.y;
 	for (int cz = cell_min.z; cz <= cell_max.z; cz++) {
-		const float vz = first_center.z + float(cz) * CELL_SIZE - r_lamp.position.z;
+		const float vz = first_center.z + float(cz) * cell_size - r_lamp.position.z;
 		const float gap_z = MAX(Math::abs(vz) - half_cell, 0.0f);
 		if (gap_z * gap_z > range_sq) {
 			continue;
 		}
 		for (int cy = cell_min.y; cy <= cell_max.y; cy++) {
-			const float vy = first_center.y + float(cy) * CELL_SIZE - r_lamp.position.y;
+			const float vy = first_center.y + float(cy) * cell_size - r_lamp.position.y;
 			const float gap_y = MAX(Math::abs(vy) - half_cell, 0.0f);
 			const float span_sq = range_sq - gap_z * gap_z - gap_y * gap_y;
 			if (span_sq < 0.0f) {
@@ -494,8 +513,8 @@ void LocalLightsWorld::_compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cel
 			}
 			// Ячейка задета, пока её ближняя грань по x внутри хорды сферы.
 			const float span = Math::sqrt(span_sq) + half_cell;
-			const int cx_lo = MAX(int(Math::ceil((-span - vx_base) / CELL_SIZE)), cell_min.x);
-			const int cx_hi = MIN(int(Math::floor((span - vx_base) / CELL_SIZE)), cell_max.x);
+			const int cx_lo = MAX(int(Math::ceil((-span - vx_base) / cell_size)), cell_min.x);
+			const int cx_hi = MIN(int(Math::floor((span - vx_base) / cell_size)), cell_max.x);
 			const int row = cz * dxy + cy * dx;
 			if (!r_lamp.spot) {
 				for (int cx = cx_lo; cx <= cx_hi; cx++) {
@@ -505,7 +524,7 @@ void LocalLightsWorld::_compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cel
 			}
 			const float dot_yz = vy * r_lamp.axis.y + vz * r_lamp.axis.z;
 			for (int cx = cx_lo; cx <= cx_hi; cx++) {
-				const float vx = vx_base + float(cx) * CELL_SIZE;
+				const float vx = vx_base + float(cx) * cell_size;
 				const float axial = vx * r_lamp.axis.x + dot_yz;
 				if (axial > reach || axial < -cell_bound) {
 					continue;
@@ -1290,7 +1309,7 @@ void LocalLightsWorld::_publish_globals() {
 	globals_published = true;
 	RendererRD::MaterialStorage *materials = RendererRD::MaterialStorage::get_singleton();
 	materials->global_shader_parameter_set("local_light_origin", origin);
-	materials->global_shader_parameter_set("local_light_inverse_cell_size", 1.0f / CELL_SIZE);
+	materials->global_shader_parameter_set("local_light_inverse_cell_size", 1.0f / cell_size);
 	materials->global_shader_parameter_set("local_light_dims", CELL_DIMS);
 	materials->global_shader_parameter_set("local_light_grid", grid_texture);
 	materials->global_shader_parameter_set("local_light_data", data_texture);
@@ -1343,7 +1362,7 @@ void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
 	params.origin_and_step[0] = origin.x;
 	params.origin_and_step[1] = origin.y;
 	params.origin_and_step[2] = origin.z;
-	params.origin_and_step[3] = CELL_SIZE;
+	params.origin_and_step[3] = cell_size;
 	params.dims[0] = CELL_DIMS.x;
 	params.dims[1] = CELL_DIMS.y;
 	params.dims[2] = CELL_DIMS.z;
@@ -1400,6 +1419,7 @@ Dictionary LocalLightsWorld::memory_report() const {
 	report["screenBytes"] = uint64_t(screen_size.x) * screen_size.y * (8 + 4);
 	report["gridBytes"] = uint64_t(grid_bytes.size());
 	report["dataBytes"] = uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
+	report["lampBufferBytes"] = uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
 	uint64_t cpu = uint64_t(grid_bytes.size()) + uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
 	cpu += lamps.get_capacity() * sizeof(Lamp);
 	for (const Lamp &lamp : lamps) {

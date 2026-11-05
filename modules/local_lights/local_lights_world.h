@@ -226,6 +226,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 
 	// Сетка: окно по миру и список ламп ячеек; таблица ламп: восемь текселей на лампу, по её индексу в lamps.
 	Vector3 origin;
+	float cell_size = 1.6f;
 	bool origin_valid = false;
 	Vector3 window_center;
 	bool repack_needed = true;
