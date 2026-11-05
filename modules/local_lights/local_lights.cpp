@@ -1,6 +1,8 @@
 // lestoroer#local-lights
 #include "local_lights.h"
 
+#include "scene/3d/visual_instance_3d.h"
+
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "servers/rendering/rendering_server.h"
@@ -17,6 +19,7 @@ RendererSceneCull *scene_cull() {
 void LocalLights::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_world_enabled", "world", "enabled"), &LocalLights::set_world_enabled);
 	ClassDB::bind_method(D_METHOD("is_world_enabled", "world"), &LocalLights::is_world_enabled);
+	ClassDB::bind_method(D_METHOD("set_held_item", "world", "item"), &LocalLights::set_held_item);
 	ClassDB::bind_method(D_METHOD("set_update_cap", "cap"), &LocalLights::set_update_cap);
 	ClassDB::bind_method(D_METHOD("get_update_cap"), &LocalLights::get_update_cap);
 	ClassDB::bind_method(D_METHOD("set_softness", "softness_per_meter"), &LocalLights::set_softness);
@@ -53,6 +56,32 @@ void LocalLights::_set_world_enabled_on_render_thread(RID p_scenario, bool p_ena
 void LocalLights::set_world_enabled(const Ref<World3D> &p_world, bool p_enabled) {
 	ERR_FAIL_COND(p_world.is_null());
 	RenderingServer::get_singleton()->call_on_render_thread(callable_mp(this, &LocalLights::_set_world_enabled_on_render_thread).bind(p_world->get_scenario(), p_enabled));
+}
+
+void LocalLights::_set_held_instances_on_render_thread(RID p_scenario, const Vector<RID> &p_instances) {
+	RendererSceneCull::LocalLightsBackend *backend = scene_cull()->scenario_get_local_lights(p_scenario);
+	if (backend) {
+		static_cast<LocalLightsWorld *>(backend)->set_held_instances(p_instances);
+	}
+}
+
+static void collect_visual_instances(Node *p_node, Vector<RID> &r_instances) {
+	VisualInstance3D *visual = Object::cast_to<VisualInstance3D>(p_node);
+	if (visual) {
+		r_instances.push_back(visual->get_instance());
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		collect_visual_instances(p_node->get_child(i), r_instances);
+	}
+}
+
+void LocalLights::set_held_item(const Ref<World3D> &p_world, Node3D *p_item) {
+	ERR_FAIL_COND(p_world.is_null());
+	Vector<RID> instances;
+	if (p_item) {
+		collect_visual_instances(p_item, instances);
+	}
+	RenderingServer::get_singleton()->call_on_render_thread(callable_mp(this, &LocalLights::_set_held_instances_on_render_thread).bind(p_world->get_scenario(), instances));
 }
 
 bool LocalLights::is_world_enabled(const Ref<World3D> &p_world) const {
@@ -114,6 +143,8 @@ Dictionary LocalLights::get_frame_metrics() const {
 	result["lampsInView"] = metrics.lamps_in_view;
 	result["lampsInGrid"] = metrics.lamps_in_grid;
 	result["lampsServed"] = metrics.lamps_served;
+	result["lampsServedHeld"] = metrics.lamps_served_held;
+	result["lampsServedInfluenced"] = metrics.lamps_served_influenced;
 	result["queue"] = metrics.queue;
 	result["oldestWaitFrames"] = metrics.oldest_wait_frames;
 	result["servedWaitFrames"] = metrics.served_wait_frames;

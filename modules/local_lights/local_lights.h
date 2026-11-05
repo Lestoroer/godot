@@ -5,6 +5,7 @@
 
 #include "core/object/object.h"
 #include "core/os/mutex.h"
+#include "scene/3d/node_3d.h"
 #include "scene/resources/3d/world_3d.h"
 
 // Настройки и показатели локального света для скриптов стендов. Сама работа — в LocalLightsWorld на потоке рендера.
@@ -18,6 +19,7 @@ class LocalLights : public Object {
 	LocalLightsFrameMetrics last_frame_metrics;
 
 	void _set_world_enabled_on_render_thread(RID p_scenario, bool p_enabled);
+	void _set_held_instances_on_render_thread(RID p_scenario, const Vector<RID> &p_instances);
 
 protected:
 	static void _bind_methods();
@@ -31,6 +33,8 @@ public:
 
 	void set_world_enabled(const Ref<World3D> &p_world, bool p_enabled);
 	bool is_world_enabled(const Ref<World3D> &p_world) const;
+	// Что игрок держит в руках: лампы и геометрия этого узла и его потомков идут в очереди обновлений первыми. Пустой узел — руки пусты.
+	void set_held_item(const Ref<World3D> &p_world, Node3D *p_item);
 	void set_update_cap(int p_cap);
 	int get_update_cap() const;
 	void set_softness(float p_softness_per_meter);

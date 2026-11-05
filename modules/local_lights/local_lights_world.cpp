@@ -842,14 +842,20 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	if (serve_order.is_empty()) {
 		return;
 	}
-	struct ByOrder {
+	_assign_queue_tiers();
+	struct ByTierAndOrder {
 		const LocalVector<Lamp> *lamps;
-		bool operator()(uint32_t a, uint32_t b) const { return (*lamps)[a].queued_order < (*lamps)[b].queued_order; }
+		bool operator()(uint32_t a, uint32_t b) const {
+			const Lamp &first = (*lamps)[a];
+			const Lamp &second = (*lamps)[b];
+			return first.queue_tier != second.queue_tier ? first.queue_tier < second.queue_tier : first.queued_order < second.queued_order;
+		}
 	};
-	SortArray<uint32_t, ByOrder> sorter;
+	SortArray<uint32_t, ByTierAndOrder> sorter;
 	sorter.compare.lamps = &lamps;
 	sorter.sort(serve_order.ptr(), serve_order.size());
 	const uint32_t budget = settings.update_cap > 0 ? MIN(uint32_t(settings.update_cap), serve_order.size()) : serve_order.size();
+	_choose_lamps_to_serve(budget, p_frame);
 
 	uint64_t started = OS::get_singleton()->get_ticks_usec();
 	_apply_map_sizes(settings);
@@ -916,6 +922,11 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 		}
 	}
 	frame_metrics.lamps_served += budget;
+	for (uint32_t i = 0; i < budget; i++) {
+		const QueueTier tier = lamps[serve_order[i]].queue_tier;
+		frame_metrics.lamps_served_held += tier == QUEUE_TIER_HELD ? 1 : 0;
+		frame_metrics.lamps_served_influenced += tier == QUEUE_TIER_INFLUENCED ? 1 : 0;
+	}
 	uint32_t oldest = 0;
 	for (uint32_t i = budget; i < serve_order.size(); i++) {
 		oldest = MAX(oldest, uint32_t(p_frame - lamps[serve_order[i]].queued_frame));
@@ -926,6 +937,67 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 		if (lamps[serve_order[i]].map_faces == 0) {
 			frame_metrics.queue++;
 		}
+	}
+}
+
+void LocalLightsWorld::set_held_instances(const Vector<RID> &p_instances) {
+	held_instances.clear();
+	for (const RID &instance : p_instances) {
+		held_instances.push_back(instance);
+	}
+}
+
+void LocalLightsWorld::_assign_queue_tiers() {
+	for (Lamp &lamp : lamps) {
+		lamp.queue_tier = QUEUE_TIER_OTHER;
+	}
+	for (const RID &held : held_instances) {
+		const Instance *instance = scene_cull()->instance_owner.get_or_null(held);
+		if (!instance) {
+			continue;
+		}
+		if (instance->base_type == RSE::INSTANCE_LIGHT) {
+			const uint32_t *index = lamp_of_instance.getptr(held);
+			if (index) {
+				lamps[*index].queue_tier = QUEUE_TIER_HELD;
+			}
+			continue;
+		}
+		if (!((1 << instance->base_type) & RSE::INSTANCE_GEOMETRY_MASK) || !instance->base_data) {
+			continue;
+		}
+		const AABB &bounds = instance->transformed_aabb;
+		const RendererSceneCull::InstanceGeometryData *geometry = static_cast<const RendererSceneCull::InstanceGeometryData *>(instance->base_data);
+		for (const Instance *light : geometry->lights) {
+			const uint32_t *index = lamp_of_instance.getptr(light->self);
+			if (!index) {
+				continue;
+			}
+			Lamp &lamp = lamps[*index];
+			const Vector3 nearest = lamp.position.clamp(bounds.position, bounds.get_end());
+			if (lamp.queue_tier == QUEUE_TIER_OTHER && nearest.distance_squared_to(lamp.position) <= lamp.range * lamp.range) {
+				lamp.queue_tier = QUEUE_TIER_INFLUENCED;
+			}
+		}
+	}
+}
+
+// Движущийся предмет ставит свои лампы в очередь каждый кадр и мог бы занять весь cap: остальным всегда остаётся четверть.
+// При cap 1 они идут через кадр, а при cap от 2 лампа в руках обновляется каждый кадр.
+void LocalLightsWorld::_choose_lamps_to_serve(uint32_t p_budget, uint64_t p_frame) {
+	uint32_t others_first = 0;
+	while (others_first < serve_order.size() && lamps[serve_order[others_first]].queue_tier != QUEUE_TIER_OTHER) {
+		others_first++;
+	}
+	if (others_first == 0 || others_first == serve_order.size() || others_first <= p_budget / 2) {
+		// Либо очередь однородна, либо приоритетные и так оставляют остальным больше четверти.
+		return;
+	}
+	uint32_t reserved = p_budget >= 2 ? MAX(1u, p_budget / 4) : (p_frame % 2);
+	reserved = MIN(reserved, serve_order.size() - others_first);
+	const uint32_t priority_served = MIN(others_first, p_budget - reserved);
+	for (uint32_t i = 0; i < reserved && priority_served + i < others_first; i++) {
+		SWAP(serve_order[priority_served + i], serve_order[others_first + i]);
 	}
 }
 

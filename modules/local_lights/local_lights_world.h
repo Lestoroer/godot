@@ -32,6 +32,8 @@ struct LocalLightsFrameMetrics {
 	uint32_t lamps_in_view = 0;
 	uint32_t lamps_in_grid = 0;
 	uint32_t lamps_served = 0;
+	uint32_t lamps_served_held = 0;
+	uint32_t lamps_served_influenced = 0;
 	uint32_t queue = 0;
 	uint32_t oldest_wait_frames = 0;
 	uint32_t served_wait_frames = 0;
@@ -56,6 +58,13 @@ struct LocalLightsFrameMetrics {
 class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	typedef RendererSceneCull::Instance Instance;
 	typedef RendererSceneCull::InstanceLightData InstanceLightData;
+
+	// Порядок очереди: лампа в руках, лампы, на которые влияет предмет в руках, остальные.
+	enum QueueTier : uint8_t {
+		QUEUE_TIER_HELD,
+		QUEUE_TIER_INFLUENCED,
+		QUEUE_TIER_OTHER,
+	};
 
 	struct Lamp {
 		RID instance;
@@ -83,6 +92,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		// Очередь: кадр постановки и порядок прихода, ноль — не ждёт.
 		uint64_t queued_order = 0;
 		uint64_t queued_frame = 0;
+		QueueTier queue_tier = QUEUE_TIER_OTHER;
 		// Карта: место в атласе и снятая поза; map_faces == 0 — места нет.
 		Vector2i map_origin;
 		int map_side = 0;
@@ -210,6 +220,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	// Индексы caster_pool по лампам: отрезок лампы — caster_first и caster_count.
 	LocalVector<uint32_t> lamp_casters;
 	LocalVector<uint32_t> lamp_cutout_casters;
+	// Экземпляры предмета в руках: лампы и геометрия.
+	LocalVector<RID> held_instances;
 	LocalVector<uint32_t> serve_order;
 
 	// Сетка: окно по миру и блоки ламп по ячейкам.
@@ -261,6 +273,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	RID _cutout_pipeline_for(RD::VertexFormatID p_format);
 	bool _read_cutout(RID p_material, const void *p_shader_data, void *p_surface, CasterCutout &r_cutout) const;
 	void _draw_cutout_surface(RD::DrawListID p_list, const CasterSurface &p_caster, const Transform3D &p_light_from_world, float p_extent, const float *p_depth);
+	void _assign_queue_tiers();
+	void _choose_lamps_to_serve(uint32_t p_budget, uint64_t p_frame);
 	void _gather_casters(Lamp &r_lamp, const Instance *p_instance);
 	const InstanceCasters &_instance_surfaces(const Instance *p_geometry);
 	void _record_lamp(const Lamp &p_lamp, const LocalLightsSettings &p_settings);
@@ -282,6 +296,7 @@ public:
 	virtual void prepare_view(const LocalVector<Instance *> &p_lights) override;
 	virtual void render_screen_passes(RenderDataRD *p_render_data) override;
 
+	void set_held_instances(const Vector<RID> &p_instances);
 	void set_enabled(bool p_enabled);
 	Dictionary memory_report() const;
 	Dictionary read_screen_buffers() const;
