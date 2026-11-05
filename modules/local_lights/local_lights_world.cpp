@@ -15,11 +15,15 @@
 
 namespace {
 
-const Vector3i CELL_DIMS(20, 20, 20);
-// Сетка покрывает охват ламп: чем он меньше, тем мельче ячейки и короче их списки материалов и прохода отношения.
-// Ячейка меняется ступенями, чтобы движущаяся лампа не пересчитывала все ячейки на каждом кадре.
-const float CELL_SIZES[] = { 0.8f, 1.13f, 1.6f };
-// Окно шире охвата: лампы двигаются без пересчёта. Вернуться к меньшей ячейке можно только с запасом побольше.
+// Сетка покрывает охват ламп по каждой оси отдельно: интерьер плоский, и куб тратил бы ячейки на высоту. Чем мельче ячейка,
+// тем короче её список и тем меньше ламп вне радиуса перебирают материал и проход отношения. Число ячеек ограничено:
+// сетка заново раскладывается и загружается на каждом кадре движения ламп.
+const float CELL_SIZES[] = { 0.5f, 0.63f, 0.8f, 1.0f, 1.26f, 1.6f, 2.0f, 2.5f, 3.2f };
+// Мельче ячейки нужно больше: на стенде нагрузки ячейка 0,8 м вместо 1,26 м сокращает перебор ещё на четверть, но втрое дороже на CPU при движении ламп.
+const uint64_t GRID_CELL_BUDGET = 12288;
+// Сетка лежит в текстуре шириной по x и высотой y × z.
+const int GRID_TEXTURE_MAX_SIDE = 16384;
+// Окно шире охвата: лампы двигаются без пересчёта. Ячейка меняется ступенями, а вернуться к меньшей можно только с запасом побольше.
 const float WINDOW_SLACK = 1.1f;
 const float CELL_RETURN_SLACK = 1.4f;
 const float RECENTER_CELLS = 4.0f;
@@ -163,6 +167,33 @@ uint32_t box_cube_faces(const Vector3 &p_low, const Vector3 &p_high, float p_gua
 			uint32_t(p_guard * p_high.y + across_y >= 0.0f) << 5;
 }
 
+bool grid_fits(const Vector3i &p_dims) {
+	return uint64_t(p_dims.x) * p_dims.y * p_dims.z <= GRID_CELL_BUDGET && p_dims.x <= GRID_TEXTURE_MAX_SIDE && p_dims.y * p_dims.z <= GRID_TEXTURE_MAX_SIDE;
+}
+
+struct GridLayout {
+	float cell = 0.0f;
+	Vector3i dims;
+};
+
+// Наименьшая ячейка, при которой окно с запасом p_slack покрывает охват. Две лишние ячейки по оси — привязка начала окна к шагу ячейки.
+// Охват шире наибольшего окна: длинные оси укорачиваются, и окно следует за центром ламп.
+GridLayout grid_layout_for(const Vector3 &p_extent, float p_slack) {
+	GridLayout layout;
+	for (const float cell : CELL_SIZES) {
+		layout.cell = cell;
+		layout.dims = Vector3i((p_extent * p_slack / cell).ceil()) + Vector3i(2, 2, 2);
+		if (grid_fits(layout.dims)) {
+			return layout;
+		}
+	}
+	while (!grid_fits(layout.dims)) {
+		const int axis = layout.dims.max_axis_index();
+		layout.dims[axis] = MAX(1, layout.dims[axis] * 7 / 8);
+	}
+	return layout;
+}
+
 } // namespace
 
 LocalLightsWorld::LocalLightsWorld(RID p_scenario) {
@@ -186,23 +217,31 @@ LocalLightsWorld::LocalLightsWorld(RID p_scenario) {
 	blur_rd_shader = blur_shader.version_get_shader(blur_shader_version, 0);
 	blur_pipeline = rd->compute_pipeline_create(blur_rd_shader);
 	params_buffer = rd->uniform_buffer_create(sizeof(ScreenParams));
+	// До первой лампы окна нет: пустая сетка в одну ячейку.
+	_resize_grid(Vector3i(1, 1, 1));
+}
 
-	const uint32_t cell_total = CELL_DIMS.x * CELL_DIMS.y * CELL_DIMS.z;
+void LocalLightsWorld::_resize_grid(const Vector3i &p_dims) {
+	cell_dims = p_dims;
+	const uint32_t cell_total = p_dims.x * p_dims.y * p_dims.z;
 	cell_omni.resize(cell_total);
 	cell_spot.resize(cell_total);
 	cell_next.resize(cell_total);
 	memset(cell_omni.ptr(), 0, cell_total * sizeof(uint32_t));
 	memset(cell_spot.ptr(), 0, cell_total * sizeof(uint32_t));
+	filled_cells.clear();
 	grid_bytes.resize(cell_total * 4 * sizeof(float));
 	memset(grid_bytes.ptrw(), 0, grid_bytes.size());
-
+	_retire_texture(grid_rd, grid_texture);
 	RD::TextureFormat grid_format;
 	grid_format.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
-	grid_format.width = CELL_DIMS.x;
-	grid_format.height = CELL_DIMS.y * CELL_DIMS.z;
+	grid_format.width = p_dims.x;
+	grid_format.height = p_dims.y * p_dims.z;
 	grid_format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
 	grid_rd = rd->texture_create(grid_format, RD::TextureView());
 	grid_texture = _wrap_texture(grid_rd, RSE::TEXTURE_LAYERED_2D_ARRAY);
+	globals_published = false;
+	repack_needed = true;
 }
 
 LocalLightsWorld::~LocalLightsWorld() {
@@ -440,21 +479,9 @@ void LocalLightsWorld::_update_window() {
 	if (first) {
 		return;
 	}
-	const float extent = bounds.get_longest_axis_size();
-	float wanted_cell = CELL_SIZES[0];
-	for (const float size : CELL_SIZES) {
-		wanted_cell = size;
-		// Текущая ступень остаётся, пока охват в неё входит; меньшая берётся с запасом побольше.
-		if (extent * (size < cell_size ? CELL_RETURN_SLACK : WINDOW_SLACK) <= CELL_DIMS.x * size) {
-			break;
-		}
-	}
 	const Vector3 center = bounds.get_center();
-	const Vector3 drift = (center - window_center).abs();
-	const float half_window = CELL_DIMS.x * cell_size * 0.5f;
-	// Охват шире самого большого окна: окно следует за центром ламп с запасом в несколько ячеек.
-	const float allowed_drift = extent * 0.5f <= half_window ? half_window - extent * 0.5f : RECENTER_CELLS * cell_size;
-	if (origin_valid && wanted_cell == cell_size && MAX(drift.x, MAX(drift.y, drift.z)) <= allowed_drift) {
+	// Текущее окно остаётся, пока держит охват и меньшая ячейка не помещается с запасом побольше.
+	if (origin_valid && grid_layout_for(bounds.size, CELL_RETURN_SLACK).cell >= cell_size && _window_holds(bounds)) {
 		// Лампа могла появиться до первого окна: её ячейки посчитаны в _refresh_lamp.
 		for (Lamp &lamp : lamps) {
 			if (lamp.active && lamp.cells.is_empty()) {
@@ -463,10 +490,18 @@ void LocalLightsWorld::_update_window() {
 		}
 		return;
 	}
-	cell_size = wanted_cell;
-	const Vector3 corner = center - Vector3(CELL_DIMS) * 0.5f * cell_size;
+	const GridLayout layout = grid_layout_for(bounds.size, WINDOW_SLACK);
+	cell_size = layout.cell;
+	window_narrow_axes = 0;
+	for (int axis = 0; axis < 3; axis++) {
+		window_narrow_axes |= float(layout.dims[axis] - 2) * cell_size < bounds.size[axis] ? 1 << axis : 0;
+	}
+	if (layout.dims != cell_dims) {
+		_resize_grid(layout.dims);
+	}
+	const Vector3 corner = center - Vector3(cell_dims) * 0.5f * cell_size;
 	origin = (corner / cell_size).floor() * cell_size;
-	window_center = origin + Vector3(CELL_DIMS) * 0.5f * cell_size;
+	window_center = origin + Vector3(cell_dims) * 0.5f * cell_size;
 	origin_valid = true;
 	globals_published = false;
 	for (Lamp &lamp : lamps) {
@@ -475,6 +510,20 @@ void LocalLightsWorld::_update_window() {
 		}
 	}
 	repack_needed = true;
+}
+
+// По оси, которую окно вмещает, охват лежит внутри окна. По оси, на которую окна не хватило, оно следует за центром ламп с запасом в несколько ячеек.
+bool LocalLightsWorld::_window_holds(const AABB &p_bounds) const {
+	const Vector3 window_end = origin + Vector3(cell_dims) * cell_size;
+	const Vector3 bounds_end = p_bounds.get_end();
+	const Vector3 center = p_bounds.get_center();
+	for (int axis = 0; axis < 3; axis++) {
+		const bool holds = (window_narrow_axes & (1 << axis)) ? Math::abs(center[axis] - window_center[axis]) <= RECENTER_CELLS * cell_size : p_bounds.position[axis] >= origin[axis] && bounds_end[axis] <= window_end[axis];
+		if (!holds) {
+			return false;
+		}
+	}
+	return true;
 }
 
 // Ячейки окна в охвате лампы: коробка охвата, внутри неё хорда сферы, у спота ещё конус.
@@ -494,15 +543,15 @@ void LocalLightsWorld::_compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cel
 		const Vector3 high(MAX(r_lamp.position.x, base.x + extent.x), MAX(r_lamp.position.y, base.y + extent.y), MAX(r_lamp.position.z, base.z + extent.z));
 		box = AABB(low, high - low);
 	}
-	const Vector3 window = Vector3(CELL_DIMS) * cell_size;
+	const Vector3 window = Vector3(cell_dims) * cell_size;
 	const Vector3 lo = box.position - origin;
 	const Vector3 hi = box.get_end() - origin;
 	if (hi.x < 0.0f || hi.y < 0.0f || hi.z < 0.0f || lo.x > window.x || lo.y > window.y || lo.z > window.z) {
 		return;
 	}
 	const auto clamp_cell = [this](float p_value, int p_dim) { return CLAMP(int(Math::floor(p_value / cell_size)), 0, p_dim - 1); };
-	const Vector3i cell_min(clamp_cell(lo.x, CELL_DIMS.x), clamp_cell(lo.y, CELL_DIMS.y), clamp_cell(lo.z, CELL_DIMS.z));
-	const Vector3i cell_max(clamp_cell(hi.x, CELL_DIMS.x), clamp_cell(hi.y, CELL_DIMS.y), clamp_cell(hi.z, CELL_DIMS.z));
+	const Vector3i cell_min(clamp_cell(lo.x, cell_dims.x), clamp_cell(lo.y, cell_dims.y), clamp_cell(lo.z, cell_dims.z));
+	const Vector3i cell_max(clamp_cell(hi.x, cell_dims.x), clamp_cell(hi.y, cell_dims.y), clamp_cell(hi.z, cell_dims.z));
 	const float sin_outer = Math::sqrt(MAX(1.0f - cos_outer * cos_outer, 0.0f));
 	const float half_cell = cell_size * 0.5f;
 	const float cell_bound = half_cell * Math::sqrt(3.0f);
@@ -510,8 +559,8 @@ void LocalLightsWorld::_compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cel
 	const float range_sq = reach_range * reach_range;
 	const Vector3 first_center = origin + Vector3(0.5f, 0.5f, 0.5f) * cell_size;
 	const float vx_base = first_center.x - r_lamp.position.x;
-	const int dx = CELL_DIMS.x;
-	const int dxy = CELL_DIMS.x * CELL_DIMS.y;
+	const int dx = cell_dims.x;
+	const int dxy = cell_dims.x * cell_dims.y;
 	for (int cz = cell_min.z; cz <= cell_max.z; cz++) {
 		const float vz = first_center.z + float(cz) * cell_size - r_lamp.position.z;
 		const float gap_z = MAX(Math::abs(vz) - half_cell, 0.0f);
@@ -1204,13 +1253,16 @@ void LocalLightsWorld::_update_grid() {
 void LocalLightsWorld::_repack() {
 	repack_needed = false;
 	frame_metrics.repacks++;
+	float *grid = reinterpret_cast<float *>(grid_bytes.ptrw());
+	// Остальные ячейки уже пусты: стирается только заполненное прошлой раскладкой.
 	for (uint32_t cell : filled_cells) {
 		cell_omni[cell] = 0;
 		cell_spot[cell] = 0;
+		grid[cell * 4] = 0.0f;
+		grid[cell * 4 + 1] = 0.0f;
+		grid[cell * 4 + 2] = 0.0f;
 	}
 	filled_cells.clear();
-	float *grid = reinterpret_cast<float *>(grid_bytes.ptrw());
-	memset(grid, 0, grid_bytes.size());
 	for (const Lamp &lamp : lamps) {
 		if (!lamp.active || !lamp.in_grid) {
 			continue;
@@ -1343,7 +1395,7 @@ void LocalLightsWorld::_publish_globals() {
 	RendererRD::MaterialStorage *materials = RendererRD::MaterialStorage::get_singleton();
 	materials->global_shader_parameter_set("local_light_origin", origin);
 	materials->global_shader_parameter_set("local_light_inverse_cell_size", 1.0f / cell_size);
-	materials->global_shader_parameter_set("local_light_dims", CELL_DIMS);
+	materials->global_shader_parameter_set("local_light_dims", cell_dims);
 	materials->global_shader_parameter_set("local_light_grid", grid_texture);
 	materials->global_shader_parameter_set("local_light_data", data_texture);
 	materials->global_shader_parameter_set("local_light_list", list_texture);
@@ -1396,9 +1448,9 @@ void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
 	params.origin_and_step[1] = origin.y;
 	params.origin_and_step[2] = origin.z;
 	params.origin_and_step[3] = cell_size;
-	params.dims[0] = CELL_DIMS.x;
-	params.dims[1] = CELL_DIMS.y;
-	params.dims[2] = CELL_DIMS.z;
+	params.dims[0] = cell_dims.x;
+	params.dims[1] = cell_dims.y;
+	params.dims[2] = cell_dims.z;
 	params.dims[3] = 0;
 	params.blur[0] = settings.softness_per_meter;
 	params.blur[1] = float(settings.fixed_noise_frame >= 0 ? uint64_t(settings.fixed_noise_frame) : Engine::get_singleton()->get_frames_drawn() % NOISE_FRAME_PERIOD);

@@ -237,8 +237,11 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	// Сетка: окно по миру и список ламп ячеек; таблица ламп: восемь текселей на лампу, по её индексу в lamps.
 	Vector3 origin;
 	float cell_size = 1.6f;
+	Vector3i cell_dims;
 	bool origin_valid = false;
 	Vector3 window_center;
+	// Оси, на которые окна не хватило, по биту на ось.
+	uint8_t window_narrow_axes = 0;
 	bool repack_needed = true;
 	bool grid_changed = false;
 	bool data_changed = false;
@@ -280,6 +283,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	bool _refresh_lamp(Lamp &r_lamp, const Instance *p_instance, uint64_t p_frame);
 	void _compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cells) const;
 	void _update_window();
+	bool _window_holds(const AABB &p_bounds) const;
+	void _resize_grid(const Vector3i &p_dims);
 	void _release_map(Lamp &r_lamp);
 	void _release_lamp(uint32_t p_index);
 	void _serve_queue(uint64_t p_frame);
