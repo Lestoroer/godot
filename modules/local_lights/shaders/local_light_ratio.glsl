@@ -63,9 +63,10 @@ vec3 surface_normal_at(ivec2 pixel, ivec2 size, vec3 point) {
 	return dot(normal, point) > 0.0 ? -normal : normal;
 }
 
-// Запас грани сверх её ребра, тексели: контракт с local_lights_world.cpp.
+// Грань снята шире своего ребра на столько текселей в сумме, по половине с каждой стороны: контракт с local_lights_world.cpp.
 const float CUBE_GUARD_TEXELS = 4.0;
-// Запас вдоль луча меньше самой тонкой стенки 5 мм. Доля текселя добавляется только до предела, иначе вдали запас станет толще стенки.
+// Основа запаса вдоль луча, вместе с долей текселя меньше самой тонкой стенки 5 мм. Доля текселя добавляется только до предела, иначе вдали запас станет толще стенки.
+// Половина шага записанной глубины идёт сверху и на дальнем конце карты доходит до 6 мм: там стенка 5 мм может оказаться тоньше запаса.
 const float WALL_MARGIN_METERS = 0.003;
 const float BEND_MARGIN_TEXELS = 0.125;
 const float BEND_MARGIN_LIMIT_METERS = 0.0015;
@@ -78,8 +79,8 @@ const float OWN_SURFACE_TEXELS = 0.25;
 const float MAP_DEPTH_STEPS = 65535.0;
 
 // Открытая доля лампы по четырём ближайшим текселям карты. sample_tangent — направление выборки в осях карты (x/z, y/z), texel_tangent — его шаг на тексель,
-// axis_depth — глубина точки вдоль оси карты; local_point и local_normal — точка и её нормаль в этих же осях.
-float open_share(vec2 atlas_texel, vec2 sample_tangent, float texel_tangent, float axis_depth, float axis_cosine, vec3 local_point, vec3 local_normal, float near_plane, float range) {
+// axis_depth — глубина точки вдоль оси карты; plane_distance — расстояние плоскости точки от лампы вдоль нормали; local_normal — нормаль в осях карты.
+float open_share(vec2 atlas_texel, vec2 sample_tangent, float texel_tangent, float axis_depth, float axis_cosine, float plane_distance, vec3 local_normal, float near_plane, float range) {
 	// Выборка точно между четырьмя центрами: округление координаты в gather не выбирает другую четвёрку, чем считают веса.
 	vec2 below = floor(atlas_texel - 0.5);
 	vec4 stored = textureGather(shadow_atlas, (below + 1.0) / vec2(textureSize(shadow_atlas, 0)), 0);
@@ -103,7 +104,7 @@ float open_share(vec2 atlas_texel, vec2 sample_tangent, float texel_tangent, flo
 	vec4 open_texels = vec4(greaterThanEqual(depth, vec4(compared_depth)));
 	vec4 ray_x = sample_tangent.x + (vec4(0.0, 1.0, 1.0, 0.0) - fraction.x) * texel_tangent;
 	vec4 ray_y = sample_tangent.y + (vec4(1.0, 1.0, 0.0, 0.0) - fraction.y) * texel_tangent;
-	vec4 plane_depth = dot(local_normal, local_point) / (local_normal.x * ray_x + local_normal.y * ray_y + local_normal.z);
+	vec4 plane_depth = plane_distance / (local_normal.x * ray_x + local_normal.y * ray_y + local_normal.z);
 	vec4 own_texels = vec4(lessThanEqual(abs(depth - plane_depth), vec4(margin + OWN_SURFACE_TEXELS * texel_tangent * axis_depth)));
 	if (dot(open_texels, own_texels) <= 0.0) {
 		return all(greaterThan(open_texels, vec4(0.5))) ? 1.0 : 0.0;
@@ -122,30 +123,25 @@ float omni_visibility(vec4 t4, vec4 t6, float side, vec3 to_point, vec3 surface_
 	// Оси граней — контракт с local_lights_world.cpp.
 	float face;
 	vec3 local;
-	vec3 local_point;
 	vec3 local_normal;
 	if (magnitude.x >= magnitude.y && magnitude.x >= magnitude.z) {
 		face = sample_direction.x > 0.0 ? 0.0 : 1.0;
-		float side_sign = sign(sample_direction.x);
-		local = vec3(sample_direction.z, sample_direction.y, magnitude.x);
-		local_point = vec3(p.z, p.y, side_sign * p.x);
-		local_normal = vec3(surface_normal.z, surface_normal.y, side_sign * surface_normal.x);
+		local = sample_direction.zyx;
+		local_normal = surface_normal.zyx;
 	} else if (magnitude.y >= magnitude.z) {
 		face = sample_direction.y < 0.0 ? 2.0 : 5.0;
-		float side_sign = sign(sample_direction.y);
-		local = vec3(sample_direction.x, sample_direction.z, magnitude.y);
-		local_point = vec3(p.x, p.z, side_sign * p.y);
-		local_normal = vec3(surface_normal.x, surface_normal.z, side_sign * surface_normal.y);
+		local = sample_direction.xzy;
+		local_normal = surface_normal.xzy;
 	} else {
 		face = sample_direction.z > 0.0 ? 3.0 : 4.0;
-		float side_sign = sign(sample_direction.z);
-		local = vec3(sample_direction.x, sample_direction.y, magnitude.z);
-		local_point = vec3(p.x, p.y, side_sign * p.z);
-		local_normal = vec3(surface_normal.x, surface_normal.y, side_sign * surface_normal.z);
+		local = sample_direction;
+		local_normal = surface_normal;
 	}
+	local_normal.z *= sign(local.z);
+	local.z = abs(local.z);
 	vec2 tangent = local.xy / local.z;
 	vec2 uv = tangent / face_span * 0.5 + 0.5;
-	return open_share(vec2(t6.w, t4.z) + vec2(face * side, 0.0) + uv * side, tangent, texel_tangent, reach * local.z, local.z, local_point, local_normal, t4.x, t4.w);
+	return open_share(vec2(t6.w, t4.z) + vec2(face * side, 0.0) + uv * side, tangent, texel_tangent, reach * local.z, local.z, dot(surface_normal, p), local_normal, t4.x, t4.w);
 }
 
 float spot_visibility(ivec2 sc, vec4 t4, vec4 t6, vec3 to_point, vec3 surface_normal) {
@@ -166,10 +162,10 @@ float spot_visibility(ivec2 sc, vec4 t4, vec4 t6, vec3 to_point, vec3 surface_no
 	if (any(greaterThan(abs(ndc), vec2(1.0)))) {
 		return 0.0;
 	}
-	vec3 local_point = vec3(dot(p, map_right), dot(p, t7.xyz), dot(p, t5.xyz));
 	vec3 local_normal = vec3(dot(surface_normal, map_right), dot(surface_normal, t7.xyz), dot(surface_normal, t5.xyz));
-	vec2 uv = ndc * 0.5 + 0.5;
-	return open_share(vec2(t6.w, t4.z) + uv * side, tangent, texel_tangent, reach * local.z, local.z, local_point, local_normal, t4.x, t4.w);
+	// У края снимка четвёрка текселей не должна заходить в соседнюю плитку: конус шире 67° или лампа, повёрнутая при старой карте.
+	vec2 tile_texel = clamp((ndc * 0.5 + 0.5) * side, vec2(1.0), vec2(side - 1.0));
+	return open_share(vec2(t6.w, t4.z) + tile_texel, tangent, texel_tangent, reach * local.z, local.z, dot(surface_normal, p), local_normal, t4.x, t4.w);
 }
 
 // Байты 1..255: ноль остаётся за пикселем без света ламп.
