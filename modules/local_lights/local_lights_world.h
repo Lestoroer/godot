@@ -73,7 +73,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		bool casts = false;
 		Vector3 position;
 		Vector3 axis;
-		Transform3D transform;
 		float range = 0.0f;
 		float angle = 0.0f;
 		Color linear_color;
@@ -275,7 +274,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 
 	void _begin_frame(uint64_t p_frame);
 	void _take_view_lamps(const LocalVector<Instance *> &p_lights, uint64_t p_frame);
-	void _refresh_lamp(Lamp &r_lamp, const Instance *p_instance, uint64_t p_frame);
+	bool _refresh_lamp(Lamp &r_lamp, const Instance *p_instance, uint64_t p_frame);
 	void _compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cells) const;
 	void _update_window();
 	void _release_map(Lamp &r_lamp);
@@ -284,7 +283,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _apply_map_sizes(const LocalLightsSettings &p_settings);
 	int _map_side_for(const Lamp &p_lamp) const;
 	bool _place_map(Lamp &r_lamp, int p_side);
-	void _free_map_place(const Lamp &p_lamp);
+	void _free_map_place(const Vector2i &p_origin, int p_side, int p_faces);
 	void _ensure_atlas_height();
 	RID _pipeline_for(HashMap<RD::VertexFormatID, RID> &r_pipelines, RID p_shader, RD::VertexFormatID p_format);
 	bool _read_cutout(RID p_material, const void *p_shader_data, void *p_surface, CasterCutout &r_cutout) const;

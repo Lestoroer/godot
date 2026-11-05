@@ -353,11 +353,9 @@ void LocalLightsWorld::_take_view_lamps(const LocalVector<Instance *> &p_lights,
 		lamp.last_visible_frame = p_frame;
 		InstanceLightData *light = static_cast<InstanceLightData *>(instance->base_data);
 		if (is_new || refresh_all || light->is_shadow_dirty()) {
-			const Vector3 previous_position = lamp.position;
-			const float previous_range = lamp.range;
-			_refresh_lamp(lamp, instance, p_frame);
+			const bool reach_changed = _refresh_lamp(lamp, instance, p_frame);
 			light->clear_shadow_dirty();
-			form_changed = form_changed || is_new || refresh_all || previous_position != lamp.position || previous_range != lamp.range;
+			form_changed = form_changed || is_new || refresh_all || reach_changed;
 		}
 	}
 	refresh_all = false;
@@ -366,18 +364,20 @@ void LocalLightsWorld::_take_view_lamps(const LocalVector<Instance *> &p_lights,
 	}
 }
 
-void LocalLightsWorld::_refresh_lamp(Lamp &r_lamp, const Instance *p_instance, uint64_t p_frame) {
+// Возвращает, сдвинулся ли охват лампы: окну сетки важны её позиция и радиус.
+bool LocalLightsWorld::_refresh_lamp(Lamp &r_lamp, const Instance *p_instance, uint64_t p_frame) {
 	const RID base = p_instance->base;
 	auto *storage = RSG::light_storage;
 	const Transform3D &transform = p_instance->transform;
 	const float range = storage->light_get_param(base, RSE::LIGHT_PARAM_RANGE);
 	const bool spot = storage->light_get_type(base) == RSE::LIGHT_SPOT;
 	const float angle = spot ? storage->light_get_param(base, RSE::LIGHT_PARAM_SPOT_ANGLE) : 0.0f;
-	const bool form_changed = r_lamp.range != range || r_lamp.angle != angle || r_lamp.transform != transform || r_lamp.cells.is_empty();
+	const Vector3 axis = spot ? -transform.basis.get_column(2).normalized() : Vector3();
+	const bool reach_changed = r_lamp.position != transform.origin || r_lamp.range != range;
+	const bool form_changed = reach_changed || r_lamp.angle != angle || r_lamp.axis != axis || r_lamp.cells.is_empty();
 	r_lamp.spot = spot;
-	r_lamp.transform = transform;
 	r_lamp.position = transform.origin;
-	r_lamp.axis = spot ? -transform.basis.get_column(2).normalized() : Vector3();
+	r_lamp.axis = axis;
 	r_lamp.range = range;
 	r_lamp.angle = angle;
 	r_lamp.linear_color = storage->light_get_color(base).srgb_to_linear();
@@ -406,6 +406,7 @@ void LocalLightsWorld::_refresh_lamp(Lamp &r_lamp, const Instance *p_instance, u
 		r_lamp.queued_order = 0;
 		_release_map(r_lamp);
 	}
+	return reach_changed;
 }
 
 // Окно следует за лампами: центр их охвата, снап к ячейке. Сдвиг окна заново раскладывает все лампы.
@@ -525,17 +526,13 @@ void LocalLightsWorld::_compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cel
 	}
 }
 
-void LocalLightsWorld::_free_map_place(const Lamp &p_lamp) {
-	const uint32_t rect_class = uint32_t(p_lamp.map_side) * 8 + uint32_t(p_lamp.map_faces);
-	if (!free_map_rects.has(rect_class)) {
-		free_map_rects.insert(rect_class, LocalVector<Vector2i>());
-	}
-	free_map_rects[rect_class].push_back(p_lamp.map_origin);
+void LocalLightsWorld::_free_map_place(const Vector2i &p_origin, int p_side, int p_faces) {
+	free_map_rects[uint32_t(p_side) * 8 + uint32_t(p_faces)].push_back(p_origin);
 }
 
 void LocalLightsWorld::_release_map(Lamp &r_lamp) {
 	if (r_lamp.map_faces > 0) {
-		_free_map_place(r_lamp);
+		_free_map_place(r_lamp.map_origin, r_lamp.map_side, r_lamp.map_faces);
 	}
 	if (r_lamp.map_faces > 0 || r_lamp.map_valid) {
 		r_lamp.data_dirty = true;
@@ -601,10 +598,9 @@ int LocalLightsWorld::_map_side_for(const Lamp &p_lamp) const {
 // Старое место лампы освобождается только после выдачи нового: при нехватке места лампа остаётся со старой картой.
 bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 	const int faces = r_lamp.spot ? 1 : 6;
-	Lamp previous_place;
-	previous_place.map_origin = r_lamp.map_origin;
-	previous_place.map_side = r_lamp.map_side;
-	previous_place.map_faces = r_lamp.map_faces;
+	const Vector2i previous_origin = r_lamp.map_origin;
+	const int previous_side = r_lamp.map_side;
+	const int previous_faces = r_lamp.map_faces;
 	LocalVector<Vector2i> *free_rects = free_map_rects.getptr(uint32_t(p_side) * 8 + uint32_t(faces));
 	if (free_rects && !free_rects->is_empty()) {
 		r_lamp.map_origin = (*free_rects)[free_rects->size() - 1];
@@ -635,8 +631,8 @@ bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 	}
 	r_lamp.map_side = p_side;
 	r_lamp.map_faces = faces;
-	if (previous_place.map_faces > 0) {
-		_free_map_place(previous_place);
+	if (previous_faces > 0) {
+		_free_map_place(previous_origin, previous_side, previous_faces);
 	}
 	return true;
 }
