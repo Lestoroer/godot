@@ -275,7 +275,7 @@ void SurfaceCacheGatherRD::mark(const char *name, ObjectID view, bool enabled) {
 	}
 }
 
-String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID tlas, const Ref<Resource> &settings, int light_count, RID material_changes, const LocalVector<Motion> &moves) {
+String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID tlas, const Ref<Resource> &settings, int light_count, int emitter_count, RID material_changes, const LocalVector<Motion> &moves) {
 	ERR_FAIL_COND_V(!data || !device || settings.is_null() || resources.size() != 4, String());
 	Ref<RenderSceneBuffersRD> buffers = data->get_render_scene_buffers();
 	if (buffers.is_null()) {
@@ -353,6 +353,7 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	p.reflection[2] = settings->get("reflection_bounces");
 	p.reflection[3] = camera_moved;
 	p.probe_settings[0] = settings->get("probe_ray_passes");
+	p.probe_settings[1] = emitter_count;
 	p.roughness = settings->get("reflection_ray_roughness");
 	p.reflection_history = reflection_history;
 	p.probes[0] = 16;
@@ -364,7 +365,6 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	matrix(p.inverse_matrices + 16, v.previous.inverse());
 	write_moves(p, moves);
 	p.limits[0] = settings->get("diffuse_history_seconds");
-	p.limits[2] = history_frames("reflection_moving_seconds");
 	p.limits[3] = settings->get("reflection_filter_radius");
 	device->buffer_update(v.camera, 0, sizeof(p), &p);
 	Sets &sets = v.sets[v.frame % 2];

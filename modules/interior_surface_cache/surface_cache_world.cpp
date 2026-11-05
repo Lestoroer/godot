@@ -17,6 +17,8 @@ bool SurfaceCacheWorldRD::measure_gpu_time = false;
 double SurfaceCacheWorldRD::gpu_time_ms = 0;
 static const char *buffer_names[] = { "surfaces", "orientations", "materials", "lights", "material_changes", "surface_flags" };
 static constexpr uint32_t MATERIAL_BYTES = 64, SURFACE_BYTES = 32, LIGHT_BYTES = 64;
+// Тип записи источника для светящегося прямоугольника: после типов RSE::LightType (cache_trace, LIGHT_EMITTER).
+static constexpr float LIGHT_EMITTER = 4.0f;
 static constexpr uint32_t PAGE_BYTES = 2097152;
 // При загрузке допустим больший бюджет: меньший лишь продлевает ожидание; после загрузки работа не должна задерживать игру.
 static constexpr double STARTUP_BUDGET_MS = 33.0, UPDATE_BUDGET_MS = 4.0;
@@ -31,9 +33,11 @@ static uint32_t page_size(uint32_t size) {
 
 void SurfaceCacheWorldRD::_bind_methods() {
 	BIND_CONSTANT(CAPTURE_TEXEL_BYTES);
+	BIND_CONSTANT(MAX_EMITTERS);
 	ClassDB::bind_method(D_METHOD("attach", "world", "settings"), &SurfaceCacheWorldRD::attach);
 	ClassDB::bind_method(D_METHOD("update_profile", "settings"), &SurfaceCacheWorldRD::update_profile);
 	ClassDB::bind_method(D_METHOD("set_rooms", "rooms"), &SurfaceCacheWorldRD::set_rooms);
+	ClassDB::bind_method(D_METHOD("set_emitters", "emitters"), &SurfaceCacheWorldRD::set_emitters);
 	ClassDB::bind_method(D_METHOD("dispose"), &SurfaceCacheWorldRD::dispose);
 	ClassDB::bind_method(D_METHOD("get_error"), &SurfaceCacheWorldRD::get_error);
 	ClassDB::bind_method(D_METHOD("get_metrics"), &SurfaceCacheWorldRD::get_metrics);
@@ -69,6 +73,18 @@ void SurfaceCacheWorldRD::update_profile(const Ref<Resource> &settings) {
 void SurfaceCacheWorldRD::set_rooms(const Array &p_rooms) {
 	rooms = p_rooms;
 	rooms_dirty = true;
+}
+
+void SurfaceCacheWorldRD::set_emitters(const Array &p_emitters) {
+	ERR_FAIL_COND_MSG(p_emitters.size() > MAX_EMITTERS, vformat("Surface Cache supports %d emitters, got %d", MAX_EMITTERS, p_emitters.size()));
+	emitters.clear();
+	for (int i = 0; i < p_emitters.size(); ++i) {
+		Dictionary entry = p_emitters[i];
+		ERR_FAIL_COND_MSG(!entry.has("instance") || !entry.has("surface") || !entry.has("rect"), "Surface Cache emitter needs instance, surface and rect");
+		emitters.push_back({ entry["instance"], entry["surface"], entry["rect"] });
+	}
+	capacity_dirty = true;
+	lights_dirty = true;
 }
 
 bool SurfaceCacheWorldRD::initialize_gpu() {
@@ -312,6 +328,13 @@ void SurfaceCacheWorldRD::update_world() {
 		rebuild_tlas();
 	}
 	mark("SurfaceCache tlas end", true);
+	int emitter_count = 0;
+	PackedByteArray records = encode_emitters(emitter_count);
+	if (records != emitter_records) {
+		emitter_records = records;
+		active_emitters = emitter_count;
+		lights_dirty = true;
+	}
 	if (lights_dirty) {
 		upload_lights();
 		lights_dirty = false;
@@ -404,7 +427,7 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 	mark("SurfaceCache gather begin" + suffix, true);
 	uint64_t start = OS::get_singleton()->get_ticks_usec();
 	RID resources[] = { buffers[SURFACES], buffers[ORIENTATIONS], buffers[MATERIALS], buffers[LIGHTS] };
-	String result = gather->render(data, resources, tlas, profile, lights.size(), buffers[MATERIAL_CHANGES], frame_moves);
+	String result = gather->render(data, resources, tlas, profile, active_emitters + lights.size(), active_emitters, buffers[MATERIAL_CHANGES], frame_moves);
 	counters.gather_ms += milliseconds(start);
 	mark("SurfaceCache gather end" + suffix, true);
 	if (!gather->get_error().is_empty()) {
@@ -612,7 +635,7 @@ void SurfaceCacheWorldRD::required_sizes(uint32_t *r_sizes) const {
 		surfaces * SURFACE_BYTES,
 		MAX(16u, uint32_t(orientation_ranges.extent) * 4),
 		surfaces * MATERIAL_BYTES,
-		MAX(LIGHT_BYTES, Math::nearest_power_of_2_templated(uint32_t(lights.size())) * LIGHT_BYTES), 16,
+		MAX(LIGHT_BYTES, Math::nearest_power_of_2_templated(uint32_t(emitters.size() + lights.size())) * LIGHT_BYTES), 16,
 		MAX(16u, surfaces * 4)
 	};
 	memcpy(r_sizes, sizes, sizeof(sizes));
@@ -855,6 +878,29 @@ PackedByteArray SurfaceCacheWorldRD::encode_light(const Dictionary &light) {
 	return result;
 }
 
+// Записи прямоугольников, чей экземпляр уже в GI и захвачен: свечение берёт материал поверхности по её номеру.
+PackedByteArray SurfaceCacheWorldRD::encode_emitters(int &r_count) const {
+	PackedByteArray result;
+	r_count = 0;
+	for (const Emitter &emitter : emitters) {
+		Instance *const *found = instances.getptr(emitter.instance);
+		if (!found || (*found)->tlas_index < 0 || (*found)->capture_serial == 0 || emitter.surface < 0 || emitter.surface >= int((*found)->shared->surfaces.size())) {
+			continue;
+		}
+		const Instance &state = **found;
+		Transform3D rect = state.transform * emitter.rect;
+		Vector3 u = rect.basis.get_column(0), v = rect.basis.get_column(1), normal = u.cross(v).normalized();
+		uint32_t surface = uint32_t(state.first_surface + emitter.surface);
+		float values[16] = { rect.origin.x, rect.origin.y, rect.origin.z, LIGHT_EMITTER, normal.x, normal.y, normal.z, 0.0f, u.x, u.y, u.z, 0.0f, v.x, v.y, v.z, 0.0f };
+		memcpy(&values[7], &surface, 4);
+		int offset = result.size();
+		result.resize(offset + LIGHT_BYTES);
+		memcpy(result.ptrw() + offset, values, LIGHT_BYTES);
+		++r_count;
+	}
+	return result;
+}
+
 void SurfaceCacheWorldRD::note_light_change(const PackedByteArray &previous, const PackedByteArray &current) {
 	for (const PackedByteArray *data : { &previous, &current }) {
 		if (!data->is_empty()) {
@@ -885,10 +931,12 @@ void SurfaceCacheWorldRD::note_dirty(const AABB &bounds) {
 	dirty_bounds.push_back(bounds.grow(0.001));
 }
 
+// Прямоугольники идут первыми: зонды перебирают только их (GatherView.probe_settings.y).
 void SurfaceCacheWorldRD::upload_lights() {
 	PackedByteArray data;
-	data.resize(MAX(uint32_t(LIGHT_BYTES), lights.size() * LIGHT_BYTES));
-	int offset = 0;
+	data.resize(MAX(uint32_t(LIGHT_BYTES), emitter_records.size() + lights.size() * LIGHT_BYTES));
+	memcpy(data.ptrw(), emitter_records.ptr(), emitter_records.size());
+	int offset = emitter_records.size();
 	for (const KeyValue<RID, PackedByteArray> &entry : lights) {
 		memcpy(data.ptrw() + offset, entry.value.ptr(), LIGHT_BYTES);
 		offset += LIGHT_BYTES;
@@ -978,6 +1026,7 @@ Dictionary SurfaceCacheWorldRD::get_metrics() const {
 	result["surfaces"] = surface_ranges.extent;
 	result["triangles"] = triangle_total;
 	result["world_frames"] = frame;
+	result["emitters"] = active_emitters;
 	result["cpu_submit_ms"] = cpu_submit_ms;
 	result["gpu_buffer_bytes"] = buffer_memory_bytes;
 	Vector2i size = capture->get("size");
