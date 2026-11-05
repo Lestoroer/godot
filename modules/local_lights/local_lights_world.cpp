@@ -119,15 +119,14 @@ RD::Uniform buffer_uniform(int p_binding, RID p_buffer) {
 	return uniform;
 }
 
-// Плоскости снимка: точка внутри, если скалярное произведение с нормалью неотрицательно.
-bool box_outside_planes(const Vector3 *p_normals, int p_count, const Vector3 &p_center, const Vector3 &p_half) {
-	for (int i = 0; i < p_count; i++) {
+// Плоскости снимка: точка внутри, если скалярное произведение с нормалью неотрицательно. Исход у разных коробок непредсказуем, поэтому без раннего выхода.
+bool box_inside_pyramid(const Vector3 *p_normals, const Vector3 &p_center, const Vector3 &p_half) {
+	bool inside = true;
+	for (int i = 0; i < 4; i++) {
 		const Vector3 &n = p_normals[i];
-		if (n.dot(p_center) + Math::abs(n.x) * p_half.x + Math::abs(n.y) * p_half.y + Math::abs(n.z) * p_half.z < 0.0f) {
-			return true;
-		}
+		inside &= n.dot(p_center) + Math::abs(n.x) * p_half.x + Math::abs(n.y) * p_half.y + Math::abs(n.z) * p_half.z >= 0.0f;
 	}
-	return false;
+	return inside;
 }
 
 void pyramid_normals(const Vector3 &p_right, const Vector3 &p_up, const Vector3 &p_forward, float p_extent, Vector3 *r_normals) {
@@ -792,19 +791,17 @@ void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance,
 				const AABB &bounds = surface.bounds;
 				const Vector3 low = bounds.position - position;
 				const Vector3 high = bounds.get_end() - position;
-				const Vector3 nearest(CLAMP(0.0f, low.x, high.x), CLAMP(0.0f, low.y, high.y), CLAMP(0.0f, low.z, high.z));
-				if (nearest.length_squared() > range_sq) {
-					frame_metrics.surfaces_culled++;
-					continue;
-				}
+				// Лампа вне коробки по оси: ненулевая только одна из двух величин.
+				const Vector3 nearest(MAX(low.x, 0.0f) + MIN(high.x, 0.0f), MAX(low.y, 0.0f) + MIN(high.y, 0.0f), MAX(low.z, 0.0f) + MIN(high.z, 0.0f));
+				const bool in_range = nearest.length_squared() <= range_sq;
 				if (r_lamp.spot) {
 					const Vector3 half = bounds.size * 0.5f;
-					entry.face_mask = box_outside_planes(cone_normals, 4, bounds.position + half - position, half) ? 0 : 1;
+					entry.face_mask = box_inside_pyramid(cone_normals, bounds.position + half - position, half) ? 1 : 0;
 				} else {
 					entry.face_mask = box_cube_faces(low, high, cube_guard);
 				}
-				if (entry.face_mask == 0) {
-					frame_metrics.surfaces_culled += r_lamp.map_faces;
+				if (!in_range || entry.face_mask == 0) {
+					frame_metrics.surfaces_culled += in_range ? r_lamp.map_faces : 1;
 					continue;
 				}
 			}
