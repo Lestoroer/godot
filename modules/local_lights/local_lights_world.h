@@ -224,11 +224,11 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	LocalVector<Instance *> scenario_lamps;
 	LocalVector<uint32_t> serve_order;
 
-	// Сетка: окно по миру и список ламп ячеек; таблица ламп: одна строка данных на лампу, по её индексу в lamps.
+	// Сетка: окно по миру и список ламп ячеек; таблица ламп: восемь текселей на лампу, по её индексу в lamps.
 	Vector3 origin;
 	bool origin_valid = false;
 	Vector3 window_center;
-	bool repack_needed = false;
+	bool repack_needed = true;
 	bool grid_changed = false;
 	bool data_changed = false;
 	uint32_t data_rows = 0;

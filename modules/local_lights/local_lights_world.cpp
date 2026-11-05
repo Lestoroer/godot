@@ -29,11 +29,10 @@ const int ATLAS_WIDTH = 8192;
 const int ATLAS_HEIGHT_STEP = 512;
 const int ATLAS_MAX_HEIGHT = 8192;
 const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
-const float SPOT_HOTSPOT = 0.5f;
 // Снимок спота шире конуса: выборка у края конуса не выходит за плитку.
 const float SPOT_MAP_MARGIN_DEGREES = 8.0f;
 const float SPOT_MAP_MAX_HALF_ANGLE_DEGREES = 75.0f;
-// Запас грани куба сверх её ребра, тексели: gather 2×2 не выходит за плитку. Контракт с local_light_ratio.glsl.
+// Запас грани куба за её ребром, тексели в сумме, по половине с каждой стороны: gather 2×2 не выходит за плитку. Контракт с local_light_ratio.glsl.
 const float CUBE_GUARD_TEXELS = 4.0f;
 const uint32_t NOISE_FRAME_PERIOD = 1024;
 
@@ -65,7 +64,7 @@ Variant material_value(RID p_material, const SceneShader::ShaderData *p_shader_d
 	return value.get_type() != Variant::NIL ? value : material_value(p_material, p_shader_data, p_base_name);
 }
 
-// Ближняя плоскость карты: как можно ближе к лампе, но шаг 16 бит на дальнем конце остаётся меньше половины смещения тени.
+// Ближняя плоскость карты: как можно ближе к лампе, но шаг 16 бит на дальнем конце не больше 12,5 мм: половина шага входит в запас сравнения.
 float map_near_plane(float p_range) {
 	return MAX(MIN(p_range / 64.0f, 0.03f), p_range * p_range / (65536.0f * 0.0125f));
 }
@@ -1234,13 +1233,11 @@ void LocalLightsWorld::_write_lamp_data(uint32_t p_index) {
 	if (lamp.spot) {
 		const float outer = Math::deg_to_rad(MIN(lamp.angle, 89.0f));
 		const float cos_outer = Math::cos(outer);
-		const float cos_inner = Math::cos(outer * SPOT_HOTSPOT);
 		values[4] = lamp.axis.x;
 		values[5] = lamp.axis.y;
 		values[6] = lamp.axis.z;
 		values[7] = cos_outer * cos_outer;
 		values[12] = cos_outer;
-		values[13] = 1.0f / MAX(cos_inner - cos_outer, 1e-4f);
 	}
 	values[27] = -1.0f;
 	if (lamp.casts && lamp.map_valid) {
@@ -1276,18 +1273,13 @@ void LocalLightsWorld::_publish_globals() {
 	materials->global_shader_parameter_set("local_light_inverse_cell_size", 1.0f / CELL_SIZE);
 	materials->global_shader_parameter_set("local_light_dims", CELL_DIMS);
 	materials->global_shader_parameter_set("local_light_grid", grid_texture);
-	if (data_texture.is_valid()) {
-		materials->global_shader_parameter_set("local_light_data", data_texture);
-	}
-	if (list_texture.is_valid()) {
-		materials->global_shader_parameter_set("local_light_list", list_texture);
-	}
-	if (map_atlas_texture.is_valid()) {
-		materials->global_shader_parameter_set("local_light_map_atlas", map_atlas_texture);
-	}
-	if (blurred_ratio_texture.is_valid()) {
-		materials->global_shader_parameter_set("local_light_shadow_ratio", blurred_ratio_texture);
-	}
+	materials->global_shader_parameter_set("local_light_data", data_texture);
+	materials->global_shader_parameter_set("local_light_list", list_texture);
+	materials->global_shader_parameter_set("local_light_map_atlas", map_atlas_texture);
+	materials->global_shader_parameter_set("local_light_shadow_ratio", blurred_ratio_texture);
+	// Новая раскладка сетки уже загружена: материалы этого кадра должны читать её через новые текстуры и начало окна, иначе индексы укажут мимо.
+	materials->_update_global_shader_uniforms();
+	materials->_update_queued_materials();
 }
 
 void LocalLightsWorld::_ensure_screen_textures(const Size2i &p_size) {
