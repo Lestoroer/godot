@@ -280,6 +280,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _release_map(Lamp &r_lamp);
 	void _release_lamp(uint32_t p_index);
 	void _serve_queue(uint64_t p_frame);
+	uint32_t _order_queue(const LocalLightsSettings &p_settings, uint64_t p_frame);
+	void _gather_served_lamps(uint32_t p_budget, const LocalLightsSettings &p_settings, uint64_t p_frame);
+	void _finish_served_lamps(uint32_t p_budget, uint64_t p_frame);
 	void _apply_map_sizes(const LocalLightsSettings &p_settings);
 	int _map_side_for(const Lamp &p_lamp) const;
 	bool _place_map(Lamp &r_lamp, int p_side);

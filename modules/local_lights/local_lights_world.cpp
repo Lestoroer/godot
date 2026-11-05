@@ -886,56 +886,13 @@ const LocalLightsWorld::InstanceCasters &LocalLightsWorld::_instance_surfaces(co
 
 void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	const LocalLightsSettings &settings = LocalLights::get_singleton()->get_settings();
-	serve_order.clear();
-	for (uint32_t i = 0; i < lamps.size(); i++) {
-		const Lamp &lamp = lamps[i];
-		if (lamp.active && lamp.queued_order != 0 && lamp.last_visible_frame == p_frame) {
-			serve_order.push_back(i);
-		}
-	}
 	frame_metrics.queue = 0;
-	if (serve_order.is_empty()) {
+	const uint32_t budget = _order_queue(settings, p_frame);
+	if (budget == 0) {
 		return;
 	}
-	_assign_queue_tiers();
-	struct ByTierAndOrder {
-		const LocalVector<Lamp> *lamps;
-		bool operator()(uint32_t a, uint32_t b) const {
-			const Lamp &first = (*lamps)[a];
-			const Lamp &second = (*lamps)[b];
-			return first.queue_tier != second.queue_tier ? first.queue_tier < second.queue_tier : first.queued_order < second.queued_order;
-		}
-	};
-	SortArray<uint32_t, ByTierAndOrder> sorter;
-	sorter.compare.lamps = &lamps;
-	sorter.sort(serve_order.ptr(), serve_order.size());
-	const uint32_t budget = settings.update_cap > 0 && !bake_all_lamps ? MIN(uint32_t(settings.update_cap), serve_order.size()) : serve_order.size();
-	_choose_lamps_to_serve(budget, p_frame);
-
 	uint64_t started = OS::get_singleton()->get_ticks_usec();
-	_apply_map_sizes(settings);
-	cutout_pool.clear();
-	lamp_casters.clear();
-	gather_pass++;
-	for (uint32_t i = 0; i < budget; i++) {
-		Lamp &lamp = lamps[serve_order[i]];
-		const int side = _map_side_for(lamp);
-		if (lamp.map_side != side) {
-			_place_map(lamp, side);
-		}
-	}
-	_ensure_atlas_height();
-	for (uint32_t i = 0; i < budget; i++) {
-		Lamp &lamp = lamps[serve_order[i]];
-		if (lamp.map_faces == 0) {
-			continue;
-		}
-		const Instance *instance = scene_cull()->instance_owner.get_or_null(lamp.instance);
-		ERR_CONTINUE(!instance);
-		_gather_casters(lamp, instance, settings.caster_culling);
-		frame_metrics.served_wait_frames = MAX(frame_metrics.served_wait_frames, uint32_t(p_frame - lamp.queued_frame));
-	}
-	RendererRD::MeshStorage::get_singleton()->update_mesh_instances();
+	_gather_served_lamps(budget, settings, p_frame);
 	frame_metrics.gather_usec += OS::get_singleton()->get_ticks_usec() - started;
 
 	started = OS::get_singleton()->get_ticks_usec();
@@ -953,9 +910,68 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	}
 	frame_metrics.record_usec += OS::get_singleton()->get_ticks_usec() - started;
 
-	frame_metrics.lamps_served += budget;
-	frame_metrics.queue = serve_order.size() - budget;
-	for (uint32_t i = 0; i < budget; i++) {
+	_finish_served_lamps(budget, p_frame);
+}
+
+// Ждущие лампы вида в порядке обслуживания. Возвращает, сколько первых из них обслужить в этом кадре.
+uint32_t LocalLightsWorld::_order_queue(const LocalLightsSettings &p_settings, uint64_t p_frame) {
+	serve_order.clear();
+	for (uint32_t i = 0; i < lamps.size(); i++) {
+		const Lamp &lamp = lamps[i];
+		if (lamp.active && lamp.queued_order != 0 && lamp.last_visible_frame == p_frame) {
+			serve_order.push_back(i);
+		}
+	}
+	if (serve_order.is_empty()) {
+		return 0;
+	}
+	_assign_queue_tiers();
+	struct ByTierAndOrder {
+		const LocalVector<Lamp> *lamps;
+		bool operator()(uint32_t a, uint32_t b) const {
+			const Lamp &first = (*lamps)[a];
+			const Lamp &second = (*lamps)[b];
+			return first.queue_tier != second.queue_tier ? first.queue_tier < second.queue_tier : first.queued_order < second.queued_order;
+		}
+	};
+	SortArray<uint32_t, ByTierAndOrder> sorter;
+	sorter.compare.lamps = &lamps;
+	sorter.sort(serve_order.ptr(), serve_order.size());
+	const uint32_t budget = p_settings.update_cap > 0 && !bake_all_lamps ? MIN(uint32_t(p_settings.update_cap), serve_order.size()) : serve_order.size();
+	_choose_lamps_to_serve(budget, p_frame);
+	return budget;
+}
+
+void LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLightsSettings &p_settings, uint64_t p_frame) {
+	_apply_map_sizes(p_settings);
+	cutout_pool.clear();
+	lamp_casters.clear();
+	gather_pass++;
+	for (uint32_t i = 0; i < p_budget; i++) {
+		Lamp &lamp = lamps[serve_order[i]];
+		const int side = _map_side_for(lamp);
+		if (lamp.map_side != side) {
+			_place_map(lamp, side);
+		}
+	}
+	_ensure_atlas_height();
+	for (uint32_t i = 0; i < p_budget; i++) {
+		Lamp &lamp = lamps[serve_order[i]];
+		if (lamp.map_faces == 0) {
+			continue;
+		}
+		const Instance *instance = scene_cull()->instance_owner.get_or_null(lamp.instance);
+		ERR_CONTINUE(!instance);
+		_gather_casters(lamp, instance, p_settings.caster_culling);
+		frame_metrics.served_wait_frames = MAX(frame_metrics.served_wait_frames, uint32_t(p_frame - lamp.queued_frame));
+	}
+	RendererRD::MeshStorage::get_singleton()->update_mesh_instances();
+}
+
+void LocalLightsWorld::_finish_served_lamps(uint32_t p_budget, uint64_t p_frame) {
+	frame_metrics.lamps_served += p_budget;
+	frame_metrics.queue = serve_order.size() - p_budget;
+	for (uint32_t i = 0; i < p_budget; i++) {
 		Lamp &lamp = lamps[serve_order[i]];
 		frame_metrics.lamps_served_held += lamp.queue_tier == QUEUE_TIER_HELD ? 1 : 0;
 		frame_metrics.lamps_served_influenced += lamp.queue_tier == QUEUE_TIER_INFLUENCED ? 1 : 0;
@@ -973,7 +989,7 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 		}
 	}
 	uint32_t oldest = 0;
-	for (uint32_t i = budget; i < serve_order.size(); i++) {
+	for (uint32_t i = p_budget; i < serve_order.size(); i++) {
 		oldest = MAX(oldest, uint32_t(p_frame - lamps[serve_order[i]].queued_frame));
 	}
 	frame_metrics.oldest_wait_frames = MAX(frame_metrics.oldest_wait_frames, oldest);
