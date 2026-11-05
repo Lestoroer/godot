@@ -73,7 +73,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		bool casts = false;
 		Vector3 position;
 		Vector3 axis;
-		Transform3D transform;
 		float range = 0.0f;
 		float angle = 0.0f;
 		Color linear_color;
@@ -97,9 +96,11 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		bool map_valid = false;
 		Vector3 baked_origin;
 		float baked_range = 0.0f;
+		Vector3 baked_right;
 		Vector3 baked_up;
 		Vector3 baked_forward;
-		float baked_inverse_tangent = 0.0f;
+		// Тангенс половины угла снимка Spot.
+		float baked_extent = 0.0f;
 		// Кастеры текущего снимка в общем пуле.
 		uint32_t caster_first = 0;
 		uint32_t caster_count = 0;
@@ -110,12 +111,18 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		AABB bounds;
 		RID vertex_array;
 		RID index_array;
-		RD::VertexFormatID format = 0;
+		RID pipeline;
 		Vector3 decode_position;
 		Vector3 decode_size;
 		uint32_t triangles = 0;
 		// Индекс в cutout_pool, минус один — материал без выреза.
 		int32_t cutout = -1;
+	};
+
+	// Поверхность в снимке лампы и грани, куда она попадает, по биту на грань.
+	struct LampCaster {
+		const CasterSurface *surface = nullptr;
+		uint32_t face_mask = 0;
 	};
 
 	// Что вырезу нужно из материала и поверхности.
@@ -129,11 +136,14 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		Vector2 uv_offset;
 	};
 
-	// Отрезок caster_pool с поверхностями экземпляра: лампы видят одни и те же предметы, поверхности собираются один раз за обход очереди.
+	// Поверхности экземпляра. Лампы видят одни и те же предметы, поэтому собираются они один раз и живут, пока сцена не поднимет версию экземпляра.
 	struct InstanceCasters {
+		RID instance;
+		uint64_t version = 0;
 		uint64_t gather_pass = 0;
-		uint32_t first = 0;
-		uint32_t count = 0;
+		// Кадр деформации меняет буфер вершин, а обычный параметр материала — вырез, и оба не поднимают версию экземпляра.
+		bool collect_every_pass = false;
+		LocalVector<CasterSurface> surfaces;
 	};
 
 	// Полка атласа: места одной высоты слева направо.
@@ -209,14 +219,14 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	float map_texel_size = -1.0f;
 	LocalVector<MapShelf> map_shelves;
 	HashMap<uint32_t, LocalVector<Vector2i>> free_map_rects;
-	LocalVector<CasterSurface> caster_pool;
+	// Вырезы текущего обхода очереди.
 	LocalVector<CasterCutout> cutout_pool;
 	// По локальному индексу RID экземпляра.
 	LocalVector<InstanceCasters> instance_casters;
 	uint64_t gather_pass = 0;
-	// Индексы caster_pool по лампам: отрезок лампы — caster_first и caster_count.
-	LocalVector<uint32_t> lamp_casters;
-	LocalVector<uint32_t> lamp_cutout_casters;
+	// Поверхности в снимках ламп: отрезок лампы — caster_first и caster_count.
+	LocalVector<LampCaster> lamp_casters;
+	LocalVector<LampCaster> lamp_cutout_casters;
 	// Экземпляры предмета в руках: лампы и геометрия.
 	LocalVector<RID> held_instances;
 	// Следующий кадр снимает тени всех ламп мира: этап загрузки.
@@ -241,6 +251,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	LocalVector<uint32_t> cell_spot;
 	LocalVector<uint32_t> cell_next;
 	LocalVector<uint32_t> filled_cells;
+	// Ячейки обновляемой лампы до сравнения с её текущими: лампа в движении считает их каждый кадр.
+	LocalVector<uint32_t> fresh_cells;
 	RID grid_rd;
 	RID data_rd;
 	RID list_rd;
@@ -265,16 +277,19 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 
 	void _begin_frame(uint64_t p_frame);
 	void _take_view_lamps(const LocalVector<Instance *> &p_lights, uint64_t p_frame);
-	void _refresh_lamp(Lamp &r_lamp, const Instance *p_instance, uint64_t p_frame);
+	bool _refresh_lamp(Lamp &r_lamp, const Instance *p_instance, uint64_t p_frame);
 	void _compute_cells(Lamp &r_lamp, LocalVector<uint32_t> &r_cells) const;
 	void _update_window();
 	void _release_map(Lamp &r_lamp);
 	void _release_lamp(uint32_t p_index);
 	void _serve_queue(uint64_t p_frame);
+	uint32_t _order_queue(const LocalLightsSettings &p_settings, uint64_t p_frame);
+	void _gather_served_lamps(uint32_t p_budget, const LocalLightsSettings &p_settings, uint64_t p_frame);
+	void _finish_served_lamps(uint32_t p_budget, uint64_t p_frame);
 	void _apply_map_sizes(const LocalLightsSettings &p_settings);
 	int _map_side_for(const Lamp &p_lamp) const;
 	bool _place_map(Lamp &r_lamp, int p_side);
-	void _free_map_place(const Lamp &p_lamp);
+	void _free_map_place(const Vector2i &p_origin, int p_side, int p_faces);
 	void _ensure_atlas_height();
 	RID _pipeline_for(HashMap<RD::VertexFormatID, RID> &r_pipelines, RID p_shader, RD::VertexFormatID p_format);
 	bool _read_cutout(RID p_material, const void *p_shader_data, void *p_surface, CasterCutout &r_cutout) const;
@@ -282,9 +297,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _collect_scenario_lamps();
 	void _assign_queue_tiers();
 	void _choose_lamps_to_serve(uint32_t p_budget, uint64_t p_frame);
-	void _gather_casters(Lamp &r_lamp, const Instance *p_instance);
+	void _gather_casters(Lamp &r_lamp, const Instance *p_instance, bool p_cull);
 	const InstanceCasters &_instance_surfaces(const Instance *p_geometry);
-	void _record_lamp(const Lamp &p_lamp, const LocalLightsSettings &p_settings);
+	void _record_lamp(const Lamp &p_lamp);
 	void _update_grid();
 	void _repack();
 	void _ensure_data_table();
