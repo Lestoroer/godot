@@ -41,7 +41,7 @@ const uint32_t LIST_WIDTH = 2048;
 const int ATLAS_WIDTH = 8192;
 // Атлас растёт по наименьшей плитке, а за кадр его высота меняется не больше раза.
 const int ATLAS_HEIGHT_STEP = 64;
-const uint64_t ATLAS_GROWTH_HEADROOM_PERCENT = 115;
+const uint64_t ATLAS_GROWTH_PERCENT = 125;
 const int ATLAS_MAX_HEIGHT = 16384;
 const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
 // Клетка карты занятости атласа: все стороны плиток ей кратны, и место любой карты — целое число клеток.
@@ -923,9 +923,9 @@ void LocalLightsWorld::_ensure_atlas_height() {
 	if (atlas_used_height <= atlas_height) {
 		return;
 	}
-	// Атлас растёт сразу под всю площадь плана с запасом на потери размещения, а не под одну карту: при постепенном добавлении ламп
-	// копий атласа мало, и пик двух текстур в кадре роста бывает редко. Выше бюджета атлас не растёт.
-	const uint64_t planned_rows = plan_committed_area * ATLAS_GROWTH_HEADROOM_PERCENT / 100 / ATLAS_WIDTH;
+	// Атлас растёт сразу под всю площадь плана, а при следующем росте — не меньше чем на четверть: при постепенном добавлении ламп
+	// копий атласа и кадров с двумя текстурами мало, а на загрузке лишних строк нет. Выше бюджета атлас не растёт.
+	const uint64_t planned_rows = MAX(plan_committed_area / ATLAS_WIDTH, uint64_t(atlas_height) * ATLAS_GROWTH_PERCENT / 100);
 	const int wanted = MAX(atlas_used_height, int(MIN(planned_rows, uint64_t(atlas_budget_rows))));
 	const int height = MIN(((wanted + ATLAS_HEIGHT_STEP - 1) / ATLAS_HEIGHT_STEP) * ATLAS_HEIGHT_STEP, atlas_budget_rows);
 	RD::TextureFormat format;
