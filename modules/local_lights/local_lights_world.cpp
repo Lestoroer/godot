@@ -328,7 +328,7 @@ LocalLightsWorld::~LocalLightsWorld() {
 	for (const KeyValue<RD::VertexFormatID, RID> &entry : cutout_pipelines) {
 		rd->free_rid(entry.value);
 	}
-	for (const RID &rid : { data_buffer, list_buffer, map_atlas, grid_rd, data_rd, list_rd, ratio_surface, blurred_ratio, params_buffer, ratio_pipeline, blur_pipeline }) {
+	for (const RID &rid : { data_buffer, list_buffer, map_atlas, grid_rd, data_rd, list_rd, ratio_surface, blurred_ratio, blurred_history, params_buffer, ratio_pipeline, blur_pipeline }) {
 		if (rid.is_valid()) {
 			rd->free_rid(rid);
 		}
@@ -1833,6 +1833,8 @@ void LocalLightsWorld::_ensure_screen_textures(const Size2i &p_size) {
 	_retire_texture(blurred_ratio, blurred_ratio_texture);
 	RID no_wrapper;
 	_retire_texture(ratio_surface, no_wrapper);
+	_retire_texture(blurred_history, no_wrapper);
+	history_frame = UINT64_MAX;
 	RD::TextureFormat format;
 	format.width = screen_size.x;
 	format.height = screen_size.y;
@@ -1843,6 +1845,8 @@ void LocalLightsWorld::_ensure_screen_textures(const Size2i &p_size) {
 	format.usage_bits |= RD::TEXTURE_USAGE_SAMPLING_BIT;
 	blurred_ratio = rd->texture_create(format, RD::TextureView());
 	blurred_ratio_texture = _wrap_texture(blurred_ratio, RSE::TEXTURE_LAYERED_2D_ARRAY);
+	format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
+	blurred_history = rd->texture_create(format, RD::TextureView());
 	RendererRD::MaterialStorage::get_singleton()->global_shader_parameter_set("local_light_shadow_ratio", blurred_ratio_texture);
 }
 
@@ -1859,6 +1863,8 @@ void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
 
 	RenderSceneDataRD *scene_data = p_render_data->scene_data;
 	const Projection projection = scene_data->get_view_projection(0);
+	const Projection world_to_clip = projection * Projection(scene_data->get_cam_transform().affine_inverse());
+	const bool history_valid = history_frame + 1 == current_frame && history_buffers == buffers->get_instance_id() && history_size == size && settings.fixed_noise_frame < 0 && !settings.show_hard_mask;
 	ScreenParams params;
 	RendererRD::MaterialStorage::store_camera(projection.inverse(), params.inverse_projection);
 	RendererRD::MaterialStorage::store_camera(projection, params.projection);
@@ -1877,8 +1883,9 @@ void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
 	params.blur[3] = settings.show_hard_mask ? 1.0f : 0.0f;
 	params.view_size[0] = size.x;
 	params.view_size[1] = size.y;
-	params.view_size[2] = 0;
+	params.view_size[2] = history_valid ? 1 : 0;
 	params.view_size[3] = 0;
+	RendererRD::MaterialStorage::store_camera(history_valid ? history_world_to_clip : world_to_clip, params.previous_world_to_clip);
 	rd->buffer_update(params_buffer, 0, sizeof(ScreenParams), &params);
 
 	RendererRD::MaterialStorage *materials = RendererRD::MaterialStorage::get_singleton();
@@ -1903,12 +1910,19 @@ void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
 	if (settings.gpu_timestamps) {
 		rd->capture_timestamp("LocalLights blur");
 	}
-	RID blur_set = uniform_sets->get_cache(blur_rd_shader, 0, image_uniform(1, ratio_surface), image_uniform(2, blurred_ratio), buffer_uniform(5, params_buffer));
+	const RID linear_sampler = materials->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+	RID blur_set = uniform_sets->get_cache(blur_rd_shader, 0, image_uniform(1, ratio_surface), image_uniform(2, blurred_ratio), sampled_uniform(3, linear_sampler, blurred_history),
+			buffer_uniform(5, params_buffer));
 	compute = rd->compute_list_begin();
 	rd->compute_list_bind_compute_pipeline(compute, blur_pipeline);
 	rd->compute_list_bind_uniform_set(compute, blur_set, 0);
 	rd->compute_list_dispatch(compute, groups.x, groups.y, 1);
 	rd->compute_list_end();
+	rd->texture_copy(blurred_ratio, blurred_history, Vector3(), Vector3(), Vector3(size.x, size.y, 1), 0, 0, 0, 0);
+	history_frame = current_frame;
+	history_buffers = buffers->get_instance_id();
+	history_size = size;
+	history_world_to_clip = world_to_clip;
 	if (settings.gpu_timestamps) {
 		rd->capture_timestamp("LocalLights screen end");
 	}
@@ -1925,7 +1939,7 @@ Dictionary LocalLightsWorld::memory_report() const {
 	report["atlasOccupiedBytes"] = atlas_used_area * 2;
 	// Наибольшая видеопамять атласа за всё время: в кадре роста живут старая и новая текстуры.
 	report["atlasPeakBytes"] = MAX(atlas_peak_bytes, uint64_t(ATLAS_WIDTH) * atlas_height * 2);
-	report["screenBytes"] = uint64_t(screen_size.x) * screen_size.y * (8 + 4);
+	report["screenBytes"] = uint64_t(screen_size.x) * screen_size.y * (8 + 4 + 4);
 	report["gridBytes"] = uint64_t(grid_bytes.size());
 	report["dataBytes"] = uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
 	report["lampBufferBytes"] = uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());

@@ -1,6 +1,7 @@
 // lestoroer#local-lights
 #pragma once
 
+#include "core/math/projection.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
@@ -201,6 +202,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		int32_t dims[4];
 		float blur[4];
 		int32_t view_size[4];
+		float previous_world_to_clip[16];
 	};
 
 	RID scenario;
@@ -315,6 +317,13 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	RID ratio_surface;
 	RID blurred_ratio;
 	RID blurred_ratio_texture;
+	// Итог размытия прошлого кадра: размытие накапливает его вместе с новым кадром. Годен, только если прошлый кадр был кадром
+	// того же вида сразу перед этим и не на закреплённом шуме.
+	RID blurred_history;
+	uint64_t history_frame = UINT64_MAX;
+	ObjectID history_buffers;
+	Size2i history_size;
+	Projection history_world_to_clip;
 	bool globals_published = false;
 	// Материалы кадра уже связаны со старой текстурой и получат новую только в начале следующего кадра.
 	LocalVector<RID> retired_rd_textures;
