@@ -706,10 +706,22 @@ void LocalLightsWorld::_release_lamp(uint32_t p_index) {
 
 void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
 	const int budget_rows = budget_rows_for(p_settings.map_budget_mib);
-	if (p_settings.omni_face_size == omni_size && p_settings.spot_tile_size == spot_size && p_settings.map_texel_size == map_texel_size && budget_rows == atlas_budget_rows) {
+	const bool same_maps = p_settings.omni_face_size == omni_size && p_settings.spot_tile_size == spot_size && p_settings.map_texel_size == map_texel_size;
+	if (same_maps && budget_rows == atlas_budget_rows) {
 		return;
 	}
-	// Другое разрешение или бюджет: снятые карты не переносятся.
+	// Больший бюджет снятые карты не трогает: к карте занятости добавляются свободные строки.
+	if (same_maps && budget_rows > atlas_budget_rows) {
+		const uint32_t used_words = atlas_free_cells.size();
+		atlas_free_cells.resize(budget_rows / ATLAS_CELL * ATLAS_ROW_WORDS);
+		for (uint32_t word = used_words; word < atlas_free_cells.size(); word++) {
+			atlas_free_cells[word] = ~uint64_t(0);
+		}
+		atlas_budget_rows = budget_rows;
+		plan_dirty = true;
+		return;
+	}
+	// Другое разрешение или меньший бюджет: снятые карты не переносятся.
 	for (Lamp &lamp : lamps) {
 		if (lamp.active && lamp.map_faces > 0) {
 			_release_map(lamp);
@@ -727,6 +739,8 @@ void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
 	}
 	map_framebuffer = RID();
 	_retire_texture(map_atlas, map_atlas_texture);
+	// Списанный атлас освободится в начале следующего кадра: если в этом кадре нового не будет, материалы не должны его читать.
+	globals_published = false;
 	atlas_height = 0;
 	atlas_used_height = 0;
 	atlas_budget_rows = budget_rows;
