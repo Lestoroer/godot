@@ -85,6 +85,7 @@ public:
 		virtual bool is_surface_cache_global_invariant() const { return false; }
 		virtual bool is_surface_cache_presentation() const { return false; }
 		virtual bool casts_shadows() const = 0;
+		virtual bool depth_pass_reads_parameters() const { return false; } // lestoroer#sun
 		virtual RenderingServerTypes::ShaderNativeSourceCode get_native_source_code() const = 0;
 		virtual Pair<ShaderRD *, RID> get_native_shader_and_version() const = 0;
 

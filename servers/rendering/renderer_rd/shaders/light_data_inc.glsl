@@ -72,7 +72,8 @@ struct DirectionalLightData {
 	float shadow_opacity;
 	float fade_from;
 	float fade_to;
-	uvec2 pad;
+	uint sun_window_count; // lestoroer#sun
+	uint pad;
 	uint bake_mode;
 	float volumetric_fog_energy;
 	vec4 shadow_bias;
@@ -89,4 +90,5 @@ struct DirectionalLightData {
 	vec2 uv_scale2;
 	vec2 uv_scale3;
 	vec2 uv_scale4;
+	vec4 sun_window_rects[4]; // lestoroer#sun: Где точка читает окно: центр и половина размера в координатах атласа первого окна.
 };

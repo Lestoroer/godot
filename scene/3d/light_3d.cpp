@@ -558,13 +558,19 @@ DirectionalLight3D::SkyMode DirectionalLight3D::get_sky_mode() const {
 
 void DirectionalLight3D::_validate_property(PropertyInfo &p_property) const {
 	if (Engine::get_singleton()->is_editor_hint()) {
-		if (shadow_mode == SHADOW_ORTHOGONAL && (p_property.name == "directional_shadow_split_1" || p_property.name == "directional_shadow_blend_splits")) {
+		const bool has_no_splits = shadow_mode == SHADOW_ORTHOGONAL || shadow_mode == SHADOW_CASTER_BOUNDS; // lestoroer#sun
+		if (has_no_splits && (p_property.name == "directional_shadow_split_1" || p_property.name == "directional_shadow_blend_splits")) {
 			// Split 2 and split blending are only used with the PSSM 2 Splits and PSSM 4 Splits shadow modes.
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 
-		if ((shadow_mode == SHADOW_ORTHOGONAL || shadow_mode == SHADOW_PARALLEL_2_SPLITS) && (p_property.name == "directional_shadow_split_2" || p_property.name == "directional_shadow_split_3")) {
+		if ((has_no_splits || shadow_mode == SHADOW_PARALLEL_2_SPLITS) && (p_property.name == "directional_shadow_split_2" || p_property.name == "directional_shadow_split_3")) { // lestoroer#sun
 			// Splits 3 and 4 are only used with the PSSM 4 Splits shadow mode.
+			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+		}
+
+		// lestoroer#sun: Карта по кастерам не зависит от камеры: дальность, затухание и pancake в ней не действуют.
+		if (shadow_mode == SHADOW_CASTER_BOUNDS && (p_property.name == "directional_shadow_max_distance" || p_property.name == "directional_shadow_fade_start" || p_property.name == "directional_shadow_pancake_size")) {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 	}
@@ -589,7 +595,7 @@ void DirectionalLight3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sky_mode"), &DirectionalLight3D::get_sky_mode);
 
 	ADD_GROUP("Directional Shadow", "directional_shadow_");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "directional_shadow_mode", PROPERTY_HINT_ENUM, "Orthogonal (Fast),PSSM 2 Splits (Average),PSSM 4 Splits (Slow)"), "set_shadow_mode", "get_shadow_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "directional_shadow_mode", PROPERTY_HINT_ENUM, "Orthogonal (Fast),PSSM 2 Splits (Average),PSSM 4 Splits (Slow),Caster Bounds"), "set_shadow_mode", "get_shadow_mode"); // lestoroer#sun
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "directional_shadow_split_1", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_param", "get_param", PARAM_SHADOW_SPLIT_1_OFFSET);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "directional_shadow_split_2", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_param", "get_param", PARAM_SHADOW_SPLIT_2_OFFSET);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "directional_shadow_split_3", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_param", "get_param", PARAM_SHADOW_SPLIT_3_OFFSET);
@@ -603,6 +609,7 @@ void DirectionalLight3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(SHADOW_ORTHOGONAL);
 	BIND_ENUM_CONSTANT(SHADOW_PARALLEL_2_SPLITS);
 	BIND_ENUM_CONSTANT(SHADOW_PARALLEL_4_SPLITS);
+	BIND_ENUM_CONSTANT(SHADOW_CASTER_BOUNDS); // lestoroer#sun
 
 	BIND_ENUM_CONSTANT(SKY_MODE_LIGHT_AND_SKY);
 	BIND_ENUM_CONSTANT(SKY_MODE_LIGHT_ONLY);

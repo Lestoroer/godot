@@ -1884,6 +1884,7 @@ void MeshStorage::_multimesh_mark_dirty(MultiMesh *multimesh, int p_index, bool 
 
 	if (p_aabb) {
 		multimesh->aabb_dirty = true;
+		multimesh->sun_caster_dirty = true; // lestoroer#sun
 	}
 
 	if (!multimesh->dirty) {
@@ -1907,6 +1908,7 @@ void MeshStorage::_multimesh_mark_all_dirty(MultiMesh *multimesh, bool p_data, b
 
 	if (p_aabb) {
 		multimesh->aabb_dirty = true;
+		multimesh->sun_caster_dirty = true; // lestoroer#sun
 	}
 
 	if (!multimesh->dirty) {
@@ -2230,6 +2232,8 @@ void MeshStorage::_multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_
 		if (multimesh->custom_aabb == AABB()) {
 			_multimesh_re_create_aabb(multimesh, data, multimesh->instances);
 			multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_AABB);
+		} else {
+			multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SUN_CASTER); // lestoroer#sun
 		}
 	}
 }
@@ -2383,6 +2387,12 @@ void MeshStorage::_update_dirty_multimeshes() {
 					_multimesh_re_create_aabb(multimesh, data, visible_instances);
 					multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_AABB);
 				}
+			}
+
+			// lestoroer#sun
+			if (multimesh->sun_caster_dirty) {
+				multimesh->sun_caster_dirty = false;
+				multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_SUN_CASTER);
 			}
 		}
 

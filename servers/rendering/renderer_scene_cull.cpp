@@ -1013,6 +1013,10 @@ void RendererSceneCull::instance_set_scenario(RID p_instance, RID p_scenario) {
 		if (instance->indexer_id.is_valid()) {
 			_unpair_instance(instance);
 		}
+		// lestoroer#sun
+		if (instance->sun_changed_item.in_list()) {
+			instance->scenario->sun_map.changed.remove(&instance->sun_changed_item);
+		}
 
 		switch (instance->base_type) {
 			case RSE::INSTANCE_LIGHT: {
@@ -1119,6 +1123,7 @@ void RendererSceneCull::instance_set_layer_mask(RID p_instance, uint32_t p_mask)
 	}
 
 	instance->layer_mask = p_mask;
+	_sun_caster_changed(instance, SUN_CHANGE_LAYER); // lestoroer#sun
 	if (instance->scenario && instance->array_index >= 0) {
 		instance->scenario->instance_data[instance->array_index].layer_mask = p_mask;
 	}
@@ -1227,6 +1232,7 @@ void RendererSceneCull::instance_set_blend_shape_weight(RID p_instance, int p_sh
 	if (instance->mesh_instance.is_valid()) {
 		RSG::mesh_storage->mesh_instance_set_blend_shape_weight(instance->mesh_instance, p_shape, p_weight);
 		_surface_cache_queue(instance, 8); // lestoroer#gi
+		_sun_caster_changed(instance, SUN_CHANGE_BLEND_SHAPE); // lestoroer#sun
 	}
 
 	_instance_queue_update(instance, false, false, false); // lestoroer#gi
@@ -2207,6 +2213,7 @@ void RendererSceneCull::_unpair_instance(Instance *p_instance) {
 	// pop last
 	p_instance->scenario->instance_data.pop_back();
 	p_instance->scenario->instance_aabbs.pop_back();
+	_sun_caster_removed(p_instance); // lestoroer#sun
 
 	//uninitialize
 	p_instance->array_index = -1;
@@ -2398,6 +2405,12 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 	// For later tight culling, the light culler needs to know the details of the directional light.
 	light_culler->prepare_directional_light(p_instance, p_shadow_index);
 
+	// lestoroer#sun
+	if (RSG::light_storage->light_directional_get_shadow_mode(p_instance->base) == RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS) {
+		_light_instance_setup_caster_bounds_shadow(p_shadow_index, p_instance, p_cam_transform);
+		return;
+	}
+
 	InstanceLightData *light = static_cast<InstanceLightData *>(p_instance->base_data);
 
 	Transform3D light_transform = p_instance->transform;
@@ -2418,6 +2431,7 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 	int splits = 0;
 	switch (RSG::light_storage->light_directional_get_shadow_mode(p_instance->base)) {
 		case RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL:
+		case RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS: // lestoroer#sun
 			splits = 1;
 			break;
 		case RSE::LIGHT_DIRECTIONAL_SHADOW_PARALLEL_2_SPLITS:
@@ -3607,6 +3621,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	// directional lights
 	{
 		cull.shadow_count = 0;
+		cull.sun_map_light = nullptr; // lestoroer#sun
 
 		Vector<Instance *> lights_with_shadow;
 
@@ -3633,6 +3648,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 		}
 
 		RSG::light_storage->set_directional_shadow_count(lights_with_shadow.size());
+		cull.shadow_lights_total = lights_with_shadow.size(); // lestoroer#sun
 
 		for (int i = 0; i < lights_with_shadow.size(); i++) {
 			_light_instance_setup_directional_shadow(i, lights_with_shadow[i], p_camera_data->main_transform, p_camera_data->main_projection, p_camera_data->is_orthogonal, p_camera_data->vaspect);
@@ -3759,6 +3775,11 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 				render_shadow_data[max_shadows_used].instances.merge_unordered(scene_cull_result.directional_shadows[i].cascade_geometry_instances[j]);
 				max_shadows_used++;
 			}
+		}
+
+		// lestoroer#sun
+		if (cull.sun_map_light) {
+			_sun_map_build_steps(scenario, cull.sun_map_light, p_camera_data->main_transform, p_camera_data->main_projection);
 		}
 
 		// Positional Shadows
@@ -3988,6 +4009,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 
 	for (uint32_t i = 0; i < max_shadows_used; i++) {
 		render_shadow_data[i].instances.clear();
+		render_shadow_data[i].sun_step = RendererSceneRender::SunMapStep(); // lestoroer#sun
 	}
 	max_shadows_used = 0;
 
@@ -4429,6 +4451,9 @@ void RendererSceneCull::render_particle_colliders() {
 }
 
 void RendererSceneCull::_update_dirty_instance(Instance *p_instance) const {
+	// lestoroer#sun: Параметр экземпляра сюда приходит без этих флагов: перекраска тень не меняет.
+	const uint32_t sun_change = (p_instance->update_aabb ? SUN_CHANGE_BOUNDS : 0) | (p_instance->update_dependencies ? SUN_CHANGE_DEPENDENCIES : 0);
+
 	if (p_instance->update_aabb) {
 		_update_instance_aabb(p_instance);
 	}
@@ -4626,6 +4651,10 @@ void RendererSceneCull::_update_dirty_instance(Instance *p_instance) const {
 	_instance_update_list.remove(&p_instance->update_item);
 
 	_update_instance(p_instance);
+	// lestoroer#sun
+	if (sun_change != 0) {
+		_sun_caster_changed(p_instance, sun_change);
+	}
 
 	p_instance->teleported = false;
 	p_instance->update_aabb = false;

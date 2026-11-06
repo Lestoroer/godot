@@ -812,10 +812,19 @@ void LightStorage::update_light_buffers(RenderDataRD *p_render_data, const Paged
 						light_data.soft_shadow_scale *= RendererSceneRenderRD::get_singleton()->directional_shadow_quality_radius_get(); // Only use quality radius for PCF
 					}
 
-					int limit = smode == RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL ? 0 : (smode == RSE::LIGHT_DIRECTIONAL_SHADOW_PARALLEL_2_SPLITS ? 1 : 3);
-					light_data.blend_splits = (smode != RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL) && light->directional_blend_splits;
+					const bool has_no_splits = smode == RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL || smode == RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS; // lestoroer#sun
+					int limit = has_no_splits ? 0 : (smode == RSE::LIGHT_DIRECTIONAL_SHADOW_PARALLEL_2_SPLITS ? 1 : 3);
+					light_data.blend_splits = !has_no_splits && light->directional_blend_splits;
+					// lestoroer#sun
+					const int sun_window_count = smode == RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS && directional_shadow.light_count == 1 ? light_instance->sun_window_count : 0;
+					light_data.sun_window_count = sun_window_count;
+					Vector2 first_window_atlas_shift;
 					for (int j = 0; j < 4; j++) {
 						Rect2 atlas_rect = light_instance->shadow_transform[j].atlas_rect;
+						// lestoroer#sun: В кадре без прохода теней прямоугольник атласа никто не задаёт.
+						if (smode == RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS && directional_shadow.light_count == 1) {
+							atlas_rect = j < sun_window_count ? light_instance->sun_window_atlas_rects[j] : Rect2(0, 0, 1, 1);
+						}
 						Projection correction;
 						correction.set_depth_correction(false, true, false);
 						Projection matrix = correction * light_instance->shadow_transform[j].camera;
@@ -829,6 +838,23 @@ void LightStorage::update_light_buffers(RenderDataRD *p_render_data, const Paged
 						Transform3D modelview = (inverse_transform * light_instance->shadow_transform[j].transform).inverse();
 
 						Projection shadow_mtx = rectm * bias * matrix * modelview;
+						// lestoroer#sun: У окон общие оси и тексель, поэтому их координаты атласа различаются на постоянную: шейдер выбирает окно по координате первого.
+						if (j < sun_window_count) {
+							const Vector2 atlas_shift(shadow_mtx.columns[3][0], shadow_mtx.columns[3][1]);
+							if (j == 0) {
+								first_window_atlas_shift = atlas_shift;
+							}
+							const Rect2 &read_rect = light_instance->sun_window_read_rects[j];
+							const Vector2 read_center = read_rect.get_center() + first_window_atlas_shift - atlas_shift;
+							light_data.sun_window_rects[j][0] = read_center.x;
+							light_data.sun_window_rects[j][1] = read_center.y;
+							light_data.sun_window_rects[j][2] = read_rect.size.x * 0.5;
+							light_data.sun_window_rects[j][3] = read_rect.size.y * 0.5;
+						} else {
+							// Пустой прямоугольник: шейдер проверяет все четыре, не сверяясь со счётчиком.
+							light_data.sun_window_rects[j][2] = 0.0;
+							light_data.sun_window_rects[j][3] = 0.0;
+						}
 						light_data.shadow_split_offsets[j] = split;
 						float bias_scale = light_instance->shadow_transform[j].bias_scale * light_data.soft_shadow_scale;
 						light_data.shadow_bias[j] = light->param[RSE::LIGHT_PARAM_SHADOW_BIAS] / 100.0 * bias_scale;
@@ -2759,7 +2785,8 @@ void LightStorage::update_directional_shadow_atlas() {
 		tf.format = get_shadow_atlas_depth_format(directional_shadow.use_16_bits);
 		tf.width = directional_shadow.size;
 		tf.height = directional_shadow.size;
-		tf.usage_bits = get_shadow_atlas_depth_usage_bits();
+		// lestoroer#sun: Постоянная карта получает неподвижные кастеры копированием.
+		tf.usage_bits = get_shadow_atlas_depth_usage_bits() | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 
 		directional_shadow.depth = RD::get_singleton()->texture_create(tf, RD::TextureView());
 		Vector<RID> fb_tex;
@@ -2782,6 +2809,77 @@ void LightStorage::directional_shadow_atlas_set_size(int p_size, bool p_16_bits)
 		directional_shadow.depth = RID();
 		RendererSceneRenderRD::get_singleton()->base_uniforms_changed();
 	}
+	_directional_shadow_free_persistent(); // lestoroer#sun
+}
+
+// lestoroer#sun
+void LightStorage::_directional_shadow_free_persistent() {
+	if (directional_shadow.static_depth.is_valid()) {
+		RD::get_singleton()->free_rid(directional_shadow.static_depth);
+		directional_shadow.static_depth = RID();
+		directional_shadow.static_fb = RID();
+	}
+	if (directional_shadow.validation_depth.is_valid()) {
+		RD::get_singleton()->free_rid(directional_shadow.validation_depth);
+		directional_shadow.validation_depth = RID();
+		directional_shadow.validation_fb = RID();
+	}
+	directional_shadow.persistent_owner = RID();
+}
+
+// lestoroer#sun
+void LightStorage::light_instance_set_sun_windows(RID p_light_instance, int p_count, const Rect2 *p_atlas_rects, const Rect2 *p_read_rects) {
+	LightInstance *light_instance = light_instance_owner.get_or_null(p_light_instance);
+	ERR_FAIL_NULL(light_instance);
+	ERR_FAIL_INDEX(p_count, LightInstance::MAX_SUN_WINDOWS + 1);
+	light_instance->sun_window_count = p_count;
+	for (int i = 0; i < p_count; i++) {
+		light_instance->sun_window_atlas_rects[i] = p_atlas_rects[i];
+		light_instance->sun_window_read_rects[i] = p_read_rects[i];
+	}
+}
+
+bool LightStorage::directional_shadow_claim_persistent(RID p_world) {
+	if (directional_shadow.persistent_owner == p_world) {
+		return true;
+	}
+	directional_shadow.persistent_owner = p_world;
+	return false;
+}
+
+static void _create_directional_shadow_layer(RD::DataFormat p_format, int p_size, RID &r_depth, RID &r_fb) {
+	RD::TextureFormat tf;
+	tf.format = p_format;
+	tf.width = p_size;
+	tf.height = p_size;
+	tf.usage_bits = RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
+	r_depth = RD::get_singleton()->texture_create(tf, RD::TextureView());
+	Vector<RID> fb_tex;
+	fb_tex.push_back(r_depth);
+	r_fb = RD::get_singleton()->framebuffer_create(fb_tex);
+}
+
+RID LightStorage::directional_shadow_get_static_fb() {
+	if (directional_shadow.static_depth.is_null()) {
+		_create_directional_shadow_layer(get_shadow_atlas_depth_format(directional_shadow.use_16_bits), directional_shadow.size, directional_shadow.static_depth, directional_shadow.static_fb);
+	}
+	return directional_shadow.static_fb;
+}
+
+RID LightStorage::directional_shadow_get_validation_fb() {
+	if (directional_shadow.validation_depth.is_null()) {
+		_create_directional_shadow_layer(get_shadow_atlas_depth_format(directional_shadow.use_16_bits), directional_shadow.size, directional_shadow.validation_depth, directional_shadow.validation_fb);
+	}
+	return directional_shadow.validation_fb;
+}
+
+Dictionary LightStorage::directional_shadow_debug_get_textures() {
+	Dictionary textures;
+	textures["atlas"] = directional_shadow.depth;
+	textures["static"] = directional_shadow.static_depth;
+	textures["validation"] = directional_shadow.validation_depth;
+	textures["size"] = directional_shadow.size;
+	return textures;
 }
 
 void LightStorage::set_directional_shadow_count(int p_count) {
@@ -2825,6 +2923,7 @@ int LightStorage::get_directional_light_shadow_size(RID p_light_instance) {
 
 	switch (light_directional_get_shadow_mode(light_instance->light)) {
 		case RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL:
+		case RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS: // lestoroer#sun
 			break; //none
 		case RSE::LIGHT_DIRECTIONAL_SHADOW_PARALLEL_2_SPLITS:
 			r.size.height /= 2;

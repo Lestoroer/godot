@@ -1505,6 +1505,12 @@ void RenderForwardMobile::_render_shadow_pass(RID p_light, RID p_shadow_atlas, i
 			light_storage->light_instance_set_shadow_pass(p_light, get_scene_pass());
 		}
 
+		light_storage->directional_shadow_release_persistent(); // lestoroer#sun
+		// lestoroer#sun: Карта по кастерам не зависит от камеры, значит и выбор LOD в ней не должен.
+		if (light_storage->light_directional_get_shadow_mode(base) == RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS) {
+			p_screen_mesh_lod_threshold = 0.0;
+		}
+
 		use_pancake = light_storage->light_get_param(base, RSE::LIGHT_PARAM_SHADOW_PANCAKE_SIZE) > 0;
 		light_projection = light_storage->light_instance_get_shadow_camera(p_light, p_pass);
 		light_transform = light_storage->light_instance_get_shadow_transform(p_light, p_pass);
