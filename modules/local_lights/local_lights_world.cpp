@@ -1309,7 +1309,8 @@ void LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLights
 	place_order.clear();
 	for (uint32_t i = 0; i < p_budget; i++) {
 		const Lamp &lamp = lamps[serve_order[i]];
-		if (lamp.map_side != lamp.planned_side) {
+		// Смена Spot и Omni при той же стороне меняет число граней и тоже требует места.
+		if (lamp.map_side != lamp.planned_side || (lamp.map_faces > 0 && lamp.map_faces != (lamp.spot ? 1 : 6))) {
 			place_order.push_back(serve_order[i]);
 		}
 	}
