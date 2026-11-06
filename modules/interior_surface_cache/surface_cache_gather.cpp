@@ -65,7 +65,7 @@ void SurfaceCacheGatherRD::create_resources(View &r_view, const Ref<RenderSceneB
 	if (grid != r_view.grid) {
 		int count = grid.x * grid.y;
 		RID *buffers[] = { &r_view.meta[0], &r_view.meta[1], &r_view.light, &r_view.filtered };
-		uint32_t sizes[] = { uint32_t(count * 32), uint32_t(count * 32), uint32_t(count * 144), uint32_t(count * 144) };
+		uint32_t sizes[] = { count * PROBE_META_BYTES, count * PROBE_META_BYTES, count * PROBE_LIGHT_BYTES, count * PROBE_LIGHT_BYTES };
 		for (int i = 0; i < 4; ++i) {
 			if (buffers[i]->is_valid()) {
 				device->free_rid(*buffers[i]);
@@ -311,8 +311,11 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	}
 	View &v = *views[id];
 	int reflection_divisor = 1 << int(settings->get("reflection_resolution"));
-	bool reflection_history = v.frame > 0 && v.reflection_divisor == reflection_divisor;
+	int disabled = settings->get("disabled_blocks");
+	bool reflections = !(disabled & BLOCK_REFLECTIONS);
+	bool reflection_history = v.frame > 0 && v.reflection_divisor == reflection_divisor && v.reflections;
 	v.reflection_divisor = reflection_divisor;
+	v.reflections = reflections;
 	if (!buffers->has_texture(SNAME("surface_cache"), SNAME("light_0")) || v.size != size) {
 		create_resources(v, buffers, size);
 	}
@@ -335,7 +338,6 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	p.sky[0] = sky.r;
 	p.sky[1] = sky.g;
 	p.sky[2] = sky.b;
-	p.sky[3] = settings->get("trace_distance");
 	bool diagnostics = settings->get("diagnostics");
 	bool markers = settings->get("gpu_markers");
 	// Первый кадр ещё без шага; пределы истории отражений шейдер ведёт в кадрах этой длительности.
@@ -343,12 +345,11 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	if (delta <= 0.0) {
 		delta = 1.0 / 60.0;
 	}
-	auto history_frames = [&](const char *p_field) { return float(MAX(1.0, double(settings->get(p_field)) / delta)); };
 	p.time[0] = delta;
 	p.history[0] = light_count;
 	p.history[1] = v.frame > 0;
-	p.history[2] = int32_t(Math::round(history_frames("reflection_still_seconds")));
 	p.history[3] = diagnostics;
+	p.reflection[0] = disabled;
 	p.reflection[1] = settings->get("reflection_samples");
 	p.reflection[2] = settings->get("reflection_bounces");
 	p.reflection[3] = camera_moved;
@@ -365,7 +366,6 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	matrix(p.inverse_matrices + 16, v.previous.inverse());
 	write_moves(p, moves);
 	p.limits[0] = settings->get("diffuse_history_seconds");
-	p.limits[3] = settings->get("reflection_filter_radius");
 	device->buffer_update(v.camera, 0, sizeof(p), &p);
 	Sets &sets = v.sets[v.frame % 2];
 	RID key[] = { resources[0], resources[1], resources[2], resources[3], tlas, material_changes, buffers->get_depth_texture(0), buffers->get_texture(SNAME("forward_clustered"), SNAME("normal_roughness")) };
@@ -383,11 +383,21 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	if (diagnostics) {
 		device->buffer_clear(v.stats, 0, 4096);
 	}
+	auto texture = [&](const char *name) { return buffers->get_texture(SNAME("surface_cache"), name); };
+	// Без контакта проход пишет только глубину и поверхность пикселя; видимость без лучей — ноль лучей.
 	kernels[CONTACT].pixels(sets.passes[CONTACT], size);
 	mark("contact end", id, markers);
-	kernels[CONTACT_FILTER].pixels(sets.passes[CONTACT_FILTER], size);
+	if (disabled & BLOCK_CONTACT) {
+		device->texture_clear(texture("contact"), Color(1, 0, 0, 0), 0, 1, 0, 1);
+		device->texture_clear(texture("contact_light"), Color(0, 0, 0, 0), 0, 1, 0, 1);
+	} else {
+		kernels[CONTACT_FILTER].pixels(sets.passes[CONTACT_FILTER], size);
+	}
 	mark("contact filter end", id, markers);
-	world_hash->call("update", sets.hash, size);
+	// Без пополнения кеш застывает: сведение без выборок оставляет ячейки как были.
+	if (!(disabled & BLOCK_CACHE_UPDATE)) {
+		world_hash->call("update", sets.hash, size);
+	}
 	mark("hash update end", id, markers);
 	world_hash->call("resolve");
 	mark("hash resolve end", id, markers);
@@ -396,16 +406,26 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	int probe_count = v.grid.x * v.grid.y;
 	kernels[TRACE].dispatch(sets.passes[TRACE], nullptr, 0, Vector3i(probe_count, 1, 1));
 	mark("probe trace end", id, markers);
-	kernels[FILTER].elements(sets.passes[FILTER], nullptr, 0, probe_count);
+	if (disabled & BLOCK_PROBE_FILTER) {
+		device->buffer_copy(v.light, v.filtered, 0, 0, probe_count * PROBE_LIGHT_BYTES);
+	} else {
+		kernels[FILTER].elements(sets.passes[FILTER], nullptr, 0, probe_count);
+	}
 	mark("probe filter end", id, markers);
 	kernels[INTEGRATE].dispatch(sets.passes[INTEGRATE], nullptr, 0, Vector3i(v.grid.x, v.grid.y, 1));
 	mark("integrate end", id, markers);
 	kernels[TEMPORAL].pixels(sets.passes[TEMPORAL], size);
 	mark("diffuse temporal end", id, markers);
 	mark("reflections begin", id, markers);
-	kernels[REFLECTION].pixels(sets.passes[REFLECTION], Vector2i((size.x + reflection_divisor - 1) / reflection_divisor, (size.y + reflection_divisor - 1) / reflection_divisor));
-	mark("reflection trace end", id, markers);
-	kernels[REFLECTION_TEMPORAL].pixels(sets.passes[REFLECTION_TEMPORAL], size);
+	// Без отражений GI нулевая глубина итога отдаёт отражения движку.
+	if (reflections) {
+		kernels[REFLECTION].pixels(sets.passes[REFLECTION], Vector2i((size.x + reflection_divisor - 1) / reflection_divisor, (size.y + reflection_divisor - 1) / reflection_divisor));
+		mark("reflection trace end", id, markers);
+		kernels[REFLECTION_TEMPORAL].pixels(sets.passes[REFLECTION_TEMPORAL], size);
+	} else {
+		device->texture_clear(texture("reflection"), Color(0, 0, 0, 0), 0, 1, 0, 1);
+		mark("reflection trace end", id, markers);
+	}
 	mark("reflection temporal end", id, markers);
 	mark("reflections end", id, markers);
 	v.previous_camera = camera;

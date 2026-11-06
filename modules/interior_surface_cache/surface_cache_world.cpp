@@ -66,7 +66,7 @@ void SurfaceCacheWorldRD::update_profile(const Ref<Resource> &settings) {
 		return;
 	}
 	ERR_FAIL_COND(settings.is_null() || settings->call("layout_key") != profile->call("layout_key"));
-	sky_changed |= settings->get("sky_radiance") != profile->get("sky_radiance") || settings->get("trace_distance") != profile->get("trace_distance");
+	sky_changed |= settings->get("sky_radiance") != profile->get("sky_radiance");
 	profile = settings;
 }
 

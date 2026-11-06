@@ -15,6 +15,16 @@ public:
 		VIEW_MOVED = 8 };
 	// Сколько секунд вид держит область изменения: столько отражение пути через неё укорочено.
 	static constexpr double CHANGE_SECONDS = 0.13;
+	// Биты поля профиля disabled_blocks в порядке его флагов (surface_cache_profile.gd). Выключенный блок не
+	// считается, следующие проходы получают его нейтральный результат; биты историй шейдеры читают из
+	// GatherView.temporal.x (cache_types).
+	enum Block { BLOCK_REFLECTIONS = 1,
+		BLOCK_CONTACT = 2,
+		BLOCK_PROBE_FILTER = 4,
+		BLOCK_CACHE_UPDATE = 8,
+		BLOCK_DIFFUSE_HISTORY = 16,
+		BLOCK_REFLECTION_HISTORY = 32 };
+	static constexpr uint32_t PROBE_META_BYTES = 32, PROBE_LIGHT_BYTES = 144;
 
 private:
 	enum Pass { PLACE,
@@ -40,6 +50,7 @@ private:
 		Vector2i size, grid;
 		int frame = 0;
 		int reflection_divisor = 1;
+		bool reflections = false;
 		Projection previous;
 		Transform3D previous_camera;
 		Sets sets[2];
