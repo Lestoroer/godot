@@ -222,6 +222,10 @@ int first_free_run(const uint64_t *p_free, int p_width) {
 	return -1;
 }
 
+int cells_for(int p_pixels) {
+	return (p_pixels + ATLAS_CELL - 1) / ATLAS_CELL;
+}
+
 int map_area(int p_side, bool p_spot) {
 	return p_side * p_side * (p_spot ? 1 : 6);
 }
@@ -706,7 +710,13 @@ void LocalLightsWorld::_release_lamp(uint32_t p_index) {
 
 void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
 	const int budget_rows = budget_rows_for(p_settings.map_budget_mib);
-	const bool same_maps = p_settings.omni_face_size == omni_size && p_settings.spot_tile_size == spot_size && p_settings.map_texel_size == map_texel_size;
+	// Наибольшая плитка должна помещаться в атлас и бюджет, иначе лампа с ней не получила бы места никогда.
+	const int omni_largest = CLAMP(p_settings.omni_face_size, 1, MIN(ATLAS_WIDTH / 6, budget_rows));
+	const int spot_largest = CLAMP(p_settings.spot_tile_size, 1, MIN(ATLAS_WIDTH, budget_rows));
+	if (omni_largest != p_settings.omni_face_size || spot_largest != p_settings.spot_tile_size) {
+		ERR_PRINT_ONCE(vformat("Наибольшие плитки локального света %d и %d не помещаются в атлас и бюджет: используются %d и %d.", p_settings.omni_face_size, p_settings.spot_tile_size, omni_largest, spot_largest));
+	}
+	const bool same_maps = omni_largest == omni_size && spot_largest == spot_size && p_settings.map_texel_size == map_texel_size;
 	if (same_maps && budget_rows == atlas_budget_rows) {
 		return;
 	}
@@ -751,8 +761,8 @@ void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
 	atlas_used_area = 0;
 	plan_fill = PLAN_FILL;
 	plan_dirty = true;
-	omni_size = p_settings.omni_face_size;
-	spot_size = p_settings.spot_tile_size;
+	omni_size = omni_largest;
+	spot_size = spot_largest;
 	map_texel_size = p_settings.map_texel_size;
 }
 
@@ -804,7 +814,7 @@ bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 		// Лампа остаётся с прежней картой до следующей смены стороны. Площади не хватило — план ошибся с запасом на потери размещения,
 		// и следующий берёт меньшую долю бюджета; площади хватало — место раздроблено, повышение просто откладывается.
 		frame_metrics.map_place_failures++;
-		if (uint64_t(atlas_budget_rows) * ATLAS_WIDTH - atlas_used_area >= uint64_t(width) * p_side) {
+		if (uint64_t(atlas_budget_rows) * ATLAS_WIDTH - atlas_used_area >= uint64_t(cells_for(width)) * cells_for(p_side) * ATLAS_CELL * ATLAS_CELL) {
 			frame_metrics.map_fragmented_failures++;
 		} else {
 			plan_fill = MAX(PLAN_FILL_MIN, plan_fill - PLAN_FILL_FAILURE_STEP);
@@ -834,8 +844,8 @@ bool LocalLightsWorld::_side_change_allowed(const Lamp &p_lamp) const {
 
 // Первое подходящее место снизу слева в пределах бюджета. Освобождённое место годится карте любого размера.
 bool LocalLightsWorld::_allocate_map_rect(int p_width, int p_height, Vector2i &r_origin) {
-	const int columns = p_width / ATLAS_CELL;
-	const int rows = p_height / ATLAS_CELL;
+	const int columns = cells_for(p_width);
+	const int rows = cells_for(p_height);
 	const int row_limit = atlas_budget_rows / ATLAS_CELL;
 	for (int y = 0; y + rows <= row_limit; y++) {
 		uint64_t free[ATLAS_ROW_WORDS];
@@ -857,9 +867,10 @@ bool LocalLightsWorld::_allocate_map_rect(int p_width, int p_height, Vector2i &r
 	return false;
 }
 
+// Место занимает целые клетки: сторона, не кратная клетке, округляется вверх, и соседние места не пересекаются.
 void LocalLightsWorld::_mark_map_rect(const Vector2i &p_origin, int p_width, int p_height, bool p_free) {
-	const int column_end = (p_origin.x + p_width) / ATLAS_CELL;
-	const int row_end = (p_origin.y + p_height) / ATLAS_CELL;
+	const int column_end = p_origin.x / ATLAS_CELL + cells_for(p_width);
+	const int row_end = p_origin.y / ATLAS_CELL + cells_for(p_height);
 	for (int row = p_origin.y / ATLAS_CELL; row < row_end; row++) {
 		uint64_t *words = atlas_free_cells.ptr() + row * ATLAS_ROW_WORDS;
 		for (int column = p_origin.x / ATLAS_CELL; column < column_end; column++) {
@@ -867,7 +878,7 @@ void LocalLightsWorld::_mark_map_rect(const Vector2i &p_origin, int p_width, int
 			words[column >> 6] = p_free ? words[column >> 6] | bit : words[column >> 6] & ~bit;
 		}
 	}
-	const uint64_t area = uint64_t(p_width) * p_height;
+	const uint64_t area = uint64_t(cells_for(p_width)) * cells_for(p_height) * ATLAS_CELL * ATLAS_CELL;
 	atlas_used_area = p_free ? atlas_used_area - area : atlas_used_area + area;
 	if (!p_free) {
 		atlas_used_height = MAX(atlas_used_height, p_origin.y + p_height);
