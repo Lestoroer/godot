@@ -65,10 +65,13 @@ const float VIEW_SIZE_STEPS_PER_OCTAVE = 2.0f;
 const float SPOT_MAP_MARGIN_DEGREES = 8.0f;
 const float SPOT_MAP_MAX_HALF_ANGLE_DEGREES = 75.0f;
 // Ядро размытия моментов: обрезано на стольких сигмах, радиус и сигма — в текселях моментов, наименьшая сигма — тексель: уже неё билинейная
-// выборка показывает ступени текселей. Наибольший радиус — контракт с local_light_moments.glsl.
+// выборка показывает ступени текселей. Наибольший радиус и обрез — контракт с local_light_moments.glsl.
 const int MOMENT_MAX_RADIUS = 12;
 const float MOMENT_KERNEL_SIGMAS = 2.5f;
 const float MOMENT_MIN_SIGMA = 1.0f;
+// Тексель моментов — квадрат 2×2 текселей глубины, а у карты, где сигма в нём не меньше этой, — 4×4: текселей вчетверо меньше, ядро вдвое
+// короче, сигма остаётся не меньше полутора текселей. Моменты такой карты занимают четверть её места в атласе моментов.
+const float MOMENT_COARSE_SIGMA = 3.0f;
 // Сторона плитки моментов, которую считает одна группа. Контракт с local_light_moments.glsl.
 const int MOMENT_TILE = 32;
 // Запас грани куба за её ребром, тексели в сумме, по половине с каждой стороны: gather 2×2 не выходит за плитку. Ядро моментов за ребром
@@ -153,7 +156,7 @@ RD::Uniform image_uniform(int p_binding, RID p_texture) {
 struct MomentsPush {
 	int32_t map_origin[2];
 	int32_t side;
-	int32_t radius;
+	int32_t scale;
 	float inverse_near;
 	float inverse_range;
 	float sigma;
@@ -161,16 +164,22 @@ struct MomentsPush {
 };
 
 struct MomentKernel {
+	// Сигма в текселях моментов.
 	float sigma = 0.0f;
-	int radius = 0;
+	// Сторона квадрата текселей глубины на тексель моментов.
+	int scale = 2;
+	// Сигма в тангенсе угла от лампы.
+	float sigma_tangent = 0.0f;
 };
 
 // Ядро моментов карты со стороной p_side и тангенсом половины снимка p_extent: сигма по общей мягкости в тангенсе угла от лампы.
 MomentKernel moment_kernel(float p_softness, int p_side, float p_extent) {
-	const float moment_texel_tangent = 4.0f * p_extent / float(p_side);
+	const float depth_texel_tangent = 2.0f * p_extent / float(p_side);
+	const float depth_sigma = p_softness / depth_texel_tangent;
 	MomentKernel kernel;
-	kernel.sigma = CLAMP(p_softness / moment_texel_tangent, MOMENT_MIN_SIGMA, float(MOMENT_MAX_RADIUS) / MOMENT_KERNEL_SIGMAS);
-	kernel.radius = MIN(int(Math::ceil(kernel.sigma * MOMENT_KERNEL_SIGMAS)), MOMENT_MAX_RADIUS);
+	kernel.scale = depth_sigma >= 2.0f * MOMENT_COARSE_SIGMA && p_side % 4 == 0 ? 4 : 2;
+	kernel.sigma = CLAMP(depth_sigma / kernel.scale, MOMENT_MIN_SIGMA, float(MOMENT_MAX_RADIUS) / MOMENT_KERNEL_SIGMAS);
+	kernel.sigma_tangent = kernel.sigma * kernel.scale * depth_texel_tangent;
 	return kernel;
 }
 
@@ -1665,13 +1674,13 @@ void LocalLightsWorld::_record_moments(uint32_t p_budget) {
 		push.map_origin[0] = lamp.map_origin.x;
 		push.map_origin[1] = lamp.map_origin.y;
 		push.side = side;
-		push.radius = kernel.radius;
+		push.scale = kernel.scale;
 		push.inverse_near = 1.0f / near_plane;
 		push.inverse_range = 1.0f / lamp.range;
 		push.sigma = kernel.sigma;
 		push.cube_extent = lamp.spot ? 0.0f : extent;
 		rd->compute_list_set_push_constant(list, &push, sizeof(MomentsPush));
-		const int groups = (side / 2 + MOMENT_TILE - 1) / MOMENT_TILE;
+		const int groups = (side / kernel.scale + MOMENT_TILE - 1) / MOMENT_TILE;
 		rd->compute_list_dispatch(list, groups, groups, lamp.map_faces);
 	}
 	rd->compute_list_end();
@@ -1834,8 +1843,10 @@ void LocalLightsWorld::_write_lamp_data(uint32_t p_index) {
 	values[27] = -1.0f;
 	if (lamp.casts && lamp.map_valid) {
 		const float extent = lamp.spot ? lamp.baked_extent : cube_face_extent(lamp.map_side);
-		values[13] = moment_kernel(shadow_softness, lamp.map_side, extent).sigma * 4.0f * extent / float(lamp.map_side);
+		const MomentKernel kernel = moment_kernel(shadow_softness, lamp.map_side, extent);
+		values[13] = kernel.sigma_tangent;
 		values[16] = map_near_plane(lamp.baked_range);
+		values[17] = float(kernel.scale);
 		values[18] = float(lamp.map_origin.y);
 		values[19] = lamp.baked_range;
 		values[20] = lamp.spot ? lamp.baked_forward.x : 0.0f;

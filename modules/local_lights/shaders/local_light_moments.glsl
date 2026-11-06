@@ -6,7 +6,7 @@
 #VERSION_DEFINES
 
 // Моменты глубины карты лампы для мягкой тени: среднее и средний квадрат линейной глубины вдоль оси грани в долях радиуса
-// лампы, по четвёрке текселей глубины на тексель моментов, затем разделимое гауссово размытие. За ребром грани Omni ядро
+// лампы, по квадрату scale × scale текселей глубины на тексель моментов, затем разделимое гауссово размытие. За ребром грани Omni ядро
 // читает соседнюю грань по направлению и пересчитывает её глубину на ось своей грани: швов на стыках нет, а сама карта
 // глубины снята без лишнего запаса.
 
@@ -20,8 +20,8 @@ layout(push_constant, std430) uniform Params {
 	ivec2 map_origin;
 	// Сторона грани в текселях глубины.
 	int side;
-	// Радиус ядра в текселях моментов, не больше MAX_RADIUS.
-	int radius;
+	// Сторона квадрата текселей глубины на тексель моментов: 2 или 4. Моменты грани лежат подряд от половины начала карты.
+	int scale;
 	float inverse_near;
 	float inverse_range;
 	// Сигма ядра в текселях моментов.
@@ -32,8 +32,9 @@ layout(push_constant, std430) uniform Params {
 
 // Группа считает плитку моментов TILE × TILE, каждый поток — четыре её текселя. Общая память не больше 32 КиБ, как на Apple M1.
 const int TILE = 32;
-// Контракт с MOMENT_MAX_RADIUS в local_lights_world.cpp.
+// Контракт с MOMENT_MAX_RADIUS и MOMENT_KERNEL_SIGMAS в local_lights_world.cpp.
 const int MAX_RADIUS = 12;
+const float KERNEL_SIGMAS = 2.5;
 const int MAX_SPAN = TILE + 2 * MAX_RADIUS;
 const int THREADS = 256;
 const int MAX_ROWS_PER_THREAD = (MAX_SPAN * TILE + THREADS - 1) / THREADS;
@@ -78,9 +79,10 @@ float cube_depth_share(int p_face, ivec2 p_texel) {
 
 void main() {
 	int lane = int(gl_LocalInvocationIndex);
-	int radius = params.radius;
+	int radius = min(int(ceil(params.sigma * KERNEL_SIGMAS)), MAX_RADIUS);
 	int span = TILE + 2 * radius;
-	int moment_side = params.side >> 1;
+	int scale = params.scale;
+	int moment_side = params.side / scale;
 	int face = int(gl_WorkGroupID.z);
 	ivec2 face_origin = params.map_origin + ivec2(face * params.side, 0);
 	ivec2 group_origin = ivec2(gl_WorkGroupID.xy) * TILE;
@@ -91,16 +93,25 @@ void main() {
 	}
 	for (int index = lane; index < span * span; index += THREADS) {
 		ivec2 cell = group_origin - radius + ivec2(index % span, index / span);
-		vec4 depth;
+		vec2 sum = vec2(0.0);
 		if (all(greaterThanEqual(cell, ivec2(0))) && all(lessThan(cell, ivec2(moment_side))) || !cube) {
 			// Четвёрка текселей глубины одной выборкой: координата на их общем углу.
-			cell = clamp(cell, ivec2(0), ivec2(moment_side - 1));
-			depth = depth_shares(textureGather(depth_atlas, vec2(face_origin + cell * 2 + 1) * inverse_atlas_size, 0));
+			ivec2 texel = face_origin + clamp(cell, ivec2(0), ivec2(moment_side - 1)) * scale;
+			for (int y = 0; y < scale; y += 2) {
+				for (int x = 0; x < scale; x += 2) {
+					vec4 depth = depth_shares(textureGather(depth_atlas, vec2(texel + ivec2(x + 1, y + 1)) * inverse_atlas_size, 0));
+					sum += vec2(dot(depth, vec4(1.0)), dot(depth, depth));
+				}
+			}
 		} else {
-			ivec2 texel = cell * 2;
-			depth = vec4(cube_depth_share(face, texel), cube_depth_share(face, texel + ivec2(1, 0)), cube_depth_share(face, texel + ivec2(0, 1)), cube_depth_share(face, texel + ivec2(1, 1)));
+			for (int y = 0; y < scale; y++) {
+				for (int x = 0; x < scale; x++) {
+					float depth = cube_depth_share(face, cell * scale + ivec2(x, y));
+					sum += vec2(depth, depth * depth);
+				}
+			}
 		}
-		window_moments[index] = vec2(dot(depth, vec4(0.25)), dot(depth * depth, vec4(0.25)));
+		window_moments[index] = sum / float(scale * scale);
 	}
 	barrier();
 	float total = weights[0];
@@ -141,6 +152,6 @@ void main() {
 		for (int k = 1; k <= radius; k++) {
 			sum += (window_moments[center - k * TILE] + window_moments[center + k * TILE]) * weights[k];
 		}
-		imageStore(moment_atlas, face_origin / 2 + group_origin + texel, vec4(sum * inverse_total, 0.0, 0.0));
+		imageStore(moment_atlas, params.map_origin / 2 + ivec2(face * moment_side, 0) + group_origin + texel, vec4(sum * inverse_total, 0.0, 0.0));
 	}
 }
