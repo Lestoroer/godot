@@ -1170,8 +1170,9 @@ void LocalLightsWorld::_plan_map_sides(double p_now) {
 		if (lamp.fit_side <= lamp.planned_side || p_now - lamp.planned_time < PLAN_SIDE_DWELL_SECONDS) {
 			continue;
 		}
-		const uint64_t growth = map_area(lamp.fit_side, lamp.spot) - map_area(MAX(lamp.planned_side, lamp.map_side), lamp.spot);
-		if (committed + growth <= upgrade_capacity) {
+		// Карта, которую ещё не уменьшили, может быть больше новой стороны: повышение плана тогда площади не добавляет.
+		const int64_t growth = MAX(int64_t(0), int64_t(map_area(lamp.fit_side, lamp.spot)) - int64_t(map_area(MAX(lamp.planned_side, lamp.map_side), lamp.spot)));
+		if (committed + uint64_t(growth) <= upgrade_capacity) {
 			committed += growth;
 			lamp.planned_side = lamp.fit_side;
 			lamp.planned_time = p_now;
