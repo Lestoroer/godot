@@ -52,6 +52,7 @@ public:
 	float get_map_budget() const;
 	void set_gpu_timestamps(bool p_enabled);
 	Dictionary get_frame_metrics() const;
+	// Только на потоке рендера; при обычной модели потоков это основной поток.
 	Dictionary get_memory_report(const Ref<World3D> &p_world) const;
 	Dictionary read_screen_buffers(const Ref<World3D> &p_world) const;
 	// Для проверок: RID лампы → сторона её карты, сторона, нужная по радиусу, начало места в атласе, число граней, сторона по плану, лампа в кадре.

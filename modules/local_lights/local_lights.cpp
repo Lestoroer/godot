@@ -194,14 +194,17 @@ Dictionary LocalLights::get_frame_metrics() const {
 	return result;
 }
 
+// Лампы и атлас живут на потоке рендера: отчёты читают их там же, иначе поток рендера меняет их посреди чтения.
 Dictionary LocalLights::get_memory_report(const Ref<World3D> &p_world) const {
 	ERR_FAIL_COND_V(p_world.is_null(), Dictionary());
+	ERR_FAIL_COND_V_MSG(!RenderingServer::get_singleton()->is_on_render_thread(), Dictionary(), "Отчёт памяти локального света читается на потоке рендера.");
 	const RendererSceneCull::LocalLightsBackend *backend = scene_cull()->scenario_get_local_lights(p_world->get_scenario());
 	return backend ? static_cast<const LocalLightsWorld *>(backend)->memory_report() : Dictionary();
 }
 
 Dictionary LocalLights::get_map_sides(const Ref<World3D> &p_world) const {
 	ERR_FAIL_COND_V(p_world.is_null(), Dictionary());
+	ERR_FAIL_COND_V_MSG(!RenderingServer::get_singleton()->is_on_render_thread(), Dictionary(), "Карты ламп читаются на потоке рендера.");
 	const RendererSceneCull::LocalLightsBackend *backend = scene_cull()->scenario_get_local_lights(p_world->get_scenario());
 	return backend ? static_cast<const LocalLightsWorld *>(backend)->read_map_sides() : Dictionary();
 }
