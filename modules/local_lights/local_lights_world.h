@@ -247,8 +247,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	// План сторон карт: пересчёт при смене набора ламп или их радиусов, при неудачном размещении и по времени, пока движется камера.
 	bool plan_dirty = true;
 	double next_plan_time = 0.0;
-	// Доля бюджета под оценку площади; уменьшается, если размещение не нашло места.
+	// Доля бюджета под оценку площади: меньше после плана, за которым размещению не хватило площади.
 	float plan_fill = 0.0f;
+	bool place_shortage = false;
 	LocalVector<uint32_t> plan_order;
 	uint32_t lamps_reduced = 0;
 	LocalVector<uint32_t> place_order;

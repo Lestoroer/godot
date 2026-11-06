@@ -51,7 +51,9 @@ const int ATLAS_ROW_WORDS = ATLAS_COLUMNS / 64;
 // около процента, раздробленное место только откладывает повышение. Повышение — только если оно поместилось бы и в чуть меньшей ёмкости:
 // движение камеры не гоняет карты туда-обратно. Времена в секундах монотонных часов: поведение не зависит от частоты кадров и масштаба времени.
 const float PLAN_FILL = 0.95f;
-const float PLAN_FILL_FAILURE_STEP = 0.03f;
+// Доля меняется по планам, а не по кадрам и не по числу ламп: план после нехватки площади берёт меньше, план без неё понемногу возвращает долю.
+const float PLAN_FILL_SHORTAGE_STEP = 0.03f;
+const float PLAN_FILL_RECOVERY_STEP = 0.01f;
 const float PLAN_FILL_MIN = 0.6f;
 const float PLAN_UPGRADE_CAPACITY = 0.92f;
 const double PLAN_PERIOD_SECONDS = 0.5;
@@ -760,6 +762,7 @@ void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
 	}
 	atlas_used_area = 0;
 	plan_fill = PLAN_FILL;
+	place_shortage = false;
 	plan_dirty = true;
 	omni_size = omni_largest;
 	spot_size = spot_largest;
@@ -830,7 +833,7 @@ bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 		if (uint64_t(atlas_budget_rows) * ATLAS_WIDTH - atlas_used_area >= uint64_t(cells_for(width)) * cells_for(p_side) * ATLAS_CELL * ATLAS_CELL) {
 			frame_metrics.map_fragmented_failures++;
 		} else {
-			plan_fill = MAX(PLAN_FILL_MIN, plan_fill - PLAN_FILL_FAILURE_STEP);
+			place_shortage = true;
 		}
 		plan_dirty = true;
 		if (r_lamp.map_faces > 0) {
@@ -1163,6 +1166,8 @@ void LocalLightsWorld::_plan_map_sides(double p_now) {
 	}
 	plan_dirty = false;
 	next_plan_time = p_now + PLAN_PERIOD_SECONDS;
+	plan_fill = place_shortage ? MAX(PLAN_FILL_MIN, plan_fill - PLAN_FILL_SHORTAGE_STEP) : MIN(PLAN_FILL, plan_fill + PLAN_FILL_RECOVERY_STEP);
+	place_shortage = false;
 	_assign_queue_tiers();
 	plan_order.clear();
 	for (uint32_t i = 0; i < lamps.size(); i++) {
