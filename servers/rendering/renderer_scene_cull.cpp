@@ -3723,7 +3723,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	//render shadows
 
 	// lestoroer#local-lights
-	LocalLightsScreenHook::set_active_view(nullptr);
+	LocalLightsActiveView::set_active(false);
 	if (scenario->local_lights && scenario->local_lights->is_enabled()) {
 		local_lights_view.clear();
 		for (int64_t i = int64_t(scene_cull_result.lights.size()) - 1; i >= 0; i--) {
@@ -3736,7 +3736,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 		}
 		if (!render_reflection_probe) {
 			scenario->local_lights->prepare_view(local_lights_view, p_camera_data->main_transform.origin);
-			LocalLightsScreenHook::set_active_view(scenario->local_lights);
+			LocalLightsActiveView::set_active(true);
 		}
 	}
 
@@ -3980,7 +3980,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	}
 	scene_render->surface_cache_set_context(scenario->surface_cache_buffers, scenario->surface_cache_view_callback);
 	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, p_window_output_max_value, &sdfgi_update_data, r_render_info);
-	LocalLightsScreenHook::set_active_view(nullptr); // lestoroer#local-lights
+	LocalLightsActiveView::set_active(false); // lestoroer#local-lights
 
 	if (p_viewport.is_valid()) {
 		RSG::viewport->viewport_set_prev_camera_data(p_viewport, p_camera_data);

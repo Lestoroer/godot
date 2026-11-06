@@ -7,8 +7,6 @@
 #include "core/os/os.h"
 #include "servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
-#include "servers/rendering/renderer_rd/storage_rd/render_data_rd.h"
-#include "servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 #include "servers/rendering/rendering_server_globals.h"
@@ -20,7 +18,7 @@
 namespace {
 
 // Сетка покрывает охват ламп по каждой оси отдельно: интерьер плоский, и куб тратил бы ячейки на высоту. Чем мельче ячейка,
-// тем короче её список и тем меньше ламп вне радиуса перебирают материал и проход отношения. Число ячеек ограничено:
+// тем короче её список и тем меньше ламп вне радиуса перебирает материал. Число ячеек ограничено:
 // сетка заново раскладывается и загружается на каждом кадре движения ламп.
 const float CELL_SIZES[] = { 0.5f, 0.63f, 0.8f, 1.0f, 1.26f, 1.6f, 2.0f, 2.5f, 3.2f };
 // Мельче ячейки нужно больше: на стенде нагрузки ячейка 0,8 м вместо 1,26 м сокращает перебор ещё на четверть, но втрое дороже на CPU при движении ламп.
@@ -31,7 +29,7 @@ const int GRID_TEXTURE_MAX_SIDE = 16384;
 const float WINDOW_SLACK = 1.1f;
 const float CELL_RETURN_SLACK = 1.4f;
 const float RECENTER_CELLS = 4.0f;
-// Таблица ламп: восемь текселей на лампу, в строке 256 ламп. Список ламп ячеек: индекс лампы в текселе. Контракт с local_light_ratio.glsl и local_lights_inc.gdshaderinc.
+// Таблица ламп: восемь текселей на лампу, в строке 256 ламп. Список ламп ячеек: индекс лампы в текселе. Контракт с local_lights_inc.gdshaderinc.
 const uint32_t DATA_WIDTH = 2048;
 const uint32_t SLOT_TEXELS = 8;
 const uint32_t SLOT_FLOATS = SLOT_TEXELS * 4;
@@ -64,11 +62,10 @@ const float VIEW_SIZE_STEPS_PER_OCTAVE = 2.0f;
 // Снимок спота шире конуса: выборка у края конуса не выходит за плитку.
 const float SPOT_MAP_MARGIN_DEGREES = 8.0f;
 const float SPOT_MAP_MAX_HALF_ANGLE_DEGREES = 75.0f;
-// Запас грани куба за её ребром, тексели в сумме, по половине с каждой стороны: gather 2×2 не выходит за плитку. Контракт с local_light_ratio.glsl.
+// Запас грани куба за её ребром, тексели в сумме, по половине с каждой стороны: gather 2×2 не выходит за плитку. Контракт с local_lights_inc.gdshaderinc.
 const float CUBE_GUARD_TEXELS = 4.0f;
-const uint32_t NOISE_FRAME_PERIOD = 1024;
 
-// Оси граней куба. Контракт с выбором грани в local_light_ratio.glsl и local_lights_inc.gdshaderinc.
+// Оси граней куба. Контракт с выбором грани в local_lights_inc.gdshaderinc.
 const Vector3 FACE_RIGHT[6] = { Vector3(0, 0, 1), Vector3(0, 0, 1), Vector3(1, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 0) };
 const Vector3 FACE_UP[6] = { Vector3(0, 1, 0), Vector3(0, 1, 0), Vector3(0, 0, 1), Vector3(0, 1, 0), Vector3(0, 1, 0), Vector3(0, 0, 1) };
 const Vector3 FACE_FORWARD[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1), Vector3(0, 1, 0) };
@@ -131,30 +128,6 @@ RD::Uniform sampled_uniform(int p_binding, RID p_sampler, RID p_texture) {
 	uniform.binding = p_binding;
 	uniform.append_id(p_sampler);
 	uniform.append_id(p_texture);
-	return uniform;
-}
-
-RD::Uniform image_uniform(int p_binding, RID p_texture) {
-	RD::Uniform uniform;
-	uniform.uniform_type = RD::UNIFORM_TYPE_IMAGE;
-	uniform.binding = p_binding;
-	uniform.append_id(p_texture);
-	return uniform;
-}
-
-RD::Uniform storage_uniform(int p_binding, RID p_buffer) {
-	RD::Uniform uniform;
-	uniform.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-	uniform.binding = p_binding;
-	uniform.append_id(p_buffer);
-	return uniform;
-}
-
-RD::Uniform buffer_uniform(int p_binding, RID p_buffer) {
-	RD::Uniform uniform;
-	uniform.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
-	uniform.binding = p_binding;
-	uniform.append_id(p_buffer);
 	return uniform;
 }
 
@@ -277,17 +250,6 @@ LocalLightsWorld::LocalLightsWorld(RID p_scenario) {
 	caster_shader_version = caster_shader.version_create();
 	caster_rd_shader = caster_shader.version_get_shader(caster_shader_version, 0);
 	cutout_rd_shader = caster_shader.version_get_shader(caster_shader_version, 1);
-	Vector<String> modes;
-	modes.push_back("");
-	ratio_shader.initialize(modes);
-	ratio_shader_version = ratio_shader.version_create();
-	ratio_rd_shader = ratio_shader.version_get_shader(ratio_shader_version, 0);
-	ratio_pipeline = rd->compute_pipeline_create(ratio_rd_shader);
-	blur_shader.initialize(modes);
-	blur_shader_version = blur_shader.version_create();
-	blur_rd_shader = blur_shader.version_get_shader(blur_shader_version, 0);
-	blur_pipeline = rd->compute_pipeline_create(blur_rd_shader);
-	params_buffer = rd->uniform_buffer_create(sizeof(ScreenParams));
 	// До первой лампы окна нет: пустая сетка в одну ячейку.
 	_resize_grid(Vector3i(1, 1, 1));
 }
@@ -321,21 +283,18 @@ LocalLightsWorld::~LocalLightsWorld() {
 	_free_wrapped(data_texture);
 	_free_wrapped(list_texture);
 	_free_wrapped(map_atlas_texture);
-	_free_wrapped(blurred_ratio_texture);
 	for (const KeyValue<RD::VertexFormatID, RID> &entry : caster_pipelines) {
 		rd->free_rid(entry.value);
 	}
 	for (const KeyValue<RD::VertexFormatID, RID> &entry : cutout_pipelines) {
 		rd->free_rid(entry.value);
 	}
-	for (const RID &rid : { data_buffer, list_buffer, map_atlas, grid_rd, data_rd, list_rd, ratio_surface, blurred_ratio, blurred_history, params_buffer, ratio_pipeline, blur_pipeline }) {
+	for (const RID &rid : { map_atlas, grid_rd, data_rd, list_rd }) {
 		if (rid.is_valid()) {
 			rd->free_rid(rid);
 		}
 	}
 	caster_shader.version_free(caster_shader_version);
-	ratio_shader.version_free(ratio_shader_version);
-	blur_shader.version_free(blur_shader_version);
 }
 
 RID LocalLightsWorld::_wrap_texture(RID p_rd_texture, RSE::TextureLayeredType p_type) const {
@@ -1651,19 +1610,15 @@ void LocalLightsWorld::_update_grid() {
 	if (grid_changed) {
 		rd->texture_update(grid_rd, 0, grid_bytes);
 		rd->texture_update(list_rd, 0, list_bytes);
-		// Проход отношения читает буферы только до конца списка и до последней лампы: хвост не загружается.
-		rd->buffer_update(list_buffer, 0, list_used * sizeof(float), list_bytes.ptr());
 		grid_changed = false;
 		frame_metrics.grid_uploads++;
-		frame_metrics.uploaded_bytes += grid_bytes.size() + list_bytes.size() + list_used * sizeof(float);
+		frame_metrics.uploaded_bytes += grid_bytes.size() + list_bytes.size();
 	}
 	if (data_changed) {
 		rd->texture_update(data_rd, 0, data_bytes);
-		const uint32_t data_used = MIN(uint32_t(data_bytes.size()), lamps.size() * SLOT_TEXELS * BYTES_PER_DATA_TEXEL);
-		rd->buffer_update(data_buffer, 0, data_used, data_bytes.ptr());
 		data_changed = false;
 		frame_metrics.data_uploads++;
-		frame_metrics.uploaded_bytes += data_bytes.size() + data_used;
+		frame_metrics.uploaded_bytes += data_bytes.size();
 	}
 }
 
@@ -1700,7 +1655,6 @@ void LocalLightsWorld::_repack() {
 		cell_next[cell] = list_end;
 		list_end += cell_omni[cell] + cell_spot[cell];
 	}
-	list_used = MAX(1u, list_end);
 	const uint32_t needed_rows = MAX(1u, (list_end + LIST_WIDTH - 1) / LIST_WIDTH);
 	if (needed_rows > list_rows) {
 		list_rows = Math::next_power_of_2(needed_rows);
@@ -1713,10 +1667,6 @@ void LocalLightsWorld::_repack() {
 		list_rd = rd->texture_create(format, RD::TextureView());
 		list_texture = _wrap_texture(list_rd, RSE::TEXTURE_LAYERED_2D_ARRAY);
 		list_bytes.resize(LIST_WIDTH * list_rows * sizeof(float));
-		if (list_buffer.is_valid()) {
-			rd->free_rid(list_buffer);
-		}
-		list_buffer = rd->storage_buffer_create(list_bytes.size());
 		globals_published = false;
 	}
 	float *list = reinterpret_cast<float *>(list_bytes.ptrw());
@@ -1750,10 +1700,6 @@ void LocalLightsWorld::_ensure_data_table() {
 	data_texture = _wrap_texture(data_rd, RSE::TEXTURE_LAYERED_2D_ARRAY);
 	data_bytes.resize(DATA_WIDTH * data_rows * BYTES_PER_DATA_TEXEL);
 	memset(data_bytes.ptrw(), 0, data_bytes.size());
-	if (data_buffer.is_valid()) {
-		rd->free_rid(data_buffer);
-	}
-	data_buffer = rd->storage_buffer_create(data_bytes.size());
 	for (Lamp &lamp : lamps) {
 		lamp.data_dirty = true;
 	}
@@ -1819,114 +1765,9 @@ void LocalLightsWorld::_publish_globals() {
 	materials->global_shader_parameter_set("local_light_data", data_texture);
 	materials->global_shader_parameter_set("local_light_list", list_texture);
 	materials->global_shader_parameter_set("local_light_map_atlas", map_atlas_texture);
-	materials->global_shader_parameter_set("local_light_shadow_ratio", blurred_ratio_texture);
 	// Новая раскладка сетки уже загружена: материалы этого кадра должны читать её через новые текстуры и начало окна, иначе индексы укажут мимо.
 	materials->_update_global_shader_uniforms();
 	materials->_update_queued_materials();
-}
-
-void LocalLightsWorld::_ensure_screen_textures(const Size2i &p_size) {
-	if (p_size.x <= screen_size.x && p_size.y <= screen_size.y && blurred_ratio.is_valid()) {
-		return;
-	}
-	screen_size = Size2i(MAX(p_size.x, screen_size.x), MAX(p_size.y, screen_size.y));
-	_retire_texture(blurred_ratio, blurred_ratio_texture);
-	RID no_wrapper;
-	_retire_texture(ratio_surface, no_wrapper);
-	_retire_texture(blurred_history, no_wrapper);
-	history_frame = UINT64_MAX;
-	RD::TextureFormat format;
-	format.width = screen_size.x;
-	format.height = screen_size.y;
-	format.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
-	format.format = RD::DATA_FORMAT_R32G32_UINT;
-	ratio_surface = rd->texture_create(format, RD::TextureView());
-	format.format = RD::DATA_FORMAT_A2B10G10R10_UNORM_PACK32;
-	format.usage_bits |= RD::TEXTURE_USAGE_SAMPLING_BIT;
-	blurred_ratio = rd->texture_create(format, RD::TextureView());
-	blurred_ratio_texture = _wrap_texture(blurred_ratio, RSE::TEXTURE_LAYERED_2D_ARRAY);
-	format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
-	blurred_history = rd->texture_create(format, RD::TextureView());
-	RendererRD::MaterialStorage::get_singleton()->global_shader_parameter_set("local_light_shadow_ratio", blurred_ratio_texture);
-}
-
-void LocalLightsWorld::render_screen_passes(RenderDataRD *p_render_data) {
-	if (frame_metrics.lamps_in_grid == 0) {
-		return;
-	}
-	const uint64_t started = OS::get_singleton()->get_ticks_usec();
-	const LocalLightsSettings &settings = LocalLights::get_singleton()->get_settings();
-	Ref<RenderSceneBuffersRD> buffers = p_render_data->render_buffers;
-	ERR_FAIL_COND(buffers.is_null());
-	const Size2i size = buffers->get_internal_size();
-	_ensure_screen_textures(size);
-
-	RenderSceneDataRD *scene_data = p_render_data->scene_data;
-	const Projection projection = scene_data->get_view_projection(0);
-	const Projection world_to_clip = projection * Projection(scene_data->get_cam_transform().affine_inverse());
-	const bool history_valid = history_frame + 1 == current_frame && history_buffers == buffers->get_instance_id() && history_size == size && settings.fixed_noise_frame < 0 && !settings.show_hard_mask;
-	ScreenParams params;
-	RendererRD::MaterialStorage::store_camera(projection.inverse(), params.inverse_projection);
-	RendererRD::MaterialStorage::store_camera(projection, params.projection);
-	RendererRD::MaterialStorage::store_transform(scene_data->get_cam_transform(), params.view_to_world);
-	params.origin_and_step[0] = origin.x;
-	params.origin_and_step[1] = origin.y;
-	params.origin_and_step[2] = origin.z;
-	params.origin_and_step[3] = cell_size;
-	params.dims[0] = cell_dims.x;
-	params.dims[1] = cell_dims.y;
-	params.dims[2] = cell_dims.z;
-	params.dims[3] = 0;
-	params.blur[0] = settings.softness_per_meter;
-	params.blur[1] = float(settings.fixed_noise_frame >= 0 ? uint64_t(settings.fixed_noise_frame) : Engine::get_singleton()->get_frames_drawn() % NOISE_FRAME_PERIOD);
-	params.blur[2] = settings.several_lamps_growth;
-	params.blur[3] = settings.show_hard_mask ? 1.0f : 0.0f;
-	params.view_size[0] = size.x;
-	params.view_size[1] = size.y;
-	params.view_size[2] = history_valid ? 1 : 0;
-	params.view_size[3] = 0;
-	RendererRD::MaterialStorage::store_camera(history_valid ? history_world_to_clip : world_to_clip, params.previous_world_to_clip);
-	rd->buffer_update(params_buffer, 0, sizeof(ScreenParams), &params);
-
-	RendererRD::MaterialStorage *materials = RendererRD::MaterialStorage::get_singleton();
-	RendererRD::TextureStorage *textures = RendererRD::TextureStorage::get_singleton();
-	const RID sampler = materials->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
-	const RID no_atlas = textures->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
-	const RID depth = buffers->get_depth_texture(0);
-	const Vector2i groups((size.x + 7) / 8, (size.y + 7) / 8);
-	UniformSetCacheRD *uniform_sets = UniformSetCacheRD::get_singleton();
-
-	if (settings.gpu_timestamps) {
-		rd->capture_timestamp("LocalLights ratio");
-	}
-	RID ratio_set = uniform_sets->get_cache(ratio_rd_shader, 0, sampled_uniform(0, sampler, depth), sampled_uniform(1, sampler, grid_rd), storage_uniform(2, data_buffer),
-			sampled_uniform(3, sampler, map_atlas.is_valid() ? map_atlas : no_atlas), storage_uniform(4, list_buffer), buffer_uniform(5, params_buffer), image_uniform(7, ratio_surface));
-	RD::ComputeListID compute = rd->compute_list_begin();
-	rd->compute_list_bind_compute_pipeline(compute, ratio_pipeline);
-	rd->compute_list_bind_uniform_set(compute, ratio_set, 0);
-	rd->compute_list_dispatch(compute, groups.x, groups.y, 1);
-	rd->compute_list_end();
-
-	if (settings.gpu_timestamps) {
-		rd->capture_timestamp("LocalLights blur");
-	}
-	const RID linear_sampler = materials->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
-	RID blur_set = uniform_sets->get_cache(blur_rd_shader, 0, image_uniform(1, ratio_surface), image_uniform(2, blurred_ratio), sampled_uniform(3, linear_sampler, blurred_history),
-			buffer_uniform(5, params_buffer));
-	compute = rd->compute_list_begin();
-	rd->compute_list_bind_compute_pipeline(compute, blur_pipeline);
-	rd->compute_list_bind_uniform_set(compute, blur_set, 0);
-	rd->compute_list_dispatch(compute, groups.x, groups.y, 1);
-	rd->compute_list_end();
-	rd->texture_copy(blurred_ratio, blurred_history, Vector3(), Vector3(), Vector3(size.x, size.y, 1), 0, 0, 0, 0);
-	history_frame = current_frame;
-	history_buffers = buffers->get_instance_id();
-	history_size = size;
-	history_world_to_clip = world_to_clip;
-	if (settings.gpu_timestamps) {
-		rd->capture_timestamp("LocalLights screen end");
-	}
-	frame_metrics.screen_usec += OS::get_singleton()->get_ticks_usec() - started;
 }
 
 Dictionary LocalLightsWorld::memory_report() const {
@@ -1939,10 +1780,8 @@ Dictionary LocalLightsWorld::memory_report() const {
 	report["atlasOccupiedBytes"] = atlas_used_area * 2;
 	// Наибольшая видеопамять атласа за всё время: в кадре роста живут старая и новая текстуры.
 	report["atlasPeakBytes"] = MAX(atlas_peak_bytes, uint64_t(ATLAS_WIDTH) * atlas_height * 2);
-	report["screenBytes"] = uint64_t(screen_size.x) * screen_size.y * (8 + 4 + 4);
 	report["gridBytes"] = uint64_t(grid_bytes.size());
 	report["dataBytes"] = uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
-	report["lampBufferBytes"] = uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
 	uint64_t cpu = uint64_t(grid_bytes.size()) + uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
 	cpu += lamps.get_capacity() * sizeof(Lamp);
 	for (const Lamp &lamp : lamps) {
@@ -1966,16 +1805,6 @@ Dictionary LocalLightsWorld::read_map_sides() const {
 		if (lamp.active && lamp.casts) {
 			result[lamp.instance] = PackedInt32Array({ lamp.map_side, _map_side_for(lamp), lamp.map_origin.x, lamp.map_origin.y, lamp.map_faces, lamp.planned_side, lamp.last_visible_frame == current_frame ? 1 : 0 });
 		}
-	}
-	return result;
-}
-
-Dictionary LocalLightsWorld::read_screen_buffers() const {
-	Dictionary result;
-	result["size"] = screen_size;
-	if (blurred_ratio.is_valid()) {
-		result["hard"] = rd->texture_get_data(ratio_surface, 0);
-		result["blurred"] = rd->texture_get_data(blurred_ratio, 0);
 	}
 	return result;
 }

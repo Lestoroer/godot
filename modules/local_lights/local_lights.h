@@ -40,10 +40,6 @@ public:
 	void bake_all_lamps(const Ref<World3D> &p_world);
 	void set_update_cap(int p_cap);
 	int get_update_cap() const;
-	void set_softness(float p_softness_per_meter);
-	void set_several_lamps_growth(float p_growth);
-	void set_show_mask(bool p_show);
-	void set_fixed_noise_frame(int p_frame);
 	void set_caster_culling(bool p_enabled);
 	void set_map_sizes(int p_omni_face, int p_spot_tile);
 	void set_map_texel_size(float p_meters);
@@ -54,7 +50,6 @@ public:
 	Dictionary get_frame_metrics() const;
 	// Только на потоке рендера; при обычной модели потоков это основной поток.
 	Dictionary get_memory_report(const Ref<World3D> &p_world) const;
-	Dictionary read_screen_buffers(const Ref<World3D> &p_world) const;
 	// Для проверок: RID лампы → сторона её карты, сторона, нужная по радиусу, начало места в атласе, число граней, сторона по плану, лампа в кадре.
 	Dictionary get_map_sides(const Ref<World3D> &p_world) const;
 

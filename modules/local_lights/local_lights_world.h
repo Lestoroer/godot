@@ -1,24 +1,17 @@
 // lestoroer#local-lights
 #pragma once
 
-#include "core/math/projection.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
 #include "servers/rendering/renderer_scene_cull.h"
 #include "servers/rendering/rendering_device.h"
 
-#include "shaders/local_light_blur.glsl.gen.h"
 #include "shaders/local_light_caster.glsl.gen.h"
-#include "shaders/local_light_ratio.glsl.gen.h"
 
 struct LocalLightsSettings {
 	// Целых ламп, чьи карты обновляются за кадр; 0 — все.
 	int update_cap = 16;
-	float softness_per_meter = 0.04f;
-	float several_lamps_growth = 3.0f;
-	bool show_hard_mask = false;
-	int fixed_noise_frame = -1;
 	bool caster_culling = true;
 	// Наибольшие стороны плитки; меньшие выбираются по радиусу лампы так, чтобы тексель на границе радиуса был не крупнее map_texel_size.
 	int omni_face_size = 256;
@@ -61,10 +54,9 @@ struct LocalLightsFrameMetrics {
 	uint64_t gather_usec = 0;
 	uint64_t record_usec = 0;
 	uint64_t grid_usec = 0;
-	uint64_t screen_usec = 0;
 };
 
-// Omni и Spot одного мира: карты теней, сетка и данные для материалов, проходы отношения и размытия. Вся работа идёт на потоке
+// Omni и Spot одного мира: карты теней, сетка и данные для материалов. Вся работа идёт на потоке
 // рендера внутри кадра: лампы вида приходят из кулла камеры, изменения — из флага тени лампы, который ставит сцена.
 class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	typedef RendererSceneCull::Instance Instance;
@@ -194,17 +186,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		float uv_transform[4];
 	};
 
-	struct ScreenParams {
-		float inverse_projection[16];
-		float projection[16];
-		float view_to_world[16];
-		float origin_and_step[4];
-		int32_t dims[4];
-		float blur[4];
-		int32_t view_size[4];
-		float previous_world_to_clip[16];
-	};
-
 	RID scenario;
 	bool enabled = true;
 	bool refresh_all = true;
@@ -222,15 +203,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	HashMap<RD::VertexFormatID, RID> caster_pipelines;
 	RID cutout_rd_shader;
 	HashMap<RD::VertexFormatID, RID> cutout_pipelines;
-	LocalLightRatioShaderRD ratio_shader;
-	RID ratio_shader_version;
-	RID ratio_rd_shader;
-	RID ratio_pipeline;
-	LocalLightBlurShaderRD blur_shader;
-	RID blur_shader_version;
-	RID blur_rd_shader;
-	RID blur_pipeline;
-	RID params_buffer;
 
 	// Общий атлас карт. Ширина постоянна, высота растёт небольшими шагами с копией снятых карт; у Omni на лампу шесть плиток подряд.
 	RID map_atlas;
@@ -292,7 +264,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	uint32_t data_rows = 0;
 	uint32_t list_rows = 0;
 	// Записей в списке ламп ячеек после последней раскладки.
-	uint32_t list_used = 1;
 	Vector<uint8_t> grid_bytes;
 	Vector<uint8_t> data_bytes;
 	Vector<uint8_t> list_bytes;
@@ -305,25 +276,10 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	RID grid_rd;
 	RID data_rd;
 	RID list_rd;
-	// Те же байты для прохода отношения: чтение из буфера в вычислительном шейдере дешевле выборки из текстуры, а лампы читаются много раз на пиксель.
-	RID data_buffer;
-	RID list_buffer;
 	RID grid_texture;
 	RID data_texture;
 	RID list_texture;
 
-	// Экранные буферы: один набор по наибольшему вьюпорту, каждый вид перезаписывает его перед своим проходом.
-	Size2i screen_size;
-	RID ratio_surface;
-	RID blurred_ratio;
-	RID blurred_ratio_texture;
-	// Итог размытия прошлого кадра: размытие накапливает его вместе с новым кадром. Годен, только если прошлый кадр был кадром
-	// того же вида сразу перед этим и не на закреплённом шуме.
-	RID blurred_history;
-	uint64_t history_frame = UINT64_MAX;
-	ObjectID history_buffers;
-	Size2i history_size;
-	Projection history_world_to_clip;
 	bool globals_published = false;
 	// Материалы кадра уже связаны со старой текстурой и получат новую только в начале следующего кадра.
 	LocalVector<RID> retired_rd_textures;
@@ -370,7 +326,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _ensure_data_table();
 	void _write_lamp_data(uint32_t p_index);
 	void _publish_globals();
-	void _ensure_screen_textures(const Size2i &p_size);
 	RID _wrap_texture(RID p_rd_texture, RSE::TextureLayeredType p_type) const;
 	void _free_wrapped(RID &r_texture) const;
 	void _retire_texture(RID &r_rd_texture, RID &r_wrapped);
@@ -382,12 +337,10 @@ public:
 
 	virtual bool is_enabled() const override { return enabled; }
 	virtual void prepare_view(const LocalVector<Instance *> &p_lights, const Vector3 &p_camera_position) override;
-	virtual void render_screen_passes(RenderDataRD *p_render_data) override;
 
 	void set_held_instances(const Vector<RID> &p_instances);
 	void request_bake_all_lamps() { bake_all_lamps = true; }
 	void set_enabled(bool p_enabled);
 	Dictionary memory_report() const;
-	Dictionary read_screen_buffers() const;
 	Dictionary read_map_sides() const;
 };

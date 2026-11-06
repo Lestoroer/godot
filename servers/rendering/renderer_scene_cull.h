@@ -40,7 +40,7 @@
 #include "core/templates/rid_owner.h"
 #include "core/templates/self_list.h"
 #include "servers/rendering/instance_uniforms.h"
-#include "servers/rendering/local_lights_screen_hook.h" // lestoroer#local-lights
+#include "servers/rendering/local_lights_active_view.h" // lestoroer#local-lights
 #include "servers/rendering/renderer_scene_occlusion_cull.h"
 #include "servers/rendering/renderer_scene_render.h"
 #include "servers/rendering/rendering_method.h"
@@ -1042,8 +1042,9 @@ public:
 	InstanceCullResult scene_cull_result;
 
 	// lestoroer#local-lights: Omni и Spot включённого мира считает модуль, штатный рендер их не получает.
-	class LocalLightsBackend : public LocalLightsScreenHook {
+	class LocalLightsBackend {
 	public:
+		virtual ~LocalLightsBackend() = default;
 		virtual bool is_enabled() const = 0;
 		// Перед главным проходом вида: лампы вида с учётом радиуса уже отобраны куллом камеры. Позиция камеры — для важности ламп в бюджете карт.
 		virtual void prepare_view(const LocalVector<Instance *> &p_lights, const Vector3 &p_camera_position) = 0;

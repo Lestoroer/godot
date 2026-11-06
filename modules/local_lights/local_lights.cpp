@@ -23,10 +23,6 @@ void LocalLights::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("bake_all_lamps", "world"), &LocalLights::bake_all_lamps);
 	ClassDB::bind_method(D_METHOD("set_update_cap", "cap"), &LocalLights::set_update_cap);
 	ClassDB::bind_method(D_METHOD("get_update_cap"), &LocalLights::get_update_cap);
-	ClassDB::bind_method(D_METHOD("set_softness", "softness_per_meter"), &LocalLights::set_softness);
-	ClassDB::bind_method(D_METHOD("set_several_lamps_growth", "growth"), &LocalLights::set_several_lamps_growth);
-	ClassDB::bind_method(D_METHOD("set_show_mask", "show"), &LocalLights::set_show_mask);
-	ClassDB::bind_method(D_METHOD("set_fixed_noise_frame", "frame"), &LocalLights::set_fixed_noise_frame);
 	ClassDB::bind_method(D_METHOD("set_caster_culling", "enabled"), &LocalLights::set_caster_culling);
 	ClassDB::bind_method(D_METHOD("set_map_sizes", "omni_face", "spot_tile"), &LocalLights::set_map_sizes);
 	ClassDB::bind_method(D_METHOD("set_map_texel_size", "meters"), &LocalLights::set_map_texel_size);
@@ -35,7 +31,6 @@ void LocalLights::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_gpu_timestamps", "enabled"), &LocalLights::set_gpu_timestamps);
 	ClassDB::bind_method(D_METHOD("get_frame_metrics"), &LocalLights::get_frame_metrics);
 	ClassDB::bind_method(D_METHOD("get_memory_report", "world"), &LocalLights::get_memory_report);
-	ClassDB::bind_method(D_METHOD("read_screen_buffers", "world"), &LocalLights::read_screen_buffers);
 	ClassDB::bind_method(D_METHOD("get_map_sides", "world"), &LocalLights::get_map_sides);
 }
 
@@ -114,22 +109,6 @@ int LocalLights::get_update_cap() const {
 	return settings.update_cap;
 }
 
-void LocalLights::set_softness(float p_softness_per_meter) {
-	settings.softness_per_meter = p_softness_per_meter;
-}
-
-void LocalLights::set_several_lamps_growth(float p_growth) {
-	settings.several_lamps_growth = p_growth;
-}
-
-void LocalLights::set_show_mask(bool p_show) {
-	settings.show_hard_mask = p_show;
-}
-
-void LocalLights::set_fixed_noise_frame(int p_frame) {
-	settings.fixed_noise_frame = p_frame;
-}
-
 void LocalLights::set_caster_culling(bool p_enabled) {
 	settings.caster_culling = p_enabled;
 }
@@ -189,8 +168,7 @@ Dictionary LocalLights::get_frame_metrics() const {
 	result["gatherUsec"] = metrics.gather_usec;
 	result["recordUsec"] = metrics.record_usec;
 	result["gridUsec"] = metrics.grid_usec;
-	result["screenUsec"] = metrics.screen_usec;
-	result["totalUsec"] = metrics.track_usec + metrics.gather_usec + metrics.record_usec + metrics.grid_usec + metrics.screen_usec;
+	result["totalUsec"] = metrics.track_usec + metrics.gather_usec + metrics.record_usec + metrics.grid_usec;
 	return result;
 }
 
@@ -207,13 +185,6 @@ Dictionary LocalLights::get_map_sides(const Ref<World3D> &p_world) const {
 	ERR_FAIL_COND_V_MSG(!RenderingServer::get_singleton()->is_on_render_thread(), Dictionary(), "Карты ламп читаются на потоке рендера.");
 	const RendererSceneCull::LocalLightsBackend *backend = scene_cull()->scenario_get_local_lights(p_world->get_scenario());
 	return backend ? static_cast<const LocalLightsWorld *>(backend)->read_map_sides() : Dictionary();
-}
-
-Dictionary LocalLights::read_screen_buffers(const Ref<World3D> &p_world) const {
-	ERR_FAIL_COND_V(p_world.is_null(), Dictionary());
-	ERR_FAIL_COND_V_MSG(!RenderingServer::get_singleton()->is_on_render_thread(), Dictionary(), "Буферы читаются на потоке рендера.");
-	const RendererSceneCull::LocalLightsBackend *backend = scene_cull()->scenario_get_local_lights(p_world->get_scenario());
-	return backend ? static_cast<const LocalLightsWorld *>(backend)->read_screen_buffers() : Dictionary();
 }
 
 LocalLights::LocalLights() {
