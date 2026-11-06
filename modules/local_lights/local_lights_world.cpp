@@ -69,10 +69,11 @@ const float SPOT_MAP_MAX_HALF_ANGLE_DEGREES = 75.0f;
 const int MOMENT_MAX_RADIUS = 12;
 const float MOMENT_KERNEL_SIGMAS = 2.5f;
 const float MOMENT_MIN_SIGMA = 1.0f;
-const int MOMENT_GROUP = 16;
-// Запас грани куба за её ребром с каждой стороны сверх ядра моментов, тексели глубины: gather 2×2 глубины и билинейная выборка моментов
-// не выходят за плитку. Запас не больше четверти грани.
-const int CUBE_GUARD_EXTRA_TEXELS = 2;
+// Сторона плитки моментов, которую считает одна группа. Контракт с local_light_moments.glsl.
+const int MOMENT_TILE = 32;
+// Запас грани куба за её ребром, тексели в сумме, по половине с каждой стороны: gather 2×2 не выходит за плитку. Ядро моментов за ребром
+// читает соседнюю грань и запаса не требует. Контракт с local_lights_inc.gdshaderinc.
+const float CUBE_GUARD_TEXELS = 4.0f;
 
 // Оси граней куба. Контракт с выбором грани в local_lights_inc.gdshaderinc.
 const Vector3 FACE_RIGHT[6] = { Vector3(0, 0, 1), Vector3(0, 0, 1), Vector3(1, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 0) };
@@ -156,7 +157,7 @@ struct MomentsPush {
 	float inverse_near;
 	float inverse_range;
 	float sigma;
-	float unused;
+	float cube_extent;
 };
 
 struct MomentKernel {
@@ -165,17 +166,17 @@ struct MomentKernel {
 };
 
 // Ядро моментов карты со стороной p_side и тангенсом половины снимка p_extent: сигма по общей мягкости в тангенсе угла от лампы.
-MomentKernel moment_kernel(float p_softness, int p_side, float p_extent, int p_max_radius) {
+MomentKernel moment_kernel(float p_softness, int p_side, float p_extent) {
 	const float moment_texel_tangent = 4.0f * p_extent / float(p_side);
 	MomentKernel kernel;
-	kernel.sigma = CLAMP(p_softness / moment_texel_tangent, MOMENT_MIN_SIGMA, float(p_max_radius) / MOMENT_KERNEL_SIGMAS);
-	kernel.radius = MIN(int(Math::ceil(kernel.sigma * MOMENT_KERNEL_SIGMAS)), p_max_radius);
+	kernel.sigma = CLAMP(p_softness / moment_texel_tangent, MOMENT_MIN_SIGMA, float(MOMENT_MAX_RADIUS) / MOMENT_KERNEL_SIGMAS);
+	kernel.radius = MIN(int(Math::ceil(kernel.sigma * MOMENT_KERNEL_SIGMAS)), MOMENT_MAX_RADIUS);
 	return kernel;
 }
 
-// Наибольший радиус ядра грани куба: запас за ребром не больше четверти грани.
-int omni_moment_radius_limit(int p_side) {
-	return CLAMP((p_side / 4 - CUBE_GUARD_EXTRA_TEXELS) / 2, 1, MOMENT_MAX_RADIUS);
+// Тангенс половины снимка грани куба.
+float cube_face_extent(int p_side) {
+	return 1.0f + CUBE_GUARD_TEXELS / float(p_side);
 }
 
 // Плоскости снимка: точка внутри, если скалярное произведение с нормалью неотрицательно. Исход у разных коробок непредсказуем, поэтому без раннего выхода.
@@ -732,7 +733,7 @@ void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
 	if (omni_largest != p_settings.omni_face_size || spot_largest != p_settings.spot_tile_size) {
 		ERR_PRINT_ONCE(vformat("Наибольшие плитки локального света %d и %d не помещаются в атлас и бюджет: используются %d и %d.", p_settings.omni_face_size, p_settings.spot_tile_size, omni_largest, spot_largest));
 	}
-	// Мягкость меняет запас граней куба, поэтому и снимки.
+	// Мягкость меняет моменты всех карт.
 	const bool same_maps = omni_largest == omni_size && spot_largest == spot_size && p_settings.map_texel_size == map_texel_size && p_settings.shadow_softness == shadow_softness;
 	if (same_maps && budget_rows == atlas_budget_rows) {
 		return;
@@ -1077,7 +1078,7 @@ void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance,
 	const InstanceLightData *light = static_cast<const InstanceLightData *>(p_instance->base_data);
 	const Vector3 position = r_lamp.position;
 	const float range_sq = r_lamp.range * r_lamp.range;
-	const float cube_guard = r_lamp.spot ? 0.0f : _omni_extent(r_lamp.map_side);
+	const float cube_guard = cube_face_extent(r_lamp.map_side);
 	const uint32_t all_faces = (1u << r_lamp.map_faces) - 1;
 	Vector3 cone_normals[4];
 	if (r_lamp.spot) {
@@ -1590,7 +1591,7 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp) {
 	push.extra[3] = 0.0f;
 	push.decode_position[3] = 0.0f;
 	push.decode_size[3] = 0.0f;
-	const float extent = p_lamp.spot ? p_lamp.baked_extent : _omni_extent(side);
+	const float extent = p_lamp.spot ? p_lamp.baked_extent : cube_face_extent(side);
 	push.projection[0] = extent;
 	push.projection[1] = extent;
 	const LampCaster *casters = lamp_casters.ptr() + p_lamp.caster_first;
@@ -1657,7 +1658,8 @@ void LocalLightsWorld::_record_moments(uint32_t p_budget) {
 			continue;
 		}
 		const int side = lamp.map_side;
-		const MomentKernel kernel = lamp.spot ? moment_kernel(shadow_softness, side, lamp.baked_extent, MOMENT_MAX_RADIUS) : moment_kernel(shadow_softness, side, _omni_extent(side), omni_moment_radius_limit(side));
+		const float extent = lamp.spot ? lamp.baked_extent : cube_face_extent(side);
+		const MomentKernel kernel = moment_kernel(shadow_softness, side, extent);
 		const float near_plane = map_near_plane(lamp.range);
 		MomentsPush push;
 		push.map_origin[0] = lamp.map_origin.x;
@@ -1667,18 +1669,12 @@ void LocalLightsWorld::_record_moments(uint32_t p_budget) {
 		push.inverse_near = 1.0f / near_plane;
 		push.inverse_range = 1.0f / lamp.range;
 		push.sigma = kernel.sigma;
-		push.unused = 0.0f;
+		push.cube_extent = lamp.spot ? 0.0f : extent;
 		rd->compute_list_set_push_constant(list, &push, sizeof(MomentsPush));
-		const int groups = (side / 2 + MOMENT_GROUP - 1) / MOMENT_GROUP;
+		const int groups = (side / 2 + MOMENT_TILE - 1) / MOMENT_TILE;
 		rd->compute_list_dispatch(list, groups, groups, lamp.map_faces);
 	}
 	rd->compute_list_end();
-}
-
-// Тангенс половины снимка грани куба: запас за ребром вмещает ядро моментов, и у стыка граней размытие читает соседние направления.
-float LocalLightsWorld::_omni_extent(int p_side) const {
-	const int guard = 2 * moment_kernel(shadow_softness, p_side, 1.0f, omni_moment_radius_limit(p_side)).radius + CUBE_GUARD_EXTRA_TEXELS;
-	return float(p_side) / float(p_side - 2 * guard);
 }
 
 void LocalLightsWorld::_update_grid() {
@@ -1837,11 +1833,9 @@ void LocalLightsWorld::_write_lamp_data(uint32_t p_index) {
 	}
 	values[27] = -1.0f;
 	if (lamp.casts && lamp.map_valid) {
-		const float extent = lamp.spot ? lamp.baked_extent : _omni_extent(lamp.map_side);
-		const MomentKernel kernel = moment_kernel(shadow_softness, lamp.map_side, extent, lamp.spot ? MOMENT_MAX_RADIUS : omni_moment_radius_limit(lamp.map_side));
-		values[13] = kernel.sigma * 4.0f * extent / float(lamp.map_side);
+		const float extent = lamp.spot ? lamp.baked_extent : cube_face_extent(lamp.map_side);
+		values[13] = moment_kernel(shadow_softness, lamp.map_side, extent).sigma * 4.0f * extent / float(lamp.map_side);
 		values[16] = map_near_plane(lamp.baked_range);
-		values[17] = lamp.spot ? 0.0f : extent;
 		values[18] = float(lamp.map_origin.y);
 		values[19] = lamp.baked_range;
 		values[20] = lamp.spot ? lamp.baked_forward.x : 0.0f;

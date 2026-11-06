@@ -332,7 +332,6 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	const InstanceCasters &_instance_surfaces(const Instance *p_geometry);
 	void _record_lamp(const Lamp &p_lamp);
 	void _record_moments(uint32_t p_budget);
-	float _omni_extent(int p_side) const;
 	void _update_grid();
 	void _repack();
 	void _ensure_data_table();
