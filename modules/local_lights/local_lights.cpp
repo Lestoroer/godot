@@ -28,6 +28,8 @@ void LocalLights::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_map_texel_size", "meters"), &LocalLights::set_map_texel_size);
 	ClassDB::bind_method(D_METHOD("set_map_budget", "mib"), &LocalLights::set_map_budget);
 	ClassDB::bind_method(D_METHOD("get_map_budget"), &LocalLights::get_map_budget);
+	ClassDB::bind_method(D_METHOD("set_shadow_softness", "tangent"), &LocalLights::set_shadow_softness);
+	ClassDB::bind_method(D_METHOD("get_shadow_softness"), &LocalLights::get_shadow_softness);
 	ClassDB::bind_method(D_METHOD("set_gpu_timestamps", "enabled"), &LocalLights::set_gpu_timestamps);
 	ClassDB::bind_method(D_METHOD("get_frame_metrics"), &LocalLights::get_frame_metrics);
 	ClassDB::bind_method(D_METHOD("get_memory_report", "world"), &LocalLights::get_memory_report);
@@ -128,6 +130,14 @@ void LocalLights::set_map_budget(float p_mib) {
 
 float LocalLights::get_map_budget() const {
 	return settings.map_budget_mib;
+}
+
+void LocalLights::set_shadow_softness(float p_tangent) {
+	settings.shadow_softness = MAX(p_tangent, 0.0f);
+}
+
+float LocalLights::get_shadow_softness() const {
+	return settings.shadow_softness;
 }
 
 void LocalLights::set_gpu_timestamps(bool p_enabled) {

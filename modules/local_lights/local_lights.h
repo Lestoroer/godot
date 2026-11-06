@@ -46,6 +46,9 @@ public:
 	// Бюджет атласа карт, МиБ: при нехватке места снижается разрешение карт наименее важных ламп.
 	void set_map_budget(float p_mib);
 	float get_map_budget() const;
+	// Общая мягкость теней: сигма размытия моментов в тангенсе угла от лампы. Смена переснимает все карты.
+	void set_shadow_softness(float p_tangent);
+	float get_shadow_softness() const;
 	void set_gpu_timestamps(bool p_enabled);
 	Dictionary get_frame_metrics() const;
 	// Только на потоке рендера; при обычной модели потоков это основной поток.

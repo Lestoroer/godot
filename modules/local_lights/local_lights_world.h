@@ -8,6 +8,7 @@
 #include "servers/rendering/rendering_device.h"
 
 #include "shaders/local_light_caster.glsl.gen.h"
+#include "shaders/local_light_moments.glsl.gen.h"
 
 struct LocalLightsSettings {
 	// Целых ламп, чьи карты обновляются за кадр; 0 — все.
@@ -17,8 +18,10 @@ struct LocalLightsSettings {
 	int omni_face_size = 256;
 	int spot_tile_size = 512;
 	float map_texel_size = 0.015f;
-	// Атлас карт не больше бюджета: при нехватке места снижается разрешение карт наименее важных ламп.
+	// Атлас карт вместе с моментами не больше бюджета: при нехватке места снижается разрешение карт наименее важных ламп.
 	float map_budget_mib = 128.0f;
+	// Сигма размытия моментов в тангенсе угла от лампы: мировая ширина полутени растёт с расстоянием от лампы.
+	float shadow_softness = 0.06f;
 	bool gpu_timestamps = false;
 };
 
@@ -203,10 +206,16 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	HashMap<RD::VertexFormatID, RID> caster_pipelines;
 	RID cutout_rd_shader;
 	HashMap<RD::VertexFormatID, RID> cutout_pipelines;
+	LocalLightMomentsShaderRD moments_shader;
+	RID moments_shader_version;
+	RID moments_pipeline;
 
 	// Общий атлас карт. Ширина постоянна, высота растёт небольшими шагами с копией снятых карт; у Omni на лампу шесть плиток подряд.
 	RID map_atlas;
 	RID map_atlas_texture;
+	// Моменты карт в том же раскладе мест вдвое меньшего разрешения.
+	RID moment_atlas;
+	RID moment_atlas_texture;
 	RID map_framebuffer;
 	int atlas_height = 0;
 	int atlas_used_height = 0;
@@ -215,6 +224,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	int omni_size = 0;
 	int spot_size = 0;
 	float map_texel_size = -1.0f;
+	float shadow_softness = -1.0f;
 	// Карта занятости атласа: по биту на клетку, единица — свободно; строка клеток — ATLAS_ROW_WORDS слов.
 	LocalVector<uint64_t> atlas_free_cells;
 	uint64_t atlas_used_area = 0;
@@ -321,6 +331,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _gather_casters(Lamp &r_lamp, const Instance *p_instance, bool p_cull);
 	const InstanceCasters &_instance_surfaces(const Instance *p_geometry);
 	void _record_lamp(const Lamp &p_lamp);
+	void _record_moments(uint32_t p_budget);
+	float _omni_extent(int p_side) const;
 	void _update_grid();
 	void _repack();
 	void _ensure_data_table();

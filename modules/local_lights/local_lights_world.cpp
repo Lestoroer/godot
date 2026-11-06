@@ -41,6 +41,8 @@ const int ATLAS_WIDTH = 8192;
 const int ATLAS_HEIGHT_STEP = 64;
 const uint64_t ATLAS_GROWTH_PERCENT = 125;
 const int ATLAS_MAX_HEIGHT = 16384;
+// Байт на тексель атласа глубины вместе с моментами: глубина D16 и четверть текселя моментов RG16.
+const int ATLAS_BYTES_PER_TEXEL = 3;
 const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
 // Клетка карты занятости атласа: все стороны плиток ей кратны, и место любой карты — целое число клеток.
 const int ATLAS_CELL = 32;
@@ -62,8 +64,15 @@ const float VIEW_SIZE_STEPS_PER_OCTAVE = 2.0f;
 // Снимок спота шире конуса: выборка у края конуса не выходит за плитку.
 const float SPOT_MAP_MARGIN_DEGREES = 8.0f;
 const float SPOT_MAP_MAX_HALF_ANGLE_DEGREES = 75.0f;
-// Запас грани куба за её ребром, тексели в сумме, по половине с каждой стороны: gather 2×2 не выходит за плитку. Контракт с local_lights_inc.gdshaderinc.
-const float CUBE_GUARD_TEXELS = 4.0f;
+// Ядро размытия моментов: обрезано на стольких сигмах, радиус и сигма — в текселях моментов, наименьшая сигма — тексель: уже неё билинейная
+// выборка показывает ступени текселей. Наибольший радиус — контракт с local_light_moments.glsl.
+const int MOMENT_MAX_RADIUS = 12;
+const float MOMENT_KERNEL_SIGMAS = 2.5f;
+const float MOMENT_MIN_SIGMA = 1.0f;
+const int MOMENT_GROUP = 16;
+// Запас грани куба за её ребром с каждой стороны сверх ядра моментов, тексели глубины: gather 2×2 глубины и билинейная выборка моментов
+// не выходят за плитку. Запас не больше четверти грани.
+const int CUBE_GUARD_EXTRA_TEXELS = 2;
 
 // Оси граней куба. Контракт с выбором грани в local_lights_inc.gdshaderinc.
 const Vector3 FACE_RIGHT[6] = { Vector3(0, 0, 1), Vector3(0, 0, 1), Vector3(1, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 0) };
@@ -129,6 +138,44 @@ RD::Uniform sampled_uniform(int p_binding, RID p_sampler, RID p_texture) {
 	uniform.append_id(p_sampler);
 	uniform.append_id(p_texture);
 	return uniform;
+}
+
+RD::Uniform image_uniform(int p_binding, RID p_texture) {
+	RD::Uniform uniform;
+	uniform.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+	uniform.binding = p_binding;
+	uniform.append_id(p_texture);
+	return uniform;
+}
+
+// Раскладка Params в local_light_moments.glsl.
+struct MomentsPush {
+	int32_t map_origin[2];
+	int32_t side;
+	int32_t radius;
+	float inverse_near;
+	float inverse_range;
+	float sigma;
+	float unused;
+};
+
+struct MomentKernel {
+	float sigma = 0.0f;
+	int radius = 0;
+};
+
+// Ядро моментов карты со стороной p_side и тангенсом половины снимка p_extent: сигма по общей мягкости в тангенсе угла от лампы.
+MomentKernel moment_kernel(float p_softness, int p_side, float p_extent, int p_max_radius) {
+	const float moment_texel_tangent = 4.0f * p_extent / float(p_side);
+	MomentKernel kernel;
+	kernel.sigma = CLAMP(p_softness / moment_texel_tangent, MOMENT_MIN_SIGMA, float(p_max_radius) / MOMENT_KERNEL_SIGMAS);
+	kernel.radius = MIN(int(Math::ceil(kernel.sigma * MOMENT_KERNEL_SIGMAS)), p_max_radius);
+	return kernel;
+}
+
+// Наибольший радиус ядра грани куба: запас за ребром не больше четверти грани.
+int omni_moment_radius_limit(int p_side) {
+	return CLAMP((p_side / 4 - CUBE_GUARD_EXTRA_TEXELS) / 2, 1, MOMENT_MAX_RADIUS);
 }
 
 // Плоскости снимка: точка внутри, если скалярное произведение с нормалью неотрицательно. Исход у разных коробок непредсказуем, поэтому без раннего выхода.
@@ -207,7 +254,7 @@ int map_area(int p_side, bool p_spot) {
 }
 
 int budget_rows_for(float p_mib) {
-	const int rows = int(double(p_mib) * 1048576.0 / (double(ATLAS_WIDTH) * 2.0)) / ATLAS_HEIGHT_STEP * ATLAS_HEIGHT_STEP;
+	const int rows = int(double(p_mib) * 1048576.0 / (double(ATLAS_WIDTH) * ATLAS_BYTES_PER_TEXEL)) / ATLAS_HEIGHT_STEP * ATLAS_HEIGHT_STEP;
 	return CLAMP(rows, ATLAS_HEIGHT_STEP, ATLAS_MAX_HEIGHT);
 }
 
@@ -250,6 +297,11 @@ LocalLightsWorld::LocalLightsWorld(RID p_scenario) {
 	caster_shader_version = caster_shader.version_create();
 	caster_rd_shader = caster_shader.version_get_shader(caster_shader_version, 0);
 	cutout_rd_shader = caster_shader.version_get_shader(caster_shader_version, 1);
+	Vector<String> moment_modes;
+	moment_modes.push_back("");
+	moments_shader.initialize(moment_modes);
+	moments_shader_version = moments_shader.version_create();
+	moments_pipeline = rd->compute_pipeline_create(moments_shader.version_get_shader(moments_shader_version, 0));
 	// До первой лампы окна нет: пустая сетка в одну ячейку.
 	_resize_grid(Vector3i(1, 1, 1));
 }
@@ -283,18 +335,20 @@ LocalLightsWorld::~LocalLightsWorld() {
 	_free_wrapped(data_texture);
 	_free_wrapped(list_texture);
 	_free_wrapped(map_atlas_texture);
+	_free_wrapped(moment_atlas_texture);
 	for (const KeyValue<RD::VertexFormatID, RID> &entry : caster_pipelines) {
 		rd->free_rid(entry.value);
 	}
 	for (const KeyValue<RD::VertexFormatID, RID> &entry : cutout_pipelines) {
 		rd->free_rid(entry.value);
 	}
-	for (const RID &rid : { map_atlas, grid_rd, data_rd, list_rd }) {
+	for (const RID &rid : { map_atlas, moment_atlas, grid_rd, data_rd, list_rd, moments_pipeline }) {
 		if (rid.is_valid()) {
 			rd->free_rid(rid);
 		}
 	}
 	caster_shader.version_free(caster_shader_version);
+	moments_shader.version_free(moments_shader_version);
 }
 
 RID LocalLightsWorld::_wrap_texture(RID p_rd_texture, RSE::TextureLayeredType p_type) const {
@@ -678,7 +732,8 @@ void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
 	if (omni_largest != p_settings.omni_face_size || spot_largest != p_settings.spot_tile_size) {
 		ERR_PRINT_ONCE(vformat("Наибольшие плитки локального света %d и %d не помещаются в атлас и бюджет: используются %d и %d.", p_settings.omni_face_size, p_settings.spot_tile_size, omni_largest, spot_largest));
 	}
-	const bool same_maps = omni_largest == omni_size && spot_largest == spot_size && p_settings.map_texel_size == map_texel_size;
+	// Мягкость меняет запас граней куба, поэтому и снимки.
+	const bool same_maps = omni_largest == omni_size && spot_largest == spot_size && p_settings.map_texel_size == map_texel_size && p_settings.shadow_softness == shadow_softness;
 	if (same_maps && budget_rows == atlas_budget_rows) {
 		return;
 	}
@@ -711,6 +766,7 @@ void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
 	}
 	map_framebuffer = RID();
 	_retire_texture(map_atlas, map_atlas_texture);
+	_retire_texture(moment_atlas, moment_atlas_texture);
 	// Списанный атлас освободится в начале следующего кадра: если в этом кадре нового не будет, материалы не должны его читать.
 	globals_published = false;
 	atlas_height = 0;
@@ -727,6 +783,7 @@ void LocalLightsWorld::_apply_map_sizes(const LocalLightsSettings &p_settings) {
 	omni_size = omni_largest;
 	spot_size = spot_largest;
 	map_texel_size = p_settings.map_texel_size;
+	shadow_softness = p_settings.shadow_softness;
 }
 
 int LocalLightsWorld::_map_side_for(const Lamp &p_lamp) const {
@@ -897,10 +954,22 @@ void LocalLightsWorld::_ensure_atlas_height() {
 		rd->texture_copy(map_atlas, atlas, Vector3(), Vector3(), Vector3(ATLAS_WIDTH, atlas_height, 1), 0, 0, 0, 0);
 	}
 	// До начала следующего кадра живут обе текстуры.
-	atlas_peak_bytes = MAX(atlas_peak_bytes, (uint64_t(atlas_height) + height) * ATLAS_WIDTH * 2);
+	atlas_peak_bytes = MAX(atlas_peak_bytes, (uint64_t(atlas_height) + height) * ATLAS_WIDTH * ATLAS_BYTES_PER_TEXEL);
 	_retire_texture(map_atlas, map_atlas_texture);
 	map_atlas = atlas;
 	map_atlas_texture = _wrap_texture(map_atlas, RSE::TEXTURE_LAYERED_2D_ARRAY);
+	RD::TextureFormat moment_format;
+	moment_format.format = RD::DATA_FORMAT_R16G16_UNORM;
+	moment_format.width = ATLAS_WIDTH / 2;
+	moment_format.height = height / 2;
+	moment_format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+	RID moments = rd->texture_create(moment_format, RD::TextureView());
+	if (moment_atlas.is_valid()) {
+		rd->texture_copy(moment_atlas, moments, Vector3(), Vector3(), Vector3(ATLAS_WIDTH / 2, atlas_height / 2, 1), 0, 0, 0, 0);
+	}
+	_retire_texture(moment_atlas, moment_atlas_texture);
+	moment_atlas = moments;
+	moment_atlas_texture = _wrap_texture(moment_atlas, RSE::TEXTURE_LAYERED_2D_ARRAY);
 	Vector<RID> attachments;
 	attachments.push_back(map_atlas);
 	map_framebuffer = rd->framebuffer_create(attachments);
@@ -1008,7 +1077,7 @@ void LocalLightsWorld::_gather_casters(Lamp &r_lamp, const Instance *p_instance,
 	const InstanceLightData *light = static_cast<const InstanceLightData *>(p_instance->base_data);
 	const Vector3 position = r_lamp.position;
 	const float range_sq = r_lamp.range * r_lamp.range;
-	const float cube_guard = 1.0f + CUBE_GUARD_TEXELS / float(r_lamp.map_side);
+	const float cube_guard = r_lamp.spot ? 0.0f : _omni_extent(r_lamp.map_side);
 	const uint32_t all_faces = (1u << r_lamp.map_faces) - 1;
 	Vector3 cone_normals[4];
 	if (r_lamp.spot) {
@@ -1272,6 +1341,7 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 			_record_lamp(lamp);
 		}
 	}
+	_record_moments(budget);
 	if (settings.gpu_timestamps) {
 		rd->capture_timestamp("LocalLights maps end");
 	}
@@ -1520,7 +1590,7 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp) {
 	push.extra[3] = 0.0f;
 	push.decode_position[3] = 0.0f;
 	push.decode_size[3] = 0.0f;
-	const float extent = p_lamp.spot ? p_lamp.baked_extent : 1.0f + CUBE_GUARD_TEXELS / float(side);
+	const float extent = p_lamp.spot ? p_lamp.baked_extent : _omni_extent(side);
 	push.projection[0] = extent;
 	push.projection[1] = extent;
 	const LampCaster *casters = lamp_casters.ptr() + p_lamp.caster_first;
@@ -1572,6 +1642,43 @@ void LocalLightsWorld::_record_lamp(const Lamp &p_lamp) {
 		frame_metrics.faces_baked++;
 	}
 	rd->draw_list_end();
+}
+
+// Моменты обновлённых карт: после глубины всех ламп кадра, одним списком вычислений.
+void LocalLightsWorld::_record_moments(uint32_t p_budget) {
+	const RID sampler = RendererRD::MaterialStorage::get_singleton()->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+	const RID uniform_set = UniformSetCacheRD::get_singleton()->get_cache(moments_shader.version_get_shader(moments_shader_version, 0), 0, sampled_uniform(0, sampler, map_atlas), image_uniform(1, moment_atlas));
+	RD::ComputeListID list = rd->compute_list_begin();
+	rd->compute_list_bind_compute_pipeline(list, moments_pipeline);
+	rd->compute_list_bind_uniform_set(list, uniform_set, 0);
+	for (uint32_t i = 0; i < p_budget; i++) {
+		const Lamp &lamp = lamps[serve_order[i]];
+		if (lamp.map_faces == 0) {
+			continue;
+		}
+		const int side = lamp.map_side;
+		const MomentKernel kernel = lamp.spot ? moment_kernel(shadow_softness, side, lamp.baked_extent, MOMENT_MAX_RADIUS) : moment_kernel(shadow_softness, side, _omni_extent(side), omni_moment_radius_limit(side));
+		const float near_plane = map_near_plane(lamp.range);
+		MomentsPush push;
+		push.map_origin[0] = lamp.map_origin.x;
+		push.map_origin[1] = lamp.map_origin.y;
+		push.side = side;
+		push.radius = kernel.radius;
+		push.inverse_near = 1.0f / near_plane;
+		push.inverse_range = 1.0f / lamp.range;
+		push.sigma = kernel.sigma;
+		push.unused = 0.0f;
+		rd->compute_list_set_push_constant(list, &push, sizeof(MomentsPush));
+		const int groups = (side / 2 + MOMENT_GROUP - 1) / MOMENT_GROUP;
+		rd->compute_list_dispatch(list, groups, groups, lamp.map_faces);
+	}
+	rd->compute_list_end();
+}
+
+// Тангенс половины снимка грани куба: запас за ребром вмещает ядро моментов, и у стыка граней размытие читает соседние направления.
+float LocalLightsWorld::_omni_extent(int p_side) const {
+	const int guard = 2 * moment_kernel(shadow_softness, p_side, 1.0f, omni_moment_radius_limit(p_side)).radius + CUBE_GUARD_EXTRA_TEXELS;
+	return float(p_side) / float(p_side - 2 * guard);
 }
 
 void LocalLightsWorld::_update_grid() {
@@ -1730,7 +1837,11 @@ void LocalLightsWorld::_write_lamp_data(uint32_t p_index) {
 	}
 	values[27] = -1.0f;
 	if (lamp.casts && lamp.map_valid) {
+		const float extent = lamp.spot ? lamp.baked_extent : _omni_extent(lamp.map_side);
+		const MomentKernel kernel = moment_kernel(shadow_softness, lamp.map_side, extent, lamp.spot ? MOMENT_MAX_RADIUS : omni_moment_radius_limit(lamp.map_side));
+		values[13] = kernel.sigma * 4.0f * extent / float(lamp.map_side);
 		values[16] = map_near_plane(lamp.baked_range);
+		values[17] = lamp.spot ? 0.0f : extent;
 		values[18] = float(lamp.map_origin.y);
 		values[19] = lamp.baked_range;
 		values[20] = lamp.spot ? lamp.baked_forward.x : 0.0f;
@@ -1765,6 +1876,7 @@ void LocalLightsWorld::_publish_globals() {
 	materials->global_shader_parameter_set("local_light_data", data_texture);
 	materials->global_shader_parameter_set("local_light_list", list_texture);
 	materials->global_shader_parameter_set("local_light_map_atlas", map_atlas_texture);
+	materials->global_shader_parameter_set("local_light_moment_atlas", moment_atlas_texture);
 	// Новая раскладка сетки уже загружена: материалы этого кадра должны читать её через новые текстуры и начало окна, иначе индексы укажут мимо.
 	materials->_update_global_shader_uniforms();
 	materials->_update_queued_materials();
@@ -1772,14 +1884,14 @@ void LocalLightsWorld::_publish_globals() {
 
 Dictionary LocalLightsWorld::memory_report() const {
 	Dictionary report;
-	report["atlasBytes"] = uint64_t(ATLAS_WIDTH) * atlas_height * 2;
+	report["atlasBytes"] = uint64_t(ATLAS_WIDTH) * atlas_height * ATLAS_BYTES_PER_TEXEL;
 	report["atlasHeight"] = atlas_height;
 	report["atlasUsedHeight"] = atlas_used_height;
-	report["mapBudgetBytes"] = uint64_t(ATLAS_WIDTH) * atlas_budget_rows * 2;
+	report["mapBudgetBytes"] = uint64_t(ATLAS_WIDTH) * atlas_budget_rows * ATLAS_BYTES_PER_TEXEL;
 	report["lampsReduced"] = lamps_reduced;
-	report["atlasOccupiedBytes"] = atlas_used_area * 2;
+	report["atlasOccupiedBytes"] = atlas_used_area * ATLAS_BYTES_PER_TEXEL;
 	// Наибольшая видеопамять атласа за всё время: в кадре роста живут старая и новая текстуры.
-	report["atlasPeakBytes"] = MAX(atlas_peak_bytes, uint64_t(ATLAS_WIDTH) * atlas_height * 2);
+	report["atlasPeakBytes"] = MAX(atlas_peak_bytes, uint64_t(ATLAS_WIDTH) * atlas_height * ATLAS_BYTES_PER_TEXEL);
 	report["gridBytes"] = uint64_t(grid_bytes.size());
 	report["dataBytes"] = uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
 	uint64_t cpu = uint64_t(grid_bytes.size()) + uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());

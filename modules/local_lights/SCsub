@@ -8,6 +8,7 @@ Import("env_modules")
 env_local_lights = env_modules.Clone()
 
 if "RD_GLSL" in env["BUILDERS"]:
-    env_local_lights.RD_GLSL("shaders/local_light_caster.glsl")
+    for shader in ["shaders/local_light_caster.glsl", "shaders/local_light_moments.glsl"]:
+        env_local_lights.RD_GLSL(shader)
 
 env_local_lights.add_source_files(env.modules_sources, "*.cpp")

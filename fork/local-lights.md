@@ -1,9 +1,10 @@
 # Собственный локальный свет
 
-- **Модуль: реестр ламп, сетка и данные для материалов, очередь и карты теней** —
+- **Модуль: реестр ламп, сетка и данные для материалов, очередь, карты теней и их моменты для мягкой тени** —
   [local_lights_world.cpp](../modules/local_lights/local_lights_world.cpp),
   [local_lights_world.h](../modules/local_lights/local_lights_world.h),
-  [local_light_caster.glsl](../modules/local_lights/shaders/local_light_caster.glsl).
+  [local_light_caster.glsl](../modules/local_lights/shaders/local_light_caster.glsl),
+  [local_light_moments.glsl](../modules/local_lights/shaders/local_light_moments.glsl).
 
 - **Настройка проекта, включение на мир, настройки и показатели для скриптов** —
   [local_lights.cpp](../modules/local_lights/local_lights.cpp),
