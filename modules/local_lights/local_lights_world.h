@@ -119,6 +119,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		double map_changed_time = 0.0;
 		// Лампа без карты, которой не нашлось места даже для наименьшей, ждёт до этого времени.
 		double place_retry_time = 0.0;
+		// Кадр, в котором карта получила новое место или сторону.
+		uint64_t resized_frame = UINT64_MAX;
 		int map_faces = 0;
 		bool map_valid = false;
 		Vector3 baked_origin;
@@ -329,12 +331,14 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	void _release_lamp(uint32_t p_index);
 	void _serve_queue(uint64_t p_frame);
 	uint32_t _order_queue(const LocalLightsSettings &p_settings, uint64_t p_frame);
-	void _gather_served_lamps(uint32_t p_budget, const LocalLightsSettings &p_settings, uint64_t p_frame);
+	// Возвращает, сколько обслуживаемых ламп осталось после отказа от пустых перерисовок.
+	uint32_t _gather_served_lamps(uint32_t p_budget, const LocalLightsSettings &p_settings, uint64_t p_frame);
 	void _finish_served_lamps(uint32_t p_budget, uint64_t p_frame);
 	void _apply_map_sizes(const LocalLightsSettings &p_settings);
 	int _map_side_for(const Lamp &p_lamp) const;
 	bool _place_map(Lamp &r_lamp, int p_side);
 	bool _side_change_allowed(const Lamp &p_lamp) const;
+	bool _map_differs_from_plan(const Lamp &p_lamp) const;
 	bool _allocate_map_rect(int p_width, int p_height, int p_highest_row, Vector2i &r_origin);
 	void _mark_map_rect(const Vector2i &p_origin, int p_width, int p_height, bool p_free);
 	void _ensure_atlas_height();

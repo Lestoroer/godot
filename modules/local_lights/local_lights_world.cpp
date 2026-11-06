@@ -852,6 +852,11 @@ bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 	return true;
 }
 
+bool LocalLightsWorld::_map_differs_from_plan(const Lamp &p_lamp) const {
+	// Смена Spot и Omni при той же стороне меняет число граней и тоже требует места.
+	return p_lamp.map_side != p_lamp.planned_side || (p_lamp.map_faces > 0 && p_lamp.map_faces != (p_lamp.spot ? 1 : 6));
+}
+
 // Сторона карты меняется не чаще выдержки: план мог сменить её раньше, чем лампа дошла до очереди.
 bool LocalLightsWorld::_side_change_allowed(const Lamp &p_lamp) const {
 	return p_lamp.map_faces == 0 || frame_time - p_lamp.map_changed_time >= PLAN_SIDE_DWELL_SECONDS;
@@ -1267,12 +1272,12 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	// Монотонные часы без масштаба времени: время движка замедляется вместе с игрой и сбрасывается раз в час, а план от него зависеть не должен.
 	frame_time = double(OS::get_singleton()->get_ticks_usec()) * 0.000001;
 	_plan_map_sides(frame_time);
-	const uint32_t budget = _order_queue(settings, p_frame);
+	uint32_t budget = _order_queue(settings, p_frame);
 	if (budget == 0) {
 		return;
 	}
 	uint64_t started = OS::get_singleton()->get_ticks_usec();
-	_gather_served_lamps(budget, settings, p_frame);
+	budget = _gather_served_lamps(budget, settings, p_frame);
 	frame_metrics.gather_usec += OS::get_singleton()->get_ticks_usec() - started;
 
 	started = OS::get_singleton()->get_ticks_usec();
@@ -1297,11 +1302,16 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 uint32_t LocalLightsWorld::_order_queue(const LocalLightsSettings &p_settings, uint64_t p_frame) {
 	serve_order.clear();
 	for (uint32_t i = 0; i < lamps.size(); i++) {
-		const Lamp &lamp = lamps[i];
+		Lamp &lamp = lamps[i];
 		if (!lamp.active || lamp.queued_order == 0) {
 			continue;
 		}
 		const bool visible = lamp.last_visible_frame == p_frame;
+		// План вернул сторону к нынешней карте: смена разрешения больше не нужна, а перерисовка без изменений ничего не даёт.
+		if (!lamp.needs_update && !_map_differs_from_plan(lamp)) {
+			lamp.queued_order = 0;
+			continue;
+		}
 		if (lamp.map_faces == 0 && frame_time < lamp.place_retry_time) {
 			continue;
 		}
@@ -1330,7 +1340,7 @@ uint32_t LocalLightsWorld::_order_queue(const LocalLightsSettings &p_settings, u
 	return budget;
 }
 
-void LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLightsSettings &p_settings, uint64_t p_frame) {
+uint32_t LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLightsSettings &p_settings, uint64_t p_frame) {
 	cutout_pool.clear();
 	lamp_casters.clear();
 	gather_pass++;
@@ -1338,8 +1348,7 @@ void LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLights
 	place_order.clear();
 	for (uint32_t i = 0; i < p_budget; i++) {
 		const Lamp &lamp = lamps[serve_order[i]];
-		// Смена Spot и Omni при той же стороне меняет число граней и тоже требует места.
-		if (lamp.map_side != lamp.planned_side || (lamp.map_faces > 0 && lamp.map_faces != (lamp.spot ? 1 : 6))) {
+		if (_map_differs_from_plan(lamp)) {
 			place_order.push_back(serve_order[i]);
 		}
 	}
@@ -1362,12 +1371,28 @@ void LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLights
 	failed_place_sizes.clear();
 	for (const uint32_t index : place_order) {
 		Lamp &lamp = lamps[index];
-		if (_side_change_allowed(lamp)) {
-			_place_map(lamp, lamp.planned_side);
+		if (_side_change_allowed(lamp) && _place_map(lamp, lamp.planned_side)) {
+			lamp.resized_frame = p_frame;
 		}
 	}
-	_ensure_atlas_height();
+	// Лампа в очереди только ради разрешения, которой не нашлось места, не перерисовывается: её карта та же, что была.
+	uint32_t kept = 0;
 	for (uint32_t i = 0; i < p_budget; i++) {
+		Lamp &lamp = lamps[serve_order[i]];
+		if (lamp.needs_update || lamp.resized_frame == p_frame) {
+			serve_order[kept++] = serve_order[i];
+		} else {
+			lamp.queued_order = 0;
+		}
+	}
+	if (kept < p_budget) {
+		for (uint32_t i = p_budget; i < serve_order.size(); i++) {
+			serve_order[kept + i - p_budget] = serve_order[i];
+		}
+		serve_order.resize(serve_order.size() - (p_budget - kept));
+	}
+	_ensure_atlas_height();
+	for (uint32_t i = 0; i < kept; i++) {
 		Lamp &lamp = lamps[serve_order[i]];
 		if (lamp.map_faces == 0) {
 			continue;
@@ -1388,6 +1413,7 @@ void LocalLightsWorld::_gather_served_lamps(uint32_t p_budget, const LocalLights
 		}
 	}
 	RendererRD::MeshStorage::get_singleton()->update_mesh_instances();
+	return kept;
 }
 
 void LocalLightsWorld::_finish_served_lamps(uint32_t p_budget, uint64_t p_frame) {
