@@ -339,6 +339,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	bool _place_map(Lamp &r_lamp, int p_side);
 	bool _side_change_allowed(const Lamp &p_lamp) const;
 	bool _map_differs_from_plan(const Lamp &p_lamp) const;
+	bool _changed_out_of_view(const Lamp &p_lamp) const;
 	bool _allocate_map_rect(int p_width, int p_height, int p_highest_row, Vector2i &r_origin);
 	void _mark_map_rect(const Vector2i &p_origin, int p_width, int p_height, bool p_free);
 	void _ensure_atlas_height();

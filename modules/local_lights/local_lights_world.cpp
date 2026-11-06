@@ -852,6 +852,16 @@ bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 	return true;
 }
 
+// Лампа вне кадра не обновляется, поэтому её поза и пары могли разойтись с картой: такую перестраивать нельзя, иначе карта снималась бы
+// по старой позе с новыми преградами. Ждёт возвращения в кадр и обновляется там вместе с уменьшением.
+bool LocalLightsWorld::_changed_out_of_view(const Lamp &p_lamp) const {
+	if (p_lamp.needs_update) {
+		return true;
+	}
+	Instance *instance = scene_cull()->instance_owner.get_or_null(p_lamp.instance);
+	return !instance || static_cast<InstanceLightData *>(instance->base_data)->is_shadow_dirty();
+}
+
 bool LocalLightsWorld::_map_differs_from_plan(const Lamp &p_lamp) const {
 	// Смена Spot и Omni при той же стороне меняет число граней и тоже требует места.
 	return p_lamp.map_side != p_lamp.planned_side || (p_lamp.map_faces > 0 && p_lamp.map_faces != (p_lamp.spot ? 1 : 6));
@@ -1316,7 +1326,7 @@ uint32_t LocalLightsWorld::_order_queue(const LocalLightsSettings &p_settings, u
 			continue;
 		}
 		// Смена разрешения без изменения лампы ждёт выдержки: перерисовка ради стороны, которую нельзя менять, ничего не даёт.
-		if ((visible && (lamp.needs_update || _side_change_allowed(lamp))) || (!visible && lamp.planned_side < lamp.map_side && _side_change_allowed(lamp))) {
+		if ((visible && (lamp.needs_update || _side_change_allowed(lamp))) || (!visible && lamp.planned_side < lamp.map_side && _side_change_allowed(lamp) && !_changed_out_of_view(lamp))) {
 			serve_order.push_back(i);
 		}
 	}
