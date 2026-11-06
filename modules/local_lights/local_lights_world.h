@@ -250,6 +250,9 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	// Доля бюджета под оценку площади: меньше после плана, за которым размещению не хватило площади.
 	float plan_fill = 0.0f;
 	bool place_shortage = false;
+	// Площадь карт, которую последний план оставил за лампами, тексели.
+	uint64_t plan_committed_area = 0;
+	uint64_t atlas_peak_bytes = 0;
 	LocalVector<uint32_t> plan_order;
 	uint32_t lamps_reduced = 0;
 	LocalVector<uint32_t> place_order;

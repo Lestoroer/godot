@@ -41,6 +41,7 @@ const uint32_t LIST_WIDTH = 2048;
 const int ATLAS_WIDTH = 8192;
 // Атлас растёт по наименьшей плитке, а за кадр его высота меняется не больше раза.
 const int ATLAS_HEIGHT_STEP = 64;
+const uint64_t ATLAS_GROWTH_HEADROOM_PERCENT = 115;
 const int ATLAS_MAX_HEIGHT = 16384;
 const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
 // Клетка карты занятости атласа: все стороны плиток ей кратны, и место любой карты — целое число клеток.
@@ -922,7 +923,11 @@ void LocalLightsWorld::_ensure_atlas_height() {
 	if (atlas_used_height <= atlas_height) {
 		return;
 	}
-	const int height = ((atlas_used_height + ATLAS_HEIGHT_STEP - 1) / ATLAS_HEIGHT_STEP) * ATLAS_HEIGHT_STEP;
+	// Атлас растёт сразу под всю площадь плана с запасом на потери размещения, а не под одну карту: при постепенном добавлении ламп
+	// копий атласа мало, и пик двух текстур в кадре роста бывает редко. Выше бюджета атлас не растёт.
+	const uint64_t planned_rows = plan_committed_area * ATLAS_GROWTH_HEADROOM_PERCENT / 100 / ATLAS_WIDTH;
+	const int wanted = MAX(atlas_used_height, int(MIN(planned_rows, uint64_t(atlas_budget_rows))));
+	const int height = MIN(((wanted + ATLAS_HEIGHT_STEP - 1) / ATLAS_HEIGHT_STEP) * ATLAS_HEIGHT_STEP, atlas_budget_rows);
 	RD::TextureFormat format;
 	format.format = RD::DATA_FORMAT_D16_UNORM;
 	format.width = ATLAS_WIDTH;
@@ -932,6 +937,8 @@ void LocalLightsWorld::_ensure_atlas_height() {
 	if (map_atlas.is_valid()) {
 		rd->texture_copy(map_atlas, atlas, Vector3(), Vector3(), Vector3(ATLAS_WIDTH, atlas_height, 1), 0, 0, 0, 0);
 	}
+	// До начала следующего кадра живут обе текстуры.
+	atlas_peak_bytes = MAX(atlas_peak_bytes, (uint64_t(atlas_height) + height) * ATLAS_WIDTH * 2);
 	_retire_texture(map_atlas, map_atlas_texture);
 	map_atlas = atlas;
 	map_atlas_texture = _wrap_texture(map_atlas, RSE::TEXTURE_LAYERED_2D_ARRAY);
@@ -1224,6 +1231,7 @@ void LocalLightsWorld::_plan_map_sides(double p_now) {
 			lamp.planned_time = p_now;
 		}
 	}
+	plan_committed_area = committed;
 	uint32_t reduced = 0;
 	for (const uint32_t index : plan_order) {
 		Lamp &lamp = lamps[index];
@@ -1915,6 +1923,8 @@ Dictionary LocalLightsWorld::memory_report() const {
 	report["mapBudgetBytes"] = uint64_t(ATLAS_WIDTH) * atlas_budget_rows * 2;
 	report["lampsReduced"] = lamps_reduced;
 	report["atlasOccupiedBytes"] = atlas_used_area * 2;
+	// Наибольшая видеопамять атласа за всё время: в кадре роста живут старая и новая текстуры.
+	report["atlasPeakBytes"] = MAX(atlas_peak_bytes, uint64_t(ATLAS_WIDTH) * atlas_height * 2);
 	report["screenBytes"] = uint64_t(screen_size.x) * screen_size.y * (8 + 4);
 	report["gridBytes"] = uint64_t(grid_bytes.size());
 	report["dataBytes"] = uint64_t(data_bytes.size()) + uint64_t(list_bytes.size());
