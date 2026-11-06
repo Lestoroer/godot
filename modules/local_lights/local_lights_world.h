@@ -19,7 +19,8 @@ struct LocalLightsSettings {
 	int spot_tile_size = 512;
 	float map_texel_size = 0.015f;
 	// Атлас карт вместе с моментами не больше бюджета: при нехватке места снижается разрешение карт наименее важных ламп.
-	float map_budget_mib = 128.0f;
+	// По умолчанию — весь атлас, рассчитанный на 100 ламп.
+	float map_budget_mib = 96.0f;
 	// Сигма размытия моментов в тангенсе угла от лампы: мировая ширина полутени растёт с расстоянием от лампы.
 	float shadow_softness = 0.06f;
 	bool gpu_timestamps = false;

@@ -40,7 +40,8 @@ const int ATLAS_WIDTH = 8192;
 // Атлас растёт по наименьшей плитке, а за кадр его высота меняется не больше раза.
 const int ATLAS_HEIGHT_STEP = 64;
 const uint64_t ATLAS_GROWTH_PERCENT = 125;
-const int ATLAS_MAX_HEIGHT = 16384;
+// Предел — 100 ламп с наибольшими картами: 50 кубов с гранью 256 и 50 плиток Spot 512 занимают 4004 строки.
+const int ATLAS_MAX_HEIGHT = 4096;
 // Байт на тексель атласа глубины вместе с моментами: глубина D16 и четверть текселя моментов RG16.
 const int ATLAS_BYTES_PER_TEXEL = 3;
 const int MAP_SIDES[] = { 64, 96, 128, 192, 256, 384, 512 };
