@@ -117,6 +117,8 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 		Vector2i map_origin;
 		int map_side = 0;
 		double map_changed_time = 0.0;
+		// Лампа без карты, которой не нашлось места даже для наименьшей, ждёт до этого времени.
+		double place_retry_time = 0.0;
 		int map_faces = 0;
 		bool map_valid = false;
 		Vector3 baked_origin;

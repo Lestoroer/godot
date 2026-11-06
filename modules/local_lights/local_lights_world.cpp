@@ -812,6 +812,17 @@ bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 			_mark_map_rect(r_lamp.map_origin, previous_width, r_lamp.map_side, true);
 		}
 		r_lamp.map_origin = place;
+	} else if (r_lamp.map_faces == 0 && p_side > MAP_SIDES[0]) {
+		// Лампе без карты годится любая меньшая сторона: она светит сразу, а прежнюю сторону вернёт обычное повышение плана.
+		int smaller = MAP_SIDES[0];
+		for (const int candidate : MAP_SIDES) {
+			if (candidate < p_side) {
+				smaller = candidate;
+			}
+		}
+		r_lamp.planned_side = smaller;
+		r_lamp.planned_time = frame_time;
+		return _place_map(r_lamp, smaller);
 	} else {
 		// Лампа остаётся с прежней картой до следующей смены стороны. Площади не хватило — план ошибся с запасом на потери размещения,
 		// и следующий берёт меньшую долю бюджета; площади хватало — место раздроблено, повышение просто откладывается.
@@ -826,7 +837,9 @@ bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 			r_lamp.planned_side = r_lamp.map_side;
 			r_lamp.planned_time = frame_time;
 		} else {
-			WARN_PRINT_ONCE("В бюджете атласа локального света не нашлось места для карты: лампа ждёт, пока план уменьшит другие карты.");
+			// Нет места даже наименьшей карте: лампа не занимает очередь до следующего плана, который уменьшит другие карты.
+			r_lamp.place_retry_time = frame_time + PLAN_PERIOD_SECONDS;
+			WARN_PRINT_ONCE("В бюджете атласа локального света не нашлось места даже для наименьшей карты: лампа ждёт, пока план уменьшит другие карты.");
 		}
 		return false;
 	}
@@ -1289,6 +1302,9 @@ uint32_t LocalLightsWorld::_order_queue(const LocalLightsSettings &p_settings, u
 			continue;
 		}
 		const bool visible = lamp.last_visible_frame == p_frame;
+		if (lamp.map_faces == 0 && frame_time < lamp.place_retry_time) {
+			continue;
+		}
 		// Смена разрешения без изменения лампы ждёт выдержки: перерисовка ради стороны, которую нельзя менять, ничего не даёт.
 		if ((visible && (lamp.needs_update || _side_change_allowed(lamp))) || (!visible && lamp.planned_side < lamp.map_side && _side_change_allowed(lamp))) {
 			serve_order.push_back(i);
