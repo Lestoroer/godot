@@ -49,7 +49,7 @@ const int ATLAS_COLUMNS = ATLAS_WIDTH / ATLAS_CELL;
 const int ATLAS_ROW_WORDS = ATLAS_COLUMNS / 64;
 // План сторон карт. Оценка площади берёт часть бюджета: остальное уходит на потери размещения. Раскладка по убыванию при загрузке теряет
 // около процента, раздробленное место только откладывает повышение. Повышение — только если оно поместилось бы и в чуть меньшей ёмкости:
-// движение камеры не гоняет карты туда-обратно. Времена в секундах: поведение не зависит от частоты кадров.
+// движение камеры не гоняет карты туда-обратно. Времена в секундах монотонных часов: поведение не зависит от частоты кадров и масштаба времени.
 const float PLAN_FILL = 0.95f;
 const float PLAN_FILL_FAILURE_STEP = 0.03f;
 const float PLAN_FILL_MIN = 0.6f;
@@ -1237,7 +1237,8 @@ void LocalLightsWorld::_serve_queue(uint64_t p_frame) {
 	const LocalLightsSettings &settings = LocalLights::get_singleton()->get_settings();
 	frame_metrics.queue = 0;
 	_apply_map_sizes(settings);
-	frame_time = RSG::rasterizer->get_total_time();
+	// Монотонные часы без масштаба времени: время движка замедляется вместе с игрой и сбрасывается раз в час, а план от него зависеть не должен.
+	frame_time = double(OS::get_singleton()->get_ticks_usec()) * 0.000001;
 	_plan_map_sides(frame_time);
 	const uint32_t budget = _order_queue(settings, p_frame);
 	if (budget == 0) {

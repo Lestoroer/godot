@@ -251,7 +251,7 @@ class LocalLightsWorld final : public RendererSceneCull::LocalLightsBackend {
 	// Стороны мест, которых в этом кадре не нашлось.
 	LocalVector<Vector2i> failed_place_sizes;
 	Vector3 camera_position;
-	// Время движка текущего кадра, секунды: выдержки плана не зависят от частоты кадров.
+	// Время кадра по монотонным часам, секунды: выдержки плана не зависят от частоты кадров и масштаба времени игры.
 	double frame_time = 0.0;
 	// Вырезы текущего обхода очереди.
 	LocalVector<CasterCutout> cutout_pool;
