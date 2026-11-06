@@ -793,8 +793,10 @@ bool LocalLightsWorld::_place_map(Lamp &r_lamp, int p_side) {
 	for (const Vector2i &failed : failed_place_sizes) {
 		known_to_fail = known_to_fail || (width >= failed.x && p_side >= failed.y);
 	}
+	// Уменьшенной карте годится только место не выше прежнего: иначе переезд поднял бы занятую высоту атласа.
+	const int highest_row = fits_in_place ? r_lamp.map_origin.y / ATLAS_CELL : atlas_budget_rows / ATLAS_CELL;
 	Vector2i place;
-	const bool allocated = !known_to_fail && _allocate_map_rect(width, p_side, place);
+	const bool allocated = !known_to_fail && _allocate_map_rect(width, p_side, highest_row, place);
 	if (!allocated && !known_to_fail) {
 		failed_place_sizes.push_back(Vector2i(width, p_side));
 	}
@@ -842,12 +844,12 @@ bool LocalLightsWorld::_side_change_allowed(const Lamp &p_lamp) const {
 	return p_lamp.map_faces == 0 || frame_time - p_lamp.map_changed_time >= PLAN_SIDE_DWELL_SECONDS;
 }
 
-// Первое подходящее место снизу слева в пределах бюджета. Освобождённое место годится карте любого размера.
-bool LocalLightsWorld::_allocate_map_rect(int p_width, int p_height, Vector2i &r_origin) {
+// Первое подходящее место снизу слева в пределах бюджета, начиная не выше строки клеток p_highest_row. Освобождённое место годится карте любого размера.
+bool LocalLightsWorld::_allocate_map_rect(int p_width, int p_height, int p_highest_row, Vector2i &r_origin) {
 	const int columns = cells_for(p_width);
 	const int rows = cells_for(p_height);
 	const int row_limit = atlas_budget_rows / ATLAS_CELL;
-	for (int y = 0; y + rows <= row_limit; y++) {
+	for (int y = 0; y + rows <= row_limit && y <= p_highest_row; y++) {
 		uint64_t free[ATLAS_ROW_WORDS];
 		for (int word = 0; word < ATLAS_ROW_WORDS; word++) {
 			free[word] = ~uint64_t(0);
