@@ -42,6 +42,7 @@
 #include "servers/rendering/instance_uniforms.h"
 #include "servers/rendering/renderer_scene_occlusion_cull.h"
 #include "servers/rendering/renderer_scene_render.h"
+#include "servers/rendering/sun_tile_mask.h" // lestoroer#sun
 #include "servers/rendering/rendering_method.h"
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/rendering_server_types.h"
@@ -324,6 +325,100 @@ public:
 	PagedArrayPool<InstanceData> instance_data_page_pool;
 	PagedArrayPool<InstanceVisibilityData> instance_visibility_data_page_pool;
 
+	// lestoroer#sun: Какие изменения кастеров видит карта солнца; отладка умеет выключать их по одному.
+	enum SunCasterChange : uint32_t {
+		SUN_CHANGE_BOUNDS = 1,
+		SUN_CHANGE_DEPENDENCIES = 2,
+		SUN_CHANGE_BLEND_SHAPE = 4,
+		SUN_CHANGE_REMOVED = 8,
+		SUN_CHANGE_ANIMATED = 16,
+		SUN_CHANGE_PARAMETER = 32,
+		SUN_CHANGE_LAYER = 64,
+	};
+
+	// lestoroer#sun: Постройки в разных частях мира получают каждая своё окно карты: пустота между ними атлас не расходует.
+	static constexpr int SUN_MAX_WINDOWS = 4;
+	static constexpr real_t SUN_MIN_WINDOW_METERS = 1.0;
+
+	// lestoroer#sun: Прямоугольник плоскости солнца и его место в атласе.
+	struct SunMapWindow {
+		Rect2i tiles;
+		Vector2 center;
+		Vector2 half_size;
+		real_t z_max = 0.0;
+		real_t z_min = 0.0;
+
+		bool operator!=(const SunMapWindow &p_other) const {
+			return tiles != p_other.tiles || center != p_other.center || half_size != p_other.half_size || z_max != p_other.z_max || z_min != p_other.z_min;
+		}
+	};
+
+	// lestoroer#sun: Карта в осях света. Тексель и оси общие для всех окон.
+	struct SunMapFrame {
+		Vector3 x;
+		Vector3 y;
+		Vector3 z;
+		real_t texel_size = 0.0;
+		real_t margin_texels = 0.0;
+		int size = 0;
+		int tile_size = 0;
+		bool reverse_cull = false;
+		SunMapWindow windows[SUN_MAX_WINDOWS];
+		int window_count = 0;
+	};
+
+	struct SunRemovedCaster {
+		AABB aabb;
+		bool was_dynamic = false;
+	};
+
+	// lestoroer#sun: Постоянная карта солнца одного мира: кто устарел и кто движется. Атлас содержит статическую карту
+	// и подвижных поверх неё, поэтому без изменений в кадре проход теней не нужен.
+	struct SunMapCache {
+		RID light_instance;
+		SelfList<Instance>::List changed;
+		LocalVector<SunRemovedCaster> removed;
+		LocalVector<Instance *> dynamic;
+		SunTileMask atlas_stale;
+		SunTileMask static_stale;
+		SunMapFrame frame;
+		bool invalidated = false;
+		bool window_restart[SUN_MAX_WINDOWS] = {};
+
+		// Камера последней проверки кадра: после неё устаревших плиток в кадре не осталось.
+		Transform3D checked_cam_transform;
+		Projection checked_cam_projection;
+
+		bool fit_pending = false;
+		uint64_t next_fit_frame = 0;
+		uint64_t last_change_frame = 0;
+		// Последний кадр, в котором карту строил свет в этом режиме: сводка кадра не показывает карту прежнего солнца.
+		uint64_t used_frame = 0;
+		uint64_t shrink_since_frame = 0;
+		real_t shrink_texel = 0.0;
+
+		LocalVector<Instance *> scratch_dynamic;
+		LocalVector<Instance *> scratch_static;
+
+		uint64_t stats_invalidations = 0;
+		uint64_t stats_changes = 0;
+		Rect2i stats_last_need;
+		Rect2i stats_last_static;
+		uint32_t stats_last_static_casters = 0;
+		uint32_t stats_last_dynamic_casters = 0;
+		uint32_t stats_uncovered_casters = 0;
+	};
+
+	struct SunMapDebug {
+		bool force_full = false;
+		bool validate = false;
+		bool no_view_limit = false;
+		uint32_t ignored_changes = 0;
+		// Подвижный кастер, простоявший столько кадров, считается неподвижным. Влияет только на цену, не на вид.
+		uint32_t settle_frames = 300;
+		int max_windows = SUN_MAX_WINDOWS;
+	} sun_map_debug;
+
 	struct Scenario {
 		enum IndexerType {
 			INDEXER_GEOMETRY, //for geometry
@@ -352,6 +447,10 @@ public:
 		HashMap<RID, uint32_t> surface_cache_dirty;
 		uint64_t surface_cache_frame = UINT64_MAX;
 		SelfList<Instance>::List instances;
+
+		// lestoroer#sun
+		uint64_t sun_casters_version = 0;
+		SunMapCache sun_map;
 
 		LocalVector<RID> dynamic_lights;
 
@@ -383,6 +482,9 @@ public:
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) override;
 	virtual void scenario_set_surface_cache_view_callback(RID p_scenario, const Callable &p_callback) override;
 	virtual Array scenario_surface_cache_poll(RID p_scenario) override;
+	// lestoroer#sun
+	virtual void sun_map_debug_set_option(const StringName &p_option, const Variant &p_value) override;
+	virtual Dictionary sun_map_debug_get_state(RID p_scenario) override;
 	virtual void scenario_set_surface_cache_buffers(RID p_scenario, const TypedArray<RID> &p_buffers) override;
 	virtual void instance_set_surface_cache_ids(RID p_instance, const Vector<int32_t> &p_ids) override;
 	virtual Dictionary instance_get_deformed_surface(RID p_instance, int p_surface) const override;
@@ -481,6 +583,7 @@ public:
 		bool update_dependencies;
 
 		SelfList<Instance> update_item;
+		SelfList<Instance> sun_changed_item; // lestoroer#sun
 
 		AABB *custom_aabb = nullptr; // <Zylann> would using aabb directly with a bool be better?
 		float extra_margin;
@@ -514,6 +617,10 @@ public:
 				// lestoroer#gi
 				case Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT: {
 					singleton->_surface_cache_queue(instance, 4);
+				} break;
+				// lestoroer#sun
+				case Dependency::DEPENDENCY_CHANGED_SUN_CASTER: {
+					singleton->_sun_caster_changed(instance, SUN_CHANGE_PARAMETER);
 				} break;
 				case Dependency::DEPENDENCY_CHANGED_SKELETON_DATA:
 				case Dependency::DEPENDENCY_CHANGED_SKELETON_BONES:
@@ -585,7 +692,8 @@ public:
 
 		Instance() :
 				scenario_item(this),
-				update_item(this) {
+				update_item(this),
+				sun_changed_item(this) { // lestoroer#sun
 			base_type = RSE::INSTANCE_NONE;
 			cast_shadows = RSE::SHADOW_CASTING_SETTING_ON;
 			receive_shadows = true;
@@ -656,6 +764,14 @@ public:
 		HashSet<Instance *> voxel_gi_instances;
 		HashSet<Instance *> lightmap_captures;
 
+		// lestoroer#sun: Положение кастера в постоянной карте солнца.
+		AABB sun_aabb;
+		uint64_t sun_change_frame = 0;
+		uint32_t sun_dynamic_index = 0;
+		uint8_t sun_group = 0;
+		bool sun_in_map = false;
+		bool sun_dynamic = false;
+
 		InstanceGeometryData() {
 			can_cast_shadows = true;
 			material_is_animated = true;
@@ -713,8 +829,56 @@ public:
 	SpinLock visible_notifier_list_lock;
 	SelfList<InstanceVisibilityNotifierData>::List visible_notifier_list;
 
+	// lestoroer#sun: Группа кастеров карты солнца в осях света, с запасом на рост.
+	struct SunGroup {
+		Vector2 plane_min;
+		Vector2 plane_max;
+		real_t z_max = 0.0;
+		real_t z_min = 0.0;
+		// Окно-попутчик: следует за кастерами, вышедшими из своих окон. Вещь состоит из многих мешей, поэтому окно одно на всех, кто рядом.
+		bool travelling = false;
+	};
+
+	// lestoroer#sun
+	struct SunFitSettings {
+		uint32_t caster_mask = 0;
+		int max_groups = 1;
+		// Шейдер без окон отправляет точку ниже дальней плоскости в тень, и дальняя плоскость должна накрыть всю геометрию.
+		bool covers_receivers = true;
+		real_t margin_texels = 0.0;
+		int map_size = 0;
+	};
+
+	// lestoroer#sun
+	struct SunCasterBounds {
+		static constexpr int ROLL_CANDIDATES = 12;
+		// Новый поворот сдвигает всю сетку карты, поэтому его берут только за заметный выигрыш.
+		static constexpr real_t ROLL_SWITCH_GAIN = 0.95;
+
+		uint64_t casters_version = UINT64_MAX;
+		RID fit_world;
+		Basis light_basis;
+		SunFitSettings settings;
+		// Поворот осей карты вокруг направления света, при котором карта плотнее всего охватывает кастеры.
+		int roll_index = 0;
+		Vector3 map_x;
+		Vector3 map_y;
+		SunGroup groups[SUN_MAX_WINDOWS];
+		int group_count = 1;
+		// Вся геометрия мира: за её пределами получателей нет, поэтому кадр камеры обрезается по ней.
+		AABB world_bounds;
+	};
+
+	// lestoroer#sun: Что изменения мира сделали с группами карты: окна прежние, окна нужно пересчитать или разложить атлас заново.
+	enum SunGroupsChange {
+		SUN_GROUPS_KEPT,
+		SUN_GROUPS_RESIZED,
+		SUN_GROUPS_NEW_LAYOUT,
+	};
+
 	struct InstanceLightData : public InstanceBaseData {
 		RID instance;
+		SunCasterBounds sun_caster_bounds; // lestoroer#sun
 		uint64_t last_version;
 		List<Instance *>::Element *D; // directional light in scenario
 
@@ -1106,6 +1270,43 @@ public:
 	void _unpair_instance(Instance *p_instance);
 
 	void _light_instance_setup_directional_shadow(int p_shadow_index, Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect);
+	// lestoroer#sun
+	void _sun_caster_changed(Instance *p_instance, uint32_t p_change) const;
+	void _sun_caster_removed(Instance *p_instance);
+	static bool _sun_is_caster(const InstanceData &p_data, uint32_t p_caster_mask);
+	static bool _sun_is_always_dynamic(const Instance *p_instance);
+	static void _sun_map_remove_dynamic(SunMapCache &r_cache, Instance *p_instance);
+	static real_t _sun_map_margin_texels(const Instance *p_light);
+	static void _sun_roll_axes(const Basis &p_light_basis, int p_roll, Vector3 &r_x, Vector3 &r_y);
+	static Rect2i _sun_map_tiles_of(const SunMapFrame &p_frame, int p_window, const AABB &p_aabb);
+	static Rect2i _sun_map_texels_of(const SunMapFrame &p_frame, const Rect2i &p_tiles);
+	static void _sun_map_mark_tiles(SunTileMask &r_mask, const SunMapFrame &p_frame, const AABB &p_aabb);
+	static void _sun_map_view_tiles(SunTileMask &r_view, const SunMapFrame &p_frame, const AABB &p_world_bounds, const Transform3D &p_cam_transform, const Projection &p_cam_projection);
+	static void _sun_map_add_casters_to_step(RendererSceneRender::RenderShadowData &r_step, const LocalVector<Instance *> &p_instances);
+	static void _sun_map_gather_casters(LocalVector<Instance *> &r_casters, const Scenario *p_scenario, const SunMapFrame &p_frame, int p_window, const SunTileMask &p_tiles, uint32_t p_caster_mask, bool p_dynamic_too);
+	static void _sun_group_fit_depth(SunGroup &r_group, const SunCasterBounds &p_bounds, const Vector2 &p_rect_min, const Vector2 &p_rect_max, const Scenario *p_scenario);
+	static void _sun_assign_caster_groups(const SunCasterBounds &p_bounds, const Scenario *p_scenario);
+	static void _sun_map_note_frame_change(SunMapCache &r_cache, const SunMapFrame &p_frame);
+	static void _sun_companion_follow_members(SunCasterBounds &r_bounds, int p_group, const Scenario *p_scenario);
+	_NO_INLINE_ void _sun_caster_bounds_fit(SunCasterBounds &r_fit, const Scenario *p_scenario, const Basis &p_light_basis, const SunFitSettings &p_settings, int p_current_roll, bool p_all_rolls) const;
+	void _sun_caster_bounds_follow_direction(SunCasterBounds &r_bounds, const Scenario *p_scenario, const Basis &p_light_basis) const;
+	void _sun_map_update_frame(SunMapFrame &r_frame, SunCasterBounds &r_bounds, const Instance *p_light, bool p_pack, const Scenario *p_scenario) const;
+	void _sun_map_activate(Scenario *p_scenario, RID p_light_instance, uint32_t p_caster_mask);
+	SunMapFrame _sun_map_update_region(Scenario *p_scenario, Instance *p_light, const Basis &p_light_basis, bool p_first_fit, bool p_direction_changed, int p_current_roll);
+	SunGroupsChange _sun_map_grow_for_changes(SunCasterBounds &r_bounds, const SunMapFrame &p_frame, const Scenario *p_scenario) const;
+	bool _sun_map_shrink(SunCasterBounds &r_bounds, Scenario *p_scenario, const Instance *p_light, const SunMapFrame &p_frame) const;
+	bool _sun_map_apply_changes(Scenario *p_scenario, uint32_t p_caster_mask);
+	bool _sun_map_restart_windows(SunMapCache &r_cache);
+	static void _sun_map_mark_removed_casters(SunMapCache &r_cache, uint64_t p_now);
+	static void _sun_map_mark_changed_casters(Scenario *p_scenario, uint32_t p_caster_mask, uint64_t p_now);
+	bool _sun_map_mark_dynamic_casters(SunMapCache &r_cache, uint64_t p_now);
+	void _sun_setup_window_shadows(int p_shadow_index, const Instance *p_light, const SunMapFrame &p_frame, bool p_reuse, bool p_use_windows, const Transform3D &p_cam_transform);
+	RendererSceneRender::RenderShadowData &_sun_map_add_step(RendererSceneRender::SunMapStep::Target p_target, RID p_light_instance, const SunMapFrame &p_frame, int p_window);
+	void _sun_map_build_steps(Scenario *p_scenario, Instance *p_light, const Transform3D &p_cam_transform, const Projection &p_cam_projection);
+	void _sun_map_restart_window(Scenario *p_scenario, RID p_light_instance, int p_window, const SunTileMask &p_window_view, uint32_t p_caster_mask);
+	void _sun_map_redraw_stale_tiles(Scenario *p_scenario, RID p_light_instance, int p_window, const SunTileMask &p_window_view, uint32_t p_caster_mask);
+	void _sun_map_add_validation_steps(Scenario *p_scenario, RID p_light_instance, uint32_t p_caster_mask);
+	void _light_instance_setup_caster_bounds_shadow(int p_shadow_index, Instance *p_instance, const Transform3D &p_cam_transform);
 
 	_FORCE_INLINE_ bool _light_instance_update_shadow(Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect, RID p_shadow_atlas, Scenario *p_scenario, float p_screen_mesh_lod_threshold, uint32_t p_visible_layers = 0xFFFFFF);
 
@@ -1134,6 +1335,10 @@ public:
 		} shadows[RendererSceneRender::MAX_DIRECTIONAL_LIGHTS];
 
 		uint32_t shadow_count;
+
+		// lestoroer#sun
+		Instance *sun_map_light = nullptr;
+		int shadow_lights_total = 0;
 
 		struct SDFGI {
 			//have arrays here because SDFGI functions expects this, plus regions can have areas

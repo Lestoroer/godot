@@ -166,6 +166,7 @@ public:
 		SHADOW_ORTHOGONAL,
 		SHADOW_PARALLEL_2_SPLITS,
 		SHADOW_PARALLEL_4_SPLITS,
+		SHADOW_CASTER_BOUNDS, // lestoroer#sun
 	};
 
 	enum SkyMode {

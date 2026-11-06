@@ -3551,6 +3551,21 @@
 				The scenario is the 3D world that all the visual instances exist in.
 			</description>
 		</method>
+		<method name="sun_map_debug_get_state">
+			<return type="Dictionary" />
+			<param index="0" name="scenario" type="RID" />
+			<description>
+				Returns the state of the persistent shadow map of [constant LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS] for debugging.
+			</description>
+		</method>
+		<method name="sun_map_debug_set_option">
+			<return type="void" />
+			<param index="0" name="option" type="StringName" />
+			<param index="1" name="value" type="Variant" />
+			<description>
+				Sets a debugging option of the persistent shadow map of [constant LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS]: [code]force_full[/code], [code]validate[/code], [code]no_view_limit[/code], [code]ignored_changes[/code], [code]settle_frames[/code], [code]max_windows[/code] and [code]measure_gpu_time[/code] (timestamps [code]Sun Shadows Begin[/code] and [code]Sun Shadows End[/code] around the directional shadow passes).
+			</description>
+		</method>
 		<method name="scenario_set_camera_attributes">
 			<return type="void" />
 			<param index="0" name="scenario" type="RID" />
@@ -5141,6 +5156,9 @@
 		</constant>
 		<constant name="LIGHT_DIRECTIONAL_SHADOW_PARALLEL_4_SPLITS" value="2" enum="LightDirectionalShadowMode">
 			Use 4 splits for shadow projection when using directional light.
+		</constant>
+		<constant name="LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS" value="3" enum="LightDirectionalShadowMode">
+			Fit the shadow map to the bounds of the shadow casters as seen from the light, independently of the camera. Groups of casters far apart get separate regions of the map.
 		</constant>
 		<constant name="LIGHT_DIRECTIONAL_SKY_MODE_LIGHT_AND_SKY" value="0" enum="LightDirectionalSkyMode">
 			Use DirectionalLight3D in both sky rendering and scene lighting.

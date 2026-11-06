@@ -1781,11 +1781,12 @@ void RasterizerSceneGLES3::_setup_lights(const RenderDataGLES3 *p_render_data, b
 
 					RSE::LightDirectionalShadowMode shadow_mode = light_storage->light_directional_get_shadow_mode(base);
 
-					int limit = shadow_mode == RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL ? 0 : (shadow_mode == RSE::LIGHT_DIRECTIONAL_SHADOW_PARALLEL_2_SPLITS ? 1 : 3);
+					const bool has_no_splits = shadow_mode == RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL || shadow_mode == RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS; // lestoroer#sun
+					int limit = has_no_splits ? 0 : (shadow_mode == RSE::LIGHT_DIRECTIONAL_SHADOW_PARALLEL_2_SPLITS ? 1 : 3);
 
 					shadow_data.shadow_atlas_pixel_size = 1.0 / light_storage->directional_shadow_get_size();
 
-					shadow_data.blend_splits = uint32_t((shadow_mode != RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL) && light_storage->light_directional_get_blend_splits(base));
+					shadow_data.blend_splits = uint32_t(!has_no_splits && light_storage->light_directional_get_blend_splits(base)); // lestoroer#sun
 					for (int j = 0; j < 4; j++) {
 						Rect2 atlas_rect = li->shadow_transform[j].atlas_rect;
 						Projection correction;

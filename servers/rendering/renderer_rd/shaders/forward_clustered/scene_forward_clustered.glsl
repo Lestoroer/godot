@@ -2494,8 +2494,38 @@ void fragment_shader(in SceneData scene_data) {
 	normal_bias -= light_dir * dot(light_dir, normal_bias);                                     \
 	m_var.xyz += normal_bias;
 
-					//version with soft shadows, more expensive
-					if (sc_use_directional_soft_shadows() && directional_lights.data[i].softshadow_angle > 0) {
+					// lestoroer#sun: Постоянная карта по кастерам. Одно окно читает вся сцена. Из нескольких точка читает первое, в которое попала; вне окон кастеров нет, и она освещена.
+					if (directional_lights.data[i].sun_window_count > 0) {
+						vec4 v = vec4(vertex, 1.0);
+						vec4 pssm_coord;
+						bool in_window = true;
+						if (directional_lights.data[i].sun_window_count == 1) {
+							BIAS_FUNC(v, 0)
+							pssm_coord = directional_lights.data[i].shadow_matrix1 * v;
+						} else {
+							vec2 first_window_uv = (directional_lights.data[i].shadow_matrix1 * v).xy;
+							if (all(lessThan(abs(first_window_uv - directional_lights.data[i].sun_window_rects[0].xy), directional_lights.data[i].sun_window_rects[0].zw))) {
+								BIAS_FUNC(v, 0)
+								pssm_coord = directional_lights.data[i].shadow_matrix1 * v;
+							} else if (all(lessThan(abs(first_window_uv - directional_lights.data[i].sun_window_rects[1].xy), directional_lights.data[i].sun_window_rects[1].zw))) {
+								BIAS_FUNC(v, 1)
+								pssm_coord = directional_lights.data[i].shadow_matrix2 * v;
+							} else if (all(lessThan(abs(first_window_uv - directional_lights.data[i].sun_window_rects[2].xy), directional_lights.data[i].sun_window_rects[2].zw))) {
+								BIAS_FUNC(v, 2)
+								pssm_coord = directional_lights.data[i].shadow_matrix3 * v;
+							} else if (all(lessThan(abs(first_window_uv - directional_lights.data[i].sun_window_rects[3].xy), directional_lights.data[i].sun_window_rects[3].zw))) {
+								BIAS_FUNC(v, 3)
+								pssm_coord = directional_lights.data[i].shadow_matrix4 * v;
+							} else {
+								in_window = false;
+							}
+						}
+						if (in_window) {
+							// Дальняя плоскость лежит сразу под кастерами, а получатели могут быть ниже: без подъёма такая точка проиграла бы сравнение с очищенной глубиной и попала в тень.
+							pssm_coord.z = max(pssm_coord.z, 0.00003);
+							shadow = sample_directional_pcf_shadow(directional_shadow_atlas, scene_data.directional_shadow_pixel_size * directional_lights.data[i].soft_shadow_scale, pssm_coord, scene_data.taa_frame_count);
+						}
+					} else if (sc_use_directional_soft_shadows() && directional_lights.data[i].softshadow_angle > 0) { //version with soft shadows, more expensive
 						uint blend_count = 0;
 						const uint blend_max = directional_lights.data[i].blend_splits ? 2 : 1;
 
@@ -2726,7 +2756,7 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef LIGHT_TRANSMITTANCE_USED
 			float transmittance_z = transmittance_depth;
 #ifndef SHADOWS_DISABLED
-			if (directional_lights.data[i].shadow_opacity > 0.001) {
+			if (directional_lights.data[i].shadow_opacity > 0.001 && directional_lights.data[i].sun_window_count <= 1) { // lestoroer#sun
 				float depth_z = -vertex.z;
 
 				if (depth_z < directional_lights.data[i].shadow_split_offsets.x) {

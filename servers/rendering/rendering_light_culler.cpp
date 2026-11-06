@@ -83,6 +83,12 @@ void RenderingLightCuller::prepare_directional_light(const RendererSceneCull::In
 		data.directional_cull_planes.resize(p_directional_light_id + 1);
 	}
 
+	// lestoroer#sun: Карта по кастерам не зависит от камеры, поэтому кастеры нельзя отсекать по кадру.
+	if (RSG::light_storage->light_directional_get_shadow_mode(p_instance->base) == RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS) {
+		data.directional_cull_planes[p_directional_light_id].planes[0].num_cull_planes = 0;
+		return;
+	}
+
 	_prepare_light(*p_instance, p_directional_light_id);
 }
 

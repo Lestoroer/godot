@@ -687,11 +687,15 @@ void RenderForwardClustered::_render_list(RenderingDevice::DrawListID p_draw_lis
 	}
 }
 
-void RenderForwardClustered::_render_list_with_draw_list(RenderListParameters *p_params, RID p_framebuffer, BitField<RD::DrawFlags> p_draw_flags, const Vector<Color> &p_clear_color_values, float p_clear_depth_value, uint32_t p_clear_stencil_value, const Rect2 &p_region) {
+void RenderForwardClustered::_render_list_with_draw_list(RenderListParameters *p_params, RID p_framebuffer, BitField<RD::DrawFlags> p_draw_flags, const Vector<Color> &p_clear_color_values, float p_clear_depth_value, uint32_t p_clear_stencil_value, const Rect2 &p_region, const Rect2i &p_scissor) {
 	RD::FramebufferFormatID fb_format = RD::get_singleton()->framebuffer_get_format(p_framebuffer);
 	p_params->framebuffer_format = fb_format;
 
 	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, p_draw_flags, p_clear_color_values, p_clear_depth_value, p_clear_stencil_value, p_region);
+	// lestoroer#sun
+	if (p_scissor.has_area()) {
+		RD::get_singleton()->draw_list_enable_scissor(draw_list, p_scissor);
+	}
 	_render_list(draw_list, fb_format, p_params, 0, p_params->element_count);
 	RD::get_singleton()->draw_list_end();
 }
@@ -1592,8 +1596,11 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 		if (p_render_data->directional_shadows.size()) {
 			//open the pass for directional shadows
 			light_storage->update_directional_shadow_atlas();
-			RD::get_singleton()->draw_list_begin(light_storage->direction_shadow_get_fb(), RD::DRAW_CLEAR_DEPTH, Vector<Color>(), 0.0f);
-			RD::get_singleton()->draw_list_end();
+			// lestoroer#sun: Постоянная карта очищает только то, что перерисовывает.
+			if (p_render_data->render_shadows[p_render_data->directional_shadows[0]].sun_step.target == RendererSceneRender::SunMapStep::TARGET_NONE) {
+				RD::get_singleton()->draw_list_begin(light_storage->direction_shadow_get_fb(), RD::DRAW_CLEAR_DEPTH, Vector<Color>(), 0.0f);
+				RD::get_singleton()->draw_list_end();
+			}
 		}
 	}
 
@@ -1616,8 +1623,9 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 
 		//render directional shadows
 		for (uint32_t i = 0; i < p_render_data->directional_shadows.size(); i++) {
-			_render_shadow_pass(p_render_data->render_shadows[p_render_data->directional_shadows[i]].light, p_render_data->shadow_atlas, p_render_data->render_shadows[p_render_data->directional_shadows[i]].pass, p_render_data->render_shadows[p_render_data->directional_shadows[i]].instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, i == p_render_data->directional_shadows.size() - 1, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform);
+			_render_shadow_pass(p_render_data->render_shadows[p_render_data->directional_shadows[i]].light, p_render_data->shadow_atlas, p_render_data->render_shadows[p_render_data->directional_shadows[i]].pass, p_render_data->render_shadows[p_render_data->directional_shadows[i]].instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, i == p_render_data->directional_shadows.size() - 1, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, p_render_data->render_shadows[p_render_data->directional_shadows[i]].sun_step);
 		}
+		scene_state.directional_shadow_pass_count = scene_state.shadow_passes.size(); // lestoroer#sun
 		//render positional shadows
 		for (uint32_t i = 0; i < p_render_data->shadows.size(); i++) {
 			_render_shadow_pass(p_render_data->render_shadows[p_render_data->shadows[i]].light, p_render_data->shadow_atlas, p_render_data->render_shadows[p_render_data->shadows[i]].pass, p_render_data->render_shadows[p_render_data->shadows[i]].instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, i == 0, i == p_render_data->shadows.size() - 1, true, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform);
@@ -2641,7 +2649,7 @@ void RenderForwardClustered::_render_buffers_debug_draw(const RenderDataRD *p_re
 	}
 }
 
-void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier, float p_screen_mesh_lod_threshold, bool p_open_pass, bool p_close_pass, bool p_clear_region, RenderingServerTypes::RenderInfo *p_render_info, const Size2i &p_viewport_size, const Transform3D &p_main_cam_transform) {
+void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier, float p_screen_mesh_lod_threshold, bool p_open_pass, bool p_close_pass, bool p_clear_region, RenderingServerTypes::RenderInfo *p_render_info, const Size2i &p_viewport_size, const Transform3D &p_main_cam_transform, const RendererSceneRender::SunMapStep &p_sun_step) {
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 
 	ERR_FAIL_COND(!light_storage->owns_light_instance(p_light));
@@ -2678,6 +2686,11 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 			light_storage->light_instance_set_shadow_pass(p_light, get_scene_pass());
 		}
 
+		// lestoroer#sun: Карта по кастерам не зависит от камеры, значит и выбор LOD в ней не должен.
+		if (light_storage->light_directional_get_shadow_mode(base) == RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS) {
+			p_screen_mesh_lod_threshold = 0.0;
+		}
+
 		use_pancake = light_storage->light_get_param(base, RSE::LIGHT_PARAM_SHADOW_PANCAKE_SIZE) > 0;
 		light_projection = light_storage->light_instance_get_shadow_camera(p_light, p_pass);
 		light_transform = light_storage->light_instance_get_shadow_transform(p_light, p_pass);
@@ -2704,6 +2717,11 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 			}
 		}
 
+		// lestoroer#sun
+		if (p_sun_step.target != RendererSceneRender::SunMapStep::TARGET_NONE) {
+			atlas_rect = p_sun_step.window_rect;
+		}
+
 		float directional_shadow_size = light_storage->directional_shadow_get_size();
 		Rect2 atlas_rect_norm = atlas_rect;
 		atlas_rect_norm.position /= directional_shadow_size;
@@ -2713,6 +2731,14 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 		zfar = RSG::light_storage->light_get_param(base, RSE::LIGHT_PARAM_RANGE);
 
 		render_fb = light_storage->direction_shadow_get_fb();
+		// lestoroer#sun
+		if (p_sun_step.target == RendererSceneRender::SunMapStep::TARGET_STATIC) {
+			render_fb = light_storage->directional_shadow_get_static_fb();
+		} else if (p_sun_step.target == RendererSceneRender::SunMapStep::TARGET_VALIDATION) {
+			render_fb = light_storage->directional_shadow_get_validation_fb();
+		} else if (p_sun_step.target == RendererSceneRender::SunMapStep::TARGET_NONE) {
+			light_storage->directional_shadow_release_persistent();
+		}
 		render_texture = RID();
 		flip_y = true;
 
@@ -2829,11 +2855,18 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 	} else {
 		//render shadow
 		_render_shadow_append(render_fb, p_instances, light_projection, light_transform, zfar, 0, 0, reverse_cull_face, using_dual_paraboloid, using_dual_paraboloid_flip, use_pancake, p_lod_distance_multiplier, p_screen_mesh_lod_threshold, atlas_rect, flip_y, p_clear_region, p_open_pass, p_close_pass, p_render_info, p_viewport_size, p_main_cam_transform);
+		// lestoroer#sun
+		if (p_sun_step.target != RendererSceneRender::SunMapStep::TARGET_NONE) {
+			SceneState::ShadowPass &shadow_pass = scene_state.shadow_passes[scene_state.shadow_passes.size() - 1];
+			shadow_pass.sun_step = p_sun_step;
+			shadow_pass.clear_depth = false;
+		}
 	}
 }
 
 void RenderForwardClustered::_render_shadow_begin() {
 	scene_state.shadow_passes.clear();
+	scene_state.directional_shadow_pass_count = 0; // lestoroer#sun
 	RD::get_singleton()->draw_command_begin_label("Shadow Setup");
 	_update_render_base_uniform_set();
 
@@ -2937,9 +2970,38 @@ void RenderForwardClustered::_render_shadow_process() {
 void RenderForwardClustered::_render_shadow_end() {
 	RD::get_singleton()->draw_command_begin_label("Shadow Render");
 
-	for (SceneState::ShadowPass &shadow_pass : scene_state.shadow_passes) {
+	// lestoroer#sun: Проходы направленного света идут первыми; метки вокруг них читает сводка кадра.
+	const uint32_t measured_pass_count = sun_measure_gpu_time ? scene_state.directional_shadow_pass_count : 0;
+	if (measured_pass_count > 0) {
+		RD::get_singleton()->capture_timestamp("Sun Shadows Begin");
+	}
+	for (uint32_t pass_index = 0; pass_index < scene_state.shadow_passes.size(); pass_index++) {
+		SceneState::ShadowPass &shadow_pass = scene_state.shadow_passes[pass_index];
+		if (measured_pass_count > 0 && pass_index == measured_pass_count) {
+			RD::get_singleton()->capture_timestamp("Sun Shadows End");
+		}
+		// lestoroer#sun
+		const RendererSceneRender::SunMapStep &sun_step = shadow_pass.sun_step;
+		if (sun_step.copy_static_rect.has_area()) {
+			RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
+			const Vector3 position(sun_step.copy_static_rect.position.x, sun_step.copy_static_rect.position.y, 0);
+			const Vector3 size(sun_step.copy_static_rect.size.x, sun_step.copy_static_rect.size.y, 1);
+			RD::get_singleton()->texture_copy(light_storage->directional_shadow_get_static_texture(), light_storage->directional_shadow_get_texture(), position, position, size, 0, 0, 0, 0);
+		}
+		if (sun_step.clear_rect.has_area()) {
+			RD::get_singleton()->draw_list_begin(shadow_pass.framebuffer, RD::DRAW_CLEAR_DEPTH, Vector<Color>(), 0.0f, 0, sun_step.clear_rect);
+			RD::get_singleton()->draw_list_end();
+		}
+		if (sun_step.target != RendererSceneRender::SunMapStep::TARGET_NONE && shadow_pass.element_count == 0) {
+			continue;
+		}
+
 		RenderListParameters render_list_parameters(render_list[RENDER_LIST_SECONDARY].elements.ptr() + shadow_pass.element_from, render_list[RENDER_LIST_SECONDARY].element_info.ptr() + shadow_pass.element_from, shadow_pass.element_count, shadow_pass.flip_cull, shadow_pass.pass_mode, 0, true, false, shadow_pass.rp_uniform_set, false, Vector2(), shadow_pass.lod_distance_multiplier, shadow_pass.screen_mesh_lod_threshold, 1, shadow_pass.element_from);
-		_render_list_with_draw_list(&render_list_parameters, shadow_pass.framebuffer, shadow_pass.clear_depth ? RD::DRAW_CLEAR_DEPTH : RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0, shadow_pass.rect);
+		_render_list_with_draw_list(&render_list_parameters, shadow_pass.framebuffer, shadow_pass.clear_depth ? RD::DRAW_CLEAR_DEPTH : RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0, shadow_pass.rect, sun_step.scissor); // lestoroer#sun
+	}
+	// lestoroer#sun
+	if (measured_pass_count > 0 && measured_pass_count == scene_state.shadow_passes.size()) {
+		RD::get_singleton()->capture_timestamp("Sun Shadows End");
 	}
 
 	RD::get_singleton()->draw_command_end_label();
