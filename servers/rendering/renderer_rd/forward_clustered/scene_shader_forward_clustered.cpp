@@ -254,7 +254,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 }
 
 bool SceneShaderForwardClustered::ShaderData::is_animated() const {
-	return (uses_fragment_time && uses_discard) || (uses_vertex_time && uses_vertex);
+	return (uses_fragment_time && (uses_discard || uses_alpha_clip)) || (uses_vertex_time && uses_vertex); // lestoroer#sun: Вырез от времени тоже меняет тень.
 }
 
 bool SceneShaderForwardClustered::ShaderData::casts_shadows() const {

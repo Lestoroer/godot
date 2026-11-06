@@ -210,4 +210,9 @@ public:
 	virtual void directional_shadow_atlas_set_size(int p_size, bool p_16_bits = true) = 0;
 	virtual int get_directional_light_shadow_size(RID p_light_instance) = 0;
 	virtual void set_directional_shadow_count(int p_count) = 0;
+	// lestoroer#sun: true, если в атласе всё ещё карта этого мира; иначе атлас переходит к нему и его надо перерисовать.
+	virtual bool directional_shadow_claim_persistent(RID p_world) { return false; }
+	virtual Dictionary directional_shadow_debug_get_textures() { return Dictionary(); }
+	// lestoroer#sun: Окна постоянной карты в координатах атласа. p_read_rects — где точка читает окно. Ноль окон — обычный путь шейдера.
+	virtual void light_instance_set_sun_windows(RID p_light_instance, int p_count, const Rect2 *p_atlas_rects, const Rect2 *p_read_rects) {}
 };

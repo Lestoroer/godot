@@ -2593,6 +2593,7 @@ void RenderingServer::_bind_methods() {
 	BIND_ENUM_CONSTANT(RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL);
 	BIND_ENUM_CONSTANT(RSE::LIGHT_DIRECTIONAL_SHADOW_PARALLEL_2_SPLITS);
 	BIND_ENUM_CONSTANT(RSE::LIGHT_DIRECTIONAL_SHADOW_PARALLEL_4_SPLITS);
+	BIND_ENUM_CONSTANT(RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS); // lestoroer#sun
 
 	BIND_ENUM_CONSTANT(RSE::LIGHT_DIRECTIONAL_SKY_MODE_LIGHT_AND_SKY);
 	BIND_ENUM_CONSTANT(RSE::LIGHT_DIRECTIONAL_SKY_MODE_LIGHT_ONLY);
@@ -3295,6 +3296,9 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("scenario_set_surface_cache_callback", "scenario", "callback"), &RenderingServer::scenario_set_surface_cache_callback);
 	ClassDB::bind_method(D_METHOD("scenario_set_surface_cache_view_callback", "scenario", "callback"), &RenderingServer::scenario_set_surface_cache_view_callback);
 	ClassDB::bind_method(D_METHOD("scenario_surface_cache_poll", "scenario"), &RenderingServer::scenario_surface_cache_poll);
+	// lestoroer#sun
+	ClassDB::bind_method(D_METHOD("sun_map_debug_set_option", "option", "value"), &RenderingServer::sun_map_debug_set_option);
+	ClassDB::bind_method(D_METHOD("sun_map_debug_get_state", "scenario"), &RenderingServer::sun_map_debug_get_state);
 	ClassDB::bind_method(D_METHOD("scenario_set_surface_cache_buffers", "scenario", "buffers"), &RenderingServer::scenario_set_surface_cache_buffers);
 	ClassDB::bind_method(D_METHOD("instance_set_surface_cache_ids", "instance", "surface_ids"), &RenderingServer::instance_set_surface_cache_ids);
 	ClassDB::bind_method(D_METHOD("instance_get_deformed_surface", "instance", "surface"), &RenderingServer::instance_get_deformed_surface);

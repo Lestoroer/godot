@@ -50,6 +50,9 @@
 		<constant name="SHADOW_PARALLEL_4_SPLITS" value="2" enum="ShadowMode">
 			Splits the view frustum in 4 areas, each with its own shadow map. This is the slowest directional shadow mode.
 		</constant>
+		<constant name="SHADOW_CASTER_BOUNDS" value="3" enum="ShadowMode">
+			Fits the shadow map to the bounds of the shadow casters as seen from the light. Groups of casters far apart get separate regions of the map with the same density, so the empty space between them costs nothing. The map does not depend on the camera, so its density stays the same while the camera moves. Points outside the bounds are always lit. Shadow splits, [member directional_shadow_max_distance] and [member directional_shadow_fade_start] are not used.
+		</constant>
 		<constant name="SKY_MODE_LIGHT_AND_SKY" value="0" enum="SkyMode">
 			Makes the light visible in both scene lighting and sky rendering.
 		</constant>

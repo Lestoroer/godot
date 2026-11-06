@@ -62,6 +62,7 @@ public:
 		DEPENDENCY_CHANGED_REFLECTION_PROBE,
 		DEPENDENCY_CHANGED_CULL_MASK,
 		DEPENDENCY_CHANGED_SURFACE_CONTENT, // lestoroer#gi
+		DEPENDENCY_CHANGED_SUN_CASTER, // lestoroer#sun
 	};
 
 	void changed_notify(DependencyChangedNotification p_notification);

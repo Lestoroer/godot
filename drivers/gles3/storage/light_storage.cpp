@@ -1787,6 +1787,7 @@ int LightStorage::get_directional_light_shadow_size(RID p_light_instance) {
 
 	switch (light_directional_get_shadow_mode(light_instance->light)) {
 		case RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL:
+		case RSE::LIGHT_DIRECTIONAL_SHADOW_CASTER_BOUNDS: // lestoroer#sun
 			break; //none
 		case RSE::LIGHT_DIRECTIONAL_SHADOW_PARALLEL_2_SPLITS:
 			r.size.height /= 2;

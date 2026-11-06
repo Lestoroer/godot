@@ -280,10 +280,26 @@ public:
 
 	virtual void voxel_gi_set_quality(RSE::VoxelGIQuality) = 0;
 
+	// lestoroer#sun: Шаг обновления постоянной карты солнца: копия из статической карты, очистка прямоугольника, отрисовка.
+	struct SunMapStep {
+		enum Target {
+			TARGET_NONE,
+			TARGET_ATLAS,
+			TARGET_STATIC,
+			TARGET_VALIDATION,
+		};
+		Target target = TARGET_NONE;
+		Rect2i window_rect;
+		Rect2i copy_static_rect;
+		Rect2i clear_rect;
+		Rect2i scissor;
+	};
+
 	struct RenderShadowData {
 		RID light;
 		int pass = 0;
 		PagedArray<RenderGeometryInstance *> instances;
+		SunMapStep sun_step; // lestoroer#sun
 	};
 
 	struct RenderSDFGIData {
@@ -326,6 +342,9 @@ public:
 
 	// lestoroer#gi
 	virtual void surface_cache_set_context(const Vector<RID> &p_buffers, const Callable &p_view_callback) {}
+	virtual bool sun_map_supports_reuse() const { return false; } // lestoroer#sun
+	// lestoroer#sun: Ставить метки времени вокруг проходов теней направленного света: их читает сводка кадра.
+	bool sun_measure_gpu_time = false;
 	virtual void surface_cache_capture(RenderGeometryInstance *p_source, RenderGeometryInstance *p_chart, RID p_framebuffer, const Rect2i &p_region) { ERR_FAIL_MSG("Surface Cache capture requires Forward+."); }
 	virtual void render_material(const Transform3D &p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) = 0;
 	virtual void render_particle_collider_heightfield(RID p_collider, const Transform3D &p_transform, const PagedArray<RenderGeometryInstance *> &p_instances) = 0;

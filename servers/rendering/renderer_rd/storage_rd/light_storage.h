@@ -125,6 +125,12 @@ private:
 
 		Rect2 directional_rect;
 
+		// lestoroer#sun
+		static constexpr int MAX_SUN_WINDOWS = 4;
+		int sun_window_count = 0;
+		Rect2 sun_window_atlas_rects[MAX_SUN_WINDOWS];
+		Rect2 sun_window_read_rects[MAX_SUN_WINDOWS];
+
 		HashSet<RID> shadow_atlases; //shadow atlases where this light is registered
 
 		ForwardID forward_id = -1;
@@ -208,7 +214,8 @@ private:
 		float shadow_opacity;
 		float fade_from;
 		float fade_to;
-		uint32_t pad[2];
+		uint32_t sun_window_count; // lestoroer#sun
+		uint32_t pad;
 		uint32_t bake_mode;
 		float volumetric_fog_energy;
 		float shadow_bias[4];
@@ -222,6 +229,7 @@ private:
 		float uv_scale2[2];
 		float uv_scale3[2];
 		float uv_scale4[2];
+		float sun_window_rects[4][4]; // lestoroer#sun
 	};
 
 	uint32_t max_directional_lights;
@@ -448,7 +456,17 @@ private:
 		int size = 0;
 		bool use_16_bits = true;
 		int current_light = 0;
+
+		// lestoroer#sun: Неподвижные кастеры постоянной карты и эталон для проверки.
+		RID static_depth;
+		RID static_fb;
+		RID validation_depth;
+		RID validation_fb;
+		// Мир, чья постоянная карта лежит в атласе.
+		RID persistent_owner;
 	} directional_shadow;
+
+	void _directional_shadow_free_persistent(); // lestoroer#sun
 
 	/* SHADOW CUBEMAPS */
 
@@ -1187,6 +1205,15 @@ public:
 	_FORCE_INLINE_ void directional_shadow_increase_current_light() {
 		directional_shadow.current_light++;
 	}
+
+	// lestoroer#sun
+	virtual bool directional_shadow_claim_persistent(RID p_world) override;
+	virtual Dictionary directional_shadow_debug_get_textures() override;
+	virtual void light_instance_set_sun_windows(RID p_light_instance, int p_count, const Rect2 *p_atlas_rects, const Rect2 *p_read_rects) override;
+	_FORCE_INLINE_ void directional_shadow_release_persistent() { directional_shadow.persistent_owner = RID(); }
+	RID directional_shadow_get_static_fb();
+	RID directional_shadow_get_validation_fb();
+	_FORCE_INLINE_ RID directional_shadow_get_static_texture() { return directional_shadow.static_depth; }
 
 	/* SHADOW CUBEMAPS */
 

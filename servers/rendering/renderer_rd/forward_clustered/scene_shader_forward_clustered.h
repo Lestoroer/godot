@@ -298,6 +298,11 @@ public:
 			return (uses_depth_prepass_alpha || uses_alpha_antialiasing) && !(no_depth_draw || no_depth_test);
 		}
 
+		// lestoroer#sun: Вырез и смещение вершин зависят от параметров, форма и обычная глубина — нет.
+		virtual bool depth_pass_reads_parameters() const override {
+			return uses_particle_trails || writes_modelview_or_projection || uses_vertex || uses_position || uses_discard || uses_depth_prepass_alpha || uses_alpha_clip || uses_alpha_antialiasing || uses_point_size || uses_world_coordinates || uses_z_clip_scale;
+		}
+
 		_FORCE_INLINE_ bool uses_shared_shadow_material() const {
 			bool backface_culling = cull_mode == RSE::CULL_MODE_BACK;
 			return !uses_particle_trails && !writes_modelview_or_projection && !uses_vertex && !uses_position && !uses_discard && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && backface_culling && !uses_point_size && !uses_world_coordinates && !wireframe && !uses_z_clip_scale && !stencil_enabled;

@@ -982,6 +982,9 @@ public:
 	FUNC2(scenario_set_surface_cache_callback, RID, const Callable &)
 	FUNC2(scenario_set_surface_cache_view_callback, RID, const Callable &)
 	FUNC1R(Array, scenario_surface_cache_poll, RID)
+	// lestoroer#sun
+	FUNC2(sun_map_debug_set_option, const StringName &, const Variant &)
+	FUNC1R(Dictionary, sun_map_debug_get_state, RID)
 	FUNC2(scenario_set_surface_cache_buffers, RID, const TypedArray<RID> &)
 	FUNC2(instance_set_surface_cache_ids, RID, const Vector<int32_t> &)
 	FUNC2RC(Dictionary, instance_get_deformed_surface, RID, int)

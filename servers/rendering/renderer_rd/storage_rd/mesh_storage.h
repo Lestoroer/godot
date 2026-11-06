@@ -241,6 +241,7 @@ private:
 		AABB aabb;
 		AABB custom_aabb;
 		bool aabb_dirty = false;
+		bool sun_caster_dirty = false; // lestoroer#sun: Границы могут быть уже пересчитаны по запросу, а трансформы всё равно изменились.
 		bool buffer_set = false;
 		bool indirect = false;
 		bool motion_vectors_enabled = false;
