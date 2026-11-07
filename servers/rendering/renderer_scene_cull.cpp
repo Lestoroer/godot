@@ -173,6 +173,20 @@ void RendererSceneCull::occluder_set_mesh(RID p_occluder, const PackedVector3Arr
 
 /* SCENARIO API */
 
+// lestoroer#local-lights
+static bool aabb_reaches_sphere(const AABB &p_aabb, const Vector3 &p_center, float p_radius) {
+	return p_center.clamp(p_aabb.position, p_aabb.get_end()).distance_squared_to(p_center) <= p_radius * p_radius;
+}
+
+// lestoroer#local-lights: запас коробки пар лампы модуля. Пары — надмножество геометрии в радиусе: модуль сам отсекает кастеры по радиусу,
+// а перестройку карты ставит только предмет, достающий до сферы лампы.
+static const float LOCAL_LIGHT_PAIR_MARGIN = 0.25f;
+
+// lestoroer#local-lights: пара, которую лампа модуля получила или потеряла из-за запаса коробки, карту не меняет.
+static bool pair_changes_local_light(const RendererSceneCull::Instance *p_geometry, const RendererSceneCull::Instance *p_light) {
+	return !p_light->uses_pair_aabb || aabb_reaches_sphere(p_geometry->transformed_aabb, p_light->transform.origin, RSG::light_storage->light_get_param(p_light->base, RSE::LIGHT_PARAM_RANGE));
+}
+
 void RendererSceneCull::_instance_pair(Instance *p_A, Instance *p_B) {
 	RendererSceneCull *self = (RendererSceneCull *)singleton;
 	Instance *A = p_A;
@@ -195,7 +209,7 @@ void RendererSceneCull::_instance_pair(Instance *p_A, Instance *p_B) {
 		geom->lights.insert(B);
 		light->geometries.insert(A);
 
-		if (geom->can_cast_shadows) {
+		if (geom->can_cast_shadows && pair_changes_local_light(A, B)) { // lestoroer#local-lights
 			light->make_shadow_dirty();
 		}
 
@@ -320,7 +334,7 @@ void RendererSceneCull::_instance_unpair(Instance *p_A, Instance *p_B) {
 		geom->lights.erase(B);
 		light->geometries.erase(A);
 
-		if (geom->can_cast_shadows) {
+		if (geom->can_cast_shadows && pair_changes_local_light(A, B)) { // lestoroer#local-lights
 			light->make_shadow_dirty();
 		}
 
@@ -430,11 +444,52 @@ void RendererSceneCull::_instance_unpair(Instance *p_A, Instance *p_B) {
 RID RendererSceneCull::scenario_allocate() {
 	return scenario_owner.allocate_rid();
 }
+// lestoroer#local-lights
+void RendererSceneCull::scenario_set_local_lights(RID p_scenario, LocalLightsBackend *p_backend) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	if (scenario->local_lights) {
+		memdelete(scenario->local_lights);
+	}
+	scenario->local_lights = p_backend;
+	scenario_queue_lights_for_surface_cache(p_scenario);
+}
+
+RendererSceneCull::LocalLightsBackend *RendererSceneCull::scenario_get_local_lights(RID p_scenario) const {
+	const Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL_V(scenario, nullptr);
+	return scenario->local_lights;
+}
+
+// Включение меняет, кому принадлежат лампы: GI должен заново узнать о них.
+void RendererSceneCull::scenario_queue_lights_for_surface_cache(RID p_scenario) {
+	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
+	ERR_FAIL_NULL(scenario);
+	for (SelfList<Instance> *E = scenario->instances.first(); E; E = E->next()) {
+		if (E->self()->base_type == RSE::INSTANCE_LIGHT) {
+			_surface_cache_queue(E->self(), 7);
+		}
+	}
+}
+
+bool RendererSceneCull::_scenario_owns_local_light(const Scenario *p_scenario, const Instance *p_instance) const {
+	if (!p_scenario->local_lights || !p_scenario->local_lights->is_enabled()) {
+		return false;
+	}
+	const RSE::LightType type = RSG::light_storage->light_get_type(p_instance->base);
+	return type == RSE::LIGHT_OMNI || type == RSE::LIGHT_SPOT;
+}
+
 void RendererSceneCull::scenario_initialize(RID p_rid) {
 	scenario_owner.initialize_rid(p_rid);
 
 	Scenario *scenario = scenario_owner.get_or_null(p_rid);
 	scenario->self = p_rid;
+
+	// lestoroer#local-lights
+	if (local_lights_backend_factory && bool(GLOBAL_GET("rendering/lights_and_shadows/local_lights/enabled"))) {
+		scenario->local_lights = local_lights_backend_factory(p_rid);
+	}
 
 	scenario->reflection_probe_shadow_atlas = RSG::light_storage->shadow_atlas_create();
 	RSG::light_storage->shadow_atlas_set_size(scenario->reflection_probe_shadow_atlas, 1024); //make enough shadows for close distance, don't bother with rest
@@ -585,7 +640,8 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 		bool active = instance && instance->scenario == scenario && instance->visible &&
 				instance->transform.basis.determinant() != 0 &&
 				((instance->base_type == RSE::INSTANCE_MESH && (instance->baked_light || instance->dynamic_gi) &&
-						RSG::mesh_storage->mesh_get_surface_count(instance->base) > 0) || instance->base_type == RSE::INSTANCE_LIGHT);
+						RSG::mesh_storage->mesh_get_surface_count(instance->base) > 0) ||
+						(instance->base_type == RSE::INSTANCE_LIGHT && !_scenario_owns_local_light(scenario, instance))); // lestoroer#local-lights
 		data["active"] = active;
 		if (active) {
 			data["base"] = instance->base;
@@ -641,6 +697,11 @@ Dictionary RendererSceneCull::instance_get_deformed_surface(RID p_instance, int 
 }
 
 void RendererSceneCull::_instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies, bool p_surface_cache) const {
+	// lestoroer#local-lights: GI не учитывает лампы модуля, поэтому их перемещение ему не сообщается. Смену базы и параметров он получает:
+	// после неё лампа может перестать принадлежать модулю.
+	if (p_surface_cache && !p_update_dependencies && p_instance->base_type == RSE::INSTANCE_LIGHT && p_instance->scenario && _scenario_owns_local_light(p_instance->scenario, p_instance)) {
+		p_surface_cache = false;
+	}
 	if (p_surface_cache) {
 		_surface_cache_queue(p_instance, (p_update_aabb ? 2u : 4u) | (p_update_dependencies ? 1u : 0u));
 	}
@@ -1873,6 +1934,7 @@ void RendererSceneCull::_update_instance(Instance *p_instance) const {
 		}
 	}
 
+	const AABB previous_aabb = p_instance->transformed_aabb; // lestoroer#local-lights
 	AABB new_aabb;
 	new_aabb = instance_xform->xform(p_instance->aabb);
 	p_instance->transformed_aabb = new_aabb;
@@ -1884,6 +1946,13 @@ void RendererSceneCull::_update_instance(Instance *p_instance) const {
 		if (geom->can_cast_shadows) {
 			for (const Instance *E : geom->lights) {
 				InstanceLightData *light = static_cast<InstanceLightData *>(E->base_data);
+				// lestoroer#local-lights: Пары строятся по кубу вокруг лампы. Предмет в углу куба, за радиусом лампы и до движения, и после, её карту не меняет.
+				if (p_instance->scenario && _scenario_owns_local_light(p_instance->scenario, E)) {
+					const float range = RSG::light_storage->light_get_param(E->base, RSE::LIGHT_PARAM_RANGE);
+					if (!aabb_reaches_sphere(previous_aabb, E->transform.origin, range) && !aabb_reaches_sphere(new_aabb, E->transform.origin, range)) {
+						continue;
+					}
+				}
 				light->make_shadow_dirty();
 			}
 		}
@@ -1914,10 +1983,25 @@ void RendererSceneCull::_update_instance(Instance *p_instance) const {
 		return;
 	}
 
-	//quantize to improve moving object performance
-	AABB bvh_aabb = p_instance->transformed_aabb;
+	// lestoroer#local-lights: лампа модуля, чья коробка не вышла из коробки прошлых пар, не перестраивает пары и своё место в BVH.
+	const bool pairs_by_margin = p_instance->base_type == RSE::INSTANCE_LIGHT && _scenario_owns_local_light(p_instance->scenario, p_instance);
+	if (pairs_by_margin && p_instance->indexer_id.is_valid() && p_instance->uses_pair_aabb && p_instance->pair_aabb.encloses(p_instance->transformed_aabb)) {
+		p_instance->scenario->instance_aabbs[p_instance->array_index] = InstanceBounds(p_instance->transformed_aabb);
+		if (p_instance->visibility_index != -1) {
+			p_instance->scenario->instance_visibility[p_instance->visibility_index].position = p_instance->transformed_aabb.get_center();
+		}
+		p_instance->prev_transformed_aabb = p_instance->transformed_aabb;
+		return;
+	}
+	p_instance->uses_pair_aabb = pairs_by_margin;
+	if (pairs_by_margin) {
+		p_instance->pair_aabb = p_instance->transformed_aabb.grow(LOCAL_LIGHT_PAIR_MARGIN);
+	}
 
-	if (p_instance->indexer_id.is_valid() && bvh_aabb != p_instance->prev_transformed_aabb) {
+	//quantize to improve moving object performance
+	AABB bvh_aabb = p_instance->pairing_aabb(); // lestoroer#local-lights
+
+	if (!pairs_by_margin && p_instance->indexer_id.is_valid() && bvh_aabb != p_instance->prev_transformed_aabb) { // lestoroer#local-lights
 		//assume motion, see if bounds need to be quantized
 		AABB motion_aabb = bvh_aabb.merge(p_instance->prev_transformed_aabb);
 		float motion_longest_axis = motion_aabb.get_longest_axis_size();
@@ -3654,6 +3738,24 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 
 	//render shadows
 
+	// lestoroer#local-lights
+	LocalLightsActiveView::set_active(false);
+	if (scenario->local_lights && scenario->local_lights->is_enabled()) {
+		local_lights_view.clear();
+		for (int64_t i = int64_t(scene_cull_result.lights.size()) - 1; i >= 0; i--) {
+			Instance *light = scene_cull_result.lights[i];
+			if (_scenario_owns_local_light(scenario, light)) {
+				local_lights_view.push_back(light);
+				scene_cull_result.lights.remove_at_unordered(i);
+				scene_cull_result.light_instances.remove_at_unordered(i);
+			}
+		}
+		if (!render_reflection_probe) {
+			scenario->local_lights->prepare_view(local_lights_view, p_camera_data->main_transform.origin);
+			LocalLightsActiveView::set_active(true);
+		}
+	}
+
 	max_shadows_used = 0;
 
 	if (p_using_shadows) { //setup shadow maps
@@ -3899,6 +4001,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	}
 	scene_render->surface_cache_set_context(scenario->surface_cache_buffers, scenario->surface_cache_view_callback);
 	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, p_window_output_max_value, &sdfgi_update_data, r_render_info);
+	LocalLightsActiveView::set_active(false); // lestoroer#local-lights
 
 	if (p_viewport.is_valid()) {
 		RSG::viewport->viewport_set_prev_camera_data(p_viewport, p_camera_data);
@@ -4605,6 +4708,11 @@ bool RendererSceneCull::free(RID p_rid) {
 		scenario->instance_data.reset();
 		scenario->instance_visibility.reset();
 
+		// lestoroer#local-lights
+		if (scenario->local_lights) {
+			memdelete(scenario->local_lights);
+			scenario->local_lights = nullptr;
+		}
 		RSG::light_storage->shadow_atlas_free(scenario->reflection_probe_shadow_atlas);
 		RSG::light_storage->reflection_atlas_free(scenario->reflection_atlas);
 		scenario_owner.free(p_rid);
