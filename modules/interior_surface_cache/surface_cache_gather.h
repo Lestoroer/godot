@@ -23,7 +23,8 @@ public:
 		BLOCK_PROBE_FILTER = 4,
 		BLOCK_CACHE_UPDATE = 8,
 		BLOCK_DIFFUSE_HISTORY = 16,
-		BLOCK_REFLECTION_HISTORY = 32 };
+		BLOCK_REFLECTION_HISTORY = 32,
+		BLOCK_SCREEN_PROBES = 64 };
 	static constexpr uint32_t PROBE_META_BYTES = 32, PROBE_LIGHT_BYTES = 144;
 
 private:
@@ -51,6 +52,8 @@ private:
 		int frame = 0;
 		int reflection_divisor = 1;
 		bool reflections = false;
+		// Свет пикселя, для которого набраны выход и история: 1 — зонды, 0 — мировой кеш, −1 — не набраны.
+		int light_scheme = -1;
 		Projection previous;
 		Transform3D previous_camera;
 		Sets sets[2];

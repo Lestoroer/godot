@@ -4,6 +4,7 @@
 #include "core/object/class_db.h"
 #include "servers/rendering/renderer_compositor.h"
 #include "servers/rendering/rendering_server_globals.h"
+#include "servers/rendering/renderer_rd/storage_rd/render_scene_data_rd.h"
 #include "servers/rendering/storage/render_scene_data.h"
 
 using namespace SurfaceCache;
@@ -25,7 +26,7 @@ bool SurfaceCacheGatherRD::initialize(RenderingDevice *p_device, const Ref<RefCo
 	PackedStringArray reader = world_hash->call("reader_defines");
 	for (int i = 0; i < PASS_COUNT; ++i) {
 		PackedStringArray defines;
-		if (i == PLACE || i == TRACE || i == CONTACT || i == REFLECTION) {
+		if (i == PLACE || i == TRACE || i == INTEGRATE || i == CONTACT || i == REFLECTION) {
 			defines = reader;
 		}
 		if (!kernels[i].initialize(device, names[i], defines)) {
@@ -101,6 +102,7 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	}
 	scene.push_back(uniform(14, RD::UNIFORM_TYPE_STORAGE_BUFFER, diagnostics ? v.stats : pass_stats[0]));
 	TypedArray<RDUniform> hash_uniforms = world_hash->call("uniforms");
+	LocalVector<RD::Uniform> hash_bindings;
 	for (int i = 0; i < hash_uniforms.size(); ++i) {
 		Ref<RDUniform> entry = hash_uniforms[i];
 		RD::Uniform converted;
@@ -111,6 +113,7 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 			converted.append_id(ids[j]);
 		}
 		scene.push_back(converted);
+		hash_bindings.push_back(converted);
 	}
 	r_sets.hash = world_hash->call("sets", script_uniforms(scene));
 	replace(scene, uniform(14, RD::UNIFORM_TYPE_STORAGE_BUFFER, diagnostics ? v.stats : pass_stats[1]));
@@ -118,9 +121,10 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	probe.push_back(uniform(39, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.meta[current]));
 	probe.push_back(uniform(40, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.light));
 	probe.push_back(uniform(42, RD::UNIFORM_TYPE_IMAGE, texture("contact")));
-	for (Pass pass : { PLACE, TRACE }) {
-		r_sets.passes[pass] = cached(kernels[pass], probe);
-	}
+	r_sets.passes[TRACE] = cached(kernels[TRACE], probe);
+	// Расстановка оставляет зонд прошлого кадра, пока поверхность под ним не сменилась.
+	probe.push_back(uniform(43, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.meta[1 - current]));
+	r_sets.passes[PLACE] = cached(kernels[PLACE], probe);
 	LocalVector<RD::Uniform> contact(scene);
 	contact.push_back(uniform(41, RD::UNIFORM_TYPE_IMAGE, texture("contact_raw")));
 	r_sets.passes[CONTACT] = cached(kernels[CONTACT], contact);
@@ -136,6 +140,10 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	bindings.push_back(uniform(3, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.filtered));
 	images(bindings, { "depth_" + cur, "normal_" + cur, "diffuse_raw", "rough_radiance" });
 	bindings.push_back(uniform(9, RD::UNIFORM_TYPE_IMAGE, texture("contact")));
+	// Пиксель с малым весом зондов добирает свет мирового кеша.
+	for (const RD::Uniform &entry : hash_bindings) {
+		bindings.push_back(entry);
+	}
 	r_sets.passes[INTEGRATE] = cached(kernels[INTEGRATE], bindings);
 	bindings.clear();
 	bindings.push_back(uniform(0, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.camera));
@@ -313,11 +321,13 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	int reflection_divisor = 1 << int(settings->get("reflection_resolution"));
 	int disabled = settings->get("disabled_blocks");
 	bool reflections = !(disabled & BLOCK_REFLECTIONS);
+	bool probes = !(disabled & BLOCK_SCREEN_PROBES);
 	bool reflection_history = v.frame > 0 && v.reflection_divisor == reflection_divisor && v.reflections;
 	v.reflection_divisor = reflection_divisor;
 	v.reflections = reflections;
 	if (!buffers->has_texture(SNAME("surface_cache"), SNAME("light_0")) || v.size != size) {
 		create_resources(v, buffers, size);
+		v.light_scheme = -1;
 	}
 	Projection projection = data->get_render_scene_data()->get_cam_projection();
 	Transform3D camera = data->get_render_scene_data()->get_cam_transform();
@@ -366,6 +376,12 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	matrix(p.inverse_matrices + 16, v.previous.inverse());
 	write_moves(p, moves);
 	p.limits[0] = settings->get("diffuse_history_seconds");
+	// Сдвиг TAA в NDC: по нему зонды берут точку под центром пикселя без сдвига и не дрожат вместе с TAA.
+	RenderSceneDataRD *scene_data = Object::cast_to<RenderSceneDataRD>(data->get_render_scene_data());
+	if (scene_data) {
+		p.limits[1] = scene_data->taa_jitter.x;
+		p.limits[2] = scene_data->taa_jitter.y;
+	}
 	device->buffer_update(v.camera, 0, sizeof(p), &p);
 	Sets &sets = v.sets[v.frame % 2];
 	RID key[] = { resources[0], resources[1], resources[2], resources[3], tlas, material_changes, buffers->get_depth_texture(0), buffers->get_texture(SNAME("forward_clustered"), SNAME("normal_roughness")) };
@@ -387,7 +403,7 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	// Без контакта проход пишет только глубину и поверхность пикселя; видимость без лучей — ноль лучей.
 	kernels[CONTACT].pixels(sets.passes[CONTACT], size);
 	mark("contact end", id, markers);
-	if (disabled & BLOCK_CONTACT) {
+	if ((disabled & BLOCK_CONTACT) || !probes) {
 		device->texture_clear(texture("contact"), Color(1, 0, 0, 0), 0, 1, 0, 1);
 		device->texture_clear(texture("contact_light"), Color(0, 0, 0, 0), 0, 1, 0, 1);
 	} else {
@@ -401,20 +417,38 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	mark("hash update end", id, markers);
 	world_hash->call("resolve");
 	mark("hash resolve end", id, markers);
-	kernels[PLACE].pixels(sets.passes[PLACE], v.grid);
-	mark("probe place end", id, markers);
 	int probe_count = v.grid.x * v.grid.y;
-	kernels[TRACE].dispatch(sets.passes[TRACE], nullptr, 0, Vector3i(probe_count, 1, 1));
-	mark("probe trace end", id, markers);
-	if (disabled & BLOCK_PROBE_FILTER) {
-		device->buffer_copy(v.light, v.filtered, 0, 0, probe_count * PROBE_LIGHT_BYTES);
-	} else {
-		kernels[FILTER].elements(sets.passes[FILTER], nullptr, 0, probe_count);
+	// Без экранных зондов свет пикселя — мировой кеш движка: нулевая глубина итога (surface_cache_inc), у отражений
+	// нет света зондов. При смене схемы история пикселя и отражений пуста: новая схема начинает со свежей оценки.
+	if (v.light_scheme != int(probes)) {
+		device->texture_clear(texture("gi"), Color(0, 0, 0, 0), 0, 1, 0, 1);
+		device->texture_clear(texture("light_0"), Color(0, 0, 0, 0), 0, 1, 0, 1);
+		device->texture_clear(texture("light_1"), Color(0, 0, 0, 0), 0, 1, 0, 1);
+		device->texture_clear(texture("rough_radiance"), Color(0, 0, 0, probes ? 0 : -1), 0, 1, 0, 1);
+		device->texture_clear(texture("reflection_0"), Color(0, 0, 0, 0), 0, 1, 0, 1);
+		device->texture_clear(texture("reflection_1"), Color(0, 0, 0, 0), 0, 1, 0, 1);
+		v.light_scheme = int(probes);
 	}
-	mark("probe filter end", id, markers);
-	kernels[INTEGRATE].dispatch(sets.passes[INTEGRATE], nullptr, 0, Vector3i(v.grid.x, v.grid.y, 1));
-	mark("integrate end", id, markers);
-	kernels[TEMPORAL].pixels(sets.passes[TEMPORAL], size);
+	if (probes) {
+		kernels[PLACE].pixels(sets.passes[PLACE], v.grid);
+		mark("probe place end", id, markers);
+		kernels[TRACE].dispatch(sets.passes[TRACE], nullptr, 0, Vector3i(probe_count, 1, 1));
+		mark("probe trace end", id, markers);
+		if (disabled & BLOCK_PROBE_FILTER) {
+			device->buffer_copy(v.light, v.filtered, 0, 0, probe_count * PROBE_LIGHT_BYTES);
+		} else {
+			kernels[FILTER].elements(sets.passes[FILTER], nullptr, 0, probe_count);
+		}
+		mark("probe filter end", id, markers);
+		kernels[INTEGRATE].dispatch(sets.passes[INTEGRATE], nullptr, 0, Vector3i(v.grid.x, v.grid.y, 1));
+		mark("integrate end", id, markers);
+		kernels[TEMPORAL].pixels(sets.passes[TEMPORAL], size);
+	} else {
+		mark("probe place end", id, markers);
+		mark("probe trace end", id, markers);
+		mark("probe filter end", id, markers);
+		mark("integrate end", id, markers);
+	}
 	mark("diffuse temporal end", id, markers);
 	mark("reflections begin", id, markers);
 	// Без отражений GI нулевая глубина итога отдаёт отражения движку.
