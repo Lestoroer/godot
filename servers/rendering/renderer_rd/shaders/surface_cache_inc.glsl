@@ -11,6 +11,8 @@ layout(set = 1, binding = 43) uniform texture2D surface_cache_reflection;
 const float SURFACE_CACHE_HASH_CELL = 0.08;
 const float SURFACE_CACHE_HASH_NEAR = 12.0;
 const float SURFACE_CACHE_HASH_ROOM_PROBE = 0.05;
+// Сдвиг слоёв ячеек вдоль главной оси грани в долях шага (HASH_LAYER_SHIFT игры).
+const float SURFACE_CACHE_HASH_LAYER_SHIFT = 0.37;
 const uint SURFACE_CACHE_HASH_PROBES = 8u;
 // Относительная погрешность глубины в half-float alpha — около 5e-4.
 const float SURFACE_CACHE_DEPTH_TOLERANCE = 2e-3;
@@ -61,6 +63,7 @@ bool surface_cache_hash_light(uvec2 key, out vec3 light) {
 
 bool surface_cache_hash_smooth(vec3 position, uint axis, uint tag, uint level, out vec3 light) {
 	vec3 scaled = position / (SURFACE_CACHE_HASH_CELL * float(1u << level));
+	scaled[axis] += SURFACE_CACHE_HASH_LAYER_SHIFT;
 	ivec3 cell = ivec3(floor(scaled));
 	uint u = (axis + 1u) % 3u, v = (axis + 2u) % 3u;
 	vec2 point = vec2(scaled[u], scaled[v]) - 0.5;
