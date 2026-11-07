@@ -148,6 +148,8 @@ static String geometry_key(const Dictionary &change) {
 
 void SurfaceCacheWorldRD::update_world() {
 	frame_moves.clear();
+	changed_instances = opacity_changed;
+	opacity_changed.clear();
 	if (buffers[MATERIAL_CHANGES].is_valid()) {
 		device->buffer_clear(buffers[MATERIAL_CHANGES], 0, 16);
 	}
@@ -215,11 +217,15 @@ void SurfaceCacheWorldRD::update_world() {
 		}
 	}
 	bool geometry_changed = false;
+	bool emitters_touched = false;
 	LocalVector<Instance *> dirty;
 	for (int i = 0; i < selected.size(); ++i) {
 		Dictionary change = selected[i];
 		RID source = change["instance"];
 		ChangeKind kind = change_kind(change);
+		for (const Emitter &emitter : emitters) {
+			emitters_touched |= emitter.instance == source;
+		}
 		if (kind == REMOVE) {
 			if (instances.has(source)) {
 				remove_instance(source);
@@ -250,6 +256,7 @@ void SurfaceCacheWorldRD::update_world() {
 			fail("Surface Cache does not support shader vertex displacement; use mesh, skin or morph geometry");
 			return;
 		}
+		changed_instances.insert(source);
 		if (kind == ADD) {
 			if (!add_instance(change, sources)) {
 				return;
@@ -302,6 +309,31 @@ void SurfaceCacheWorldRD::update_world() {
 	if (!ensure_capacity()) {
 		return;
 	}
+	// Изменившиеся в этом обновлении экземпляры: номер набора изменений — в записи поверхностей. Маску TLAS получают
+	// те, кому TLAS и так обновляется (геометрия, положение, непрозрачность, новые): у перекраски лучи меняет только
+	// поверхность, её ловит номер.
+	const uint32_t stamp = uint32_t(change_serial + 1);
+	HashSet<RID> masked;
+	for (const RID &source : changed_instances) {
+		Instance **found = instances.getptr(source);
+		if (found) {
+			(*found)->change_stamp = stamp;
+			if ((*found)->surfaces_written) {
+				write_surface_records(**found);
+			}
+			if (tlas_updates.has(source) || tlas_added.has(source)) {
+				masked.insert(source);
+			}
+		}
+	}
+	if (geometry_changed || !tlas.is_valid() || !tlas_updates.is_empty()) {
+		for (const RID &source : masked_instances) {
+			if (!masked.has(source) && instances.has(source)) {
+				tlas_updates.insert(source, true);
+			}
+		}
+		masked_instances = masked;
+	}
 	mark("SurfaceCache update begin", true);
 	for (Instance *state : dirty) {
 		if (!state->surfaces_written) {
@@ -334,7 +366,9 @@ void SurfaceCacheWorldRD::update_world() {
 		emitter_records = records;
 		active_emitters = emitter_count;
 		lights_dirty = true;
+		emitters_touched = true;
 	}
+	emitter_generation += emitters_touched ? 1 : 0;
 	if (lights_dirty) {
 		upload_lights();
 		lights_dirty = false;
@@ -344,6 +378,21 @@ void SurfaceCacheWorldRD::update_world() {
 	}
 	RenderingServer::get_singleton()->scenario_set_surface_cache_buffers(scenario, world_hash->call("engine_buffers"));
 	world_hash->call("note_changes", dirty_bounds, light_changes, sun_changed || sky_changed);
+	// Рамки копятся до сбора, который их принял (gather: get_transport_serial): обновление без отрисовки вида не теряет
+	// изменения. Слишком много рамок — их объединение: так проверка только строже.
+	for (int i = 0; i < dirty_bounds.size(); ++i) {
+		if (frame_changes.size() >= TRANSPORT_PENDING_LIMIT) {
+			AABB merged = frame_changes[0];
+			for (const AABB &bounds : frame_changes) {
+				merged = merged.merge(bounds);
+			}
+			frame_changes.clear();
+			frame_changes.push_back(merged);
+		}
+		frame_changes.push_back(dirty_bounds[i]);
+	}
+	// Номер набора изменений: растёт с каждым обновлением мира, и при загрузке, пока кадр мира ещё ноль.
+	++change_serial;
 	dirty_bounds.clear();
 	light_changes.clear();
 	sun_changed = false;
@@ -427,8 +476,14 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 	mark("SurfaceCache gather begin" + suffix, true);
 	uint64_t start = OS::get_singleton()->get_ticks_usec();
 	RID resources[] = { buffers[SURFACES], buffers[ORIENTATIONS], buffers[MATERIALS], buffers[LIGHTS] };
-	String result = gather->render(data, resources, tlas, profile, active_emitters + lights.size(), active_emitters, buffers[MATERIAL_CHANGES], frame_moves);
+	// Буферы зондов видов — под тем же лимитом памяти профиля, что буферы мира и захват.
+	const Vector2i capture_size = capture->get("size");
+	const uint64_t world_bytes = buffer_memory_bytes + uint64_t(capture_size.x) * capture_size.y * CAPTURE_TEXEL_BYTES;
+	String result = gather->render(data, resources, tlas, profile, active_emitters + lights.size(), active_emitters, buffers[MATERIAL_CHANGES], frame_moves, { change_serial, frame_changes, emitter_generation }, world_bytes);
 	counters.gather_ms += milliseconds(start);
+	if (gather->get_transport_serial() == change_serial) {
+		frame_changes.clear();
+	}
 	mark("SurfaceCache gather end" + suffix, true);
 	if (!gather->get_error().is_empty()) {
 		fail(gather->get_error());
@@ -583,7 +638,9 @@ bool SurfaceCacheWorldRD::ensure_capacity() {
 	uint32_t sizes[BUFFER_COUNT];
 	required_sizes(sizes);
 	uint64_t capture_bytes = uint64_t(capture_dimensions.x) * capture_dimensions.y * CAPTURE_TEXEL_BYTES;
-	uint64_t requested = capture_bytes;
+	// Мировой кеш и буферы зондов видов уже заняли свою часть того же лимита.
+	const uint64_t fixed_bytes = uint64_t(int64_t(world_hash->call("buffer_bytes"))) + (gather.is_valid() ? gather->get_probe_buffer_bytes() : 0);
+	uint64_t requested = capture_bytes + fixed_bytes;
 	for (uint32_t size : sizes) {
 		requested += size;
 	}
@@ -592,16 +649,22 @@ bool SurfaceCacheWorldRD::ensure_capacity() {
 		return fail(vformat("Surface Cache capacity exceeds the profile memory limit: %d MiB", (requested + 1048575) / 1048576));
 	}
 	uint32_t targets[BUFFER_COUNT];
-	uint64_t total = capture_bytes;
+	uint64_t total = capture_bytes + fixed_bytes;
 	for (int i = 0; i < BUFFER_COUNT; ++i) {
 		targets[i] = capacities[i] >= sizes[i] ? capacities[i] : page_size(MAX(sizes[i], capacities[i] * 3 / 2));
 		total += targets[i];
 	}
 	if (total > limit) {
+		// Без запаса роста — ровно нужное, округлённое до страницы; прежние буферы остаются своего размера.
+		total = capture_bytes + fixed_bytes;
 		for (int i = 0; i < BUFFER_COUNT; ++i) {
 			if (capacities[i] < sizes[i]) {
 				targets[i] = page_size(sizes[i]);
 			}
+			total += MAX(targets[i], capacities[i]);
+		}
+		if (total > limit) {
+			return fail(vformat("Surface Cache capacity exceeds the profile memory limit: %d MiB", (total + 1048575) / 1048576));
 		}
 	}
 	for (int i = 0; i < BUFFER_COUNT; ++i) {
@@ -699,12 +762,20 @@ void SurfaceCacheWorldRD::write_surfaces(Instance &state) {
 		}
 		geometry.orientation_bits.clear();
 	}
+	write_surface_records(state);
+	state.surfaces_written = true;
+}
+
+void SurfaceCacheWorldRD::write_surface_records(Instance &state) {
+	const Geometry &geometry = *state.shared;
+	LocalVector<int32_t> records;
+	records.resize(geometry.surfaces.size() * SURFACE_BYTES / 4);
 	for (uint32_t surface = 0; surface < geometry.surfaces.size(); ++surface) {
 		const Geometry::Surface &record = geometry.surfaces[surface];
-		const int32_t mapping[] = { record.orientation, record.orientation_bit, 0, 0, state.sides[surface], 0, 0, 0 };
-		device->buffer_update(buffers[SURFACES], (state.first_surface + surface) * SURFACE_BYTES, sizeof(mapping), mapping);
+		const int32_t mapping[] = { record.orientation, record.orientation_bit, 0, 0, state.sides[surface], int32_t(state.change_stamp), 0, 0 };
+		memcpy(records.ptr() + surface * SURFACE_BYTES / 4, mapping, SURFACE_BYTES);
 	}
-	state.surfaces_written = true;
+	device->buffer_update(buffers[SURFACES], state.first_surface * SURFACE_BYTES, records.size() * 4, records.ptr());
 }
 
 void SurfaceCacheWorldRD::capture_material(Instance &state) {
@@ -785,6 +856,7 @@ void SurfaceCacheWorldRD::write_tlas_instance(Instance &state) {
 	instance.blas = state.deformed ? state.blas : state.shared->blas;
 	instance.id = state.first_surface;
 	instance.transform = state.transform;
+	instance.mask = masked_instances.has(state.source) ? CHANGED_MASK : STATIC_MASK;
 	bool opaque = state.opaque.size() == state.shared->surfaces.size();
 	for (int i = 0; opaque && i < state.opaque.size(); ++i) {
 		opaque &= state.opaque[i] != 0;
@@ -836,19 +908,17 @@ void SurfaceCacheWorldRD::receive_opacity(const PackedByteArray &data, uint64_t 
 		state.opacity_serial = state.capture_serial;
 		PackedByteArray opaque;
 		opaque.resize(state.shared->surfaces.size());
-		bool lost = false;
 		for (int surface = 0; surface < opaque.size(); ++surface) {
 			uint32_t flags;
 			memcpy(&flags, data.ptr() + (state.first_surface + surface) * 4, 4);
 			opaque.set(surface, flags == 0);
-			lost |= surface < state.opaque.size() && state.opaque[surface] == 1 && opaque[surface] == 0;
 		}
 		if (opaque != state.opaque) {
 			state.opaque = opaque;
 			tlas_updates.insert(source, true);
-			if (lost) {
-				note_dirty(state.bounds);
-			}
+			// Транспорт зондов — при любой смене: и потерянная, и найденная непрозрачность меняет лучи через экземпляр.
+			opacity_changed.insert(source);
+			note_dirty(state.bounds);
 		}
 	}
 }
@@ -948,6 +1018,11 @@ void SurfaceCacheWorldRD::remove_instance(RID source) {
 	Instance *state = instances[source];
 	tlas_updates.erase(source);
 	note_dirty(state->bounds);
+	// Попадания в поверхности удалённого экземпляра устарели, пока их номера не займёт другой.
+	if (state->surfaces_written && buffers[SURFACES].is_valid()) {
+		state->change_stamp = uint32_t(change_serial + 1);
+		write_surface_records(*state);
+	}
 	RenderingServer::get_singleton()->instance_set_surface_cache_ids(source, PackedInt32Array());
 	triangle_total -= state->triangle_count;
 	surface_ranges.release(state->first_surface, state->shared->surfaces.size());
@@ -1029,6 +1104,7 @@ Dictionary SurfaceCacheWorldRD::get_metrics() const {
 	result["emitters"] = active_emitters;
 	result["cpu_submit_ms"] = cpu_submit_ms;
 	result["gpu_buffer_bytes"] = buffer_memory_bytes;
+	result["probe_buffer_bytes"] = gather.is_valid() ? gather->get_probe_buffer_bytes() : 0;
 	Vector2i size = capture->get("size");
 	result["capture_texture_bytes"] = uint64_t(size.x) * size.y * CAPTURE_TEXEL_BYTES;
 	return result;
@@ -1072,6 +1148,8 @@ Dictionary SurfaceCacheWorldRD::buffer_report() const {
 	Vector2i size = capture.is_valid() ? Vector2i(capture->get("size")) : Vector2i();
 	result["capture"] = uint64_t(size.x) * size.y * CAPTURE_TEXEL_BYTES;
 	result["world_hash"] = world_hash.is_valid() ? world_hash->call("buffer_bytes") : Variant(0);
+	// Мировые зонды видов: таблица, зонды, записи лучей и свет.
+	result["world_probes"] = gather.is_valid() ? gather->get_probe_buffer_bytes() : 0;
 	return result;
 }
 Dictionary SurfaceCacheWorldRD::get_probe_resources() const {
