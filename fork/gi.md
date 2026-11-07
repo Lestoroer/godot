@@ -29,7 +29,7 @@
   [light_storage.cpp](../servers/rendering/renderer_rd/storage_rd/light_storage.cpp),
   [utilities.h](../servers/rendering/storage/utilities.h).
 
-- **Экранный GI, отражения и история видов** —
+- **Мировые зонды, сбор света, отражения и история видов** —
   [surface_cache_gather.cpp](../modules/interior_surface_cache/surface_cache_gather.cpp),
   [surface_cache_gather.h](../modules/interior_surface_cache/surface_cache_gather.h),
   [surface_cache_inc.glsl](../servers/rendering/renderer_rd/shaders/surface_cache_inc.glsl),
