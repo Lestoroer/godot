@@ -59,6 +59,13 @@ class SurfaceCacheWorldRD : public RefCounted {
 		RID blas;
 		int tlas_index = -1;
 	};
+	// Светящийся прямоугольник, который зарегистрировал владелец сцены: rect — в осях экземпляра, начало — центр,
+	// столбцы базиса — половины сторон и нормаль излучающей стороны.
+	struct Emitter {
+		RID instance;
+		int surface = 0;
+		Transform3D rect;
+	};
 	struct Counters {
 		int64_t captures = 0, geometry_updates = 0, blas_builds = 0, tlas_builds = 0, layouts = 0;
 		double frame_ms = 0, layouts_ms = 0, captures_ms = 0, tlas_ms = 0, gather_ms = 0;
@@ -71,6 +78,9 @@ class SurfaceCacheWorldRD : public RefCounted {
 	HashMap<RID, Instance *> instances;
 	HashMap<String, Geometry *> geometries;
 	HashMap<RID, PackedByteArray> lights;
+	LocalVector<Emitter> emitters;
+	PackedByteArray emitter_records;
+	int active_emitters = 0;
 	SurfaceCache::Ranges surface_ranges, orientation_ranges;
 	int64_t triangle_total = 0;
 	RID buffers[BUFFER_COUNT];
@@ -131,6 +141,7 @@ class SurfaceCacheWorldRD : public RefCounted {
 	void write_tlas_instance(Instance &r_state);
 	void remove_tlas_instance(Instance &r_state);
 	PackedByteArray encode_light(const Dictionary &p_light);
+	PackedByteArray encode_emitters(int &r_count) const;
 	void note_light_change(const PackedByteArray &p_previous, const PackedByteArray &p_current);
 	void note_dirty(const AABB &p_bounds);
 	void upload_lights();
@@ -142,9 +153,12 @@ class SurfaceCacheWorldRD : public RefCounted {
 
 public:
 	static constexpr int CAPTURE_TEXEL_BYTES = 52;
+	// Ограничивает перебор прямоугольников в каждом зонде: веса выбора лежат в общей памяти группы.
+	static constexpr int MAX_EMITTERS = 64;
 	void attach(RID p_world, const Ref<Resource> &p_settings);
 	void update_profile(const Ref<Resource> &p_settings);
 	void set_rooms(const Array &p_rooms);
+	void set_emitters(const Array &p_emitters);
 	void dispose();
 	String get_error() const { return error; }
 	Dictionary get_metrics() const;

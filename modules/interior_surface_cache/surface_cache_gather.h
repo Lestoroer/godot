@@ -12,8 +12,19 @@ public:
 	};
 	// Лимит ограничивает проверки на пиксель; объединение сохраняет кадр самого свежего изменения.
 	enum { VIEW_CHANGES = 4,
-		VIEW_MOVED = 8,
-		CHANGE_FRAMES = 120 };
+		VIEW_MOVED = 8 };
+	// Сколько секунд вид держит область изменения: столько отражение пути через неё укорочено.
+	static constexpr double CHANGE_SECONDS = 0.13;
+	// Биты поля профиля disabled_blocks в порядке его флагов (surface_cache_profile.gd). Выключенный блок не
+	// считается, следующие проходы получают его нейтральный результат; биты историй шейдеры читают из
+	// GatherView.temporal.x (cache_types).
+	enum Block { BLOCK_REFLECTIONS = 1,
+		BLOCK_CONTACT = 2,
+		BLOCK_PROBE_FILTER = 4,
+		BLOCK_CACHE_UPDATE = 8,
+		BLOCK_DIFFUSE_HISTORY = 16,
+		BLOCK_REFLECTION_HISTORY = 32 };
+	static constexpr uint32_t PROBE_META_BYTES = 32, PROBE_LIGHT_BYTES = 144;
 
 private:
 	enum Pass { PLACE,
@@ -21,7 +32,7 @@ private:
 		FILTER,
 		INTEGRATE,
 		CONTACT,
-		CONTACT_TEMPORAL,
+		CONTACT_FILTER,
 		TEMPORAL,
 		REFLECTION,
 		REFLECTION_TEMPORAL,
@@ -39,14 +50,14 @@ private:
 		Vector2i size, grid;
 		int frame = 0;
 		int reflection_divisor = 1;
+		bool reflections = false;
 		Projection previous;
 		Transform3D previous_camera;
 		Sets sets[2];
 	};
 	struct Change {
 		AABB bounds;
-		int64_t frame = 0;
-		float history = 1e30f;
+		double time = 0.0;
 	};
 	struct Parameters {
 		float matrices[48];
@@ -63,11 +74,15 @@ private:
 		int32_t move_count[4];
 		float moves[VIEW_MOVED][20];
 		float limits[4];
+		float time[4];
 	};
-	static_assert(sizeof(Parameters) == 304 + VIEW_CHANGES * 32 + 128 + 16 + VIEW_MOVED * 80 + 16);
+	static_assert(sizeof(Parameters) == 304 + VIEW_CHANGES * 32 + 128 + 16 + VIEW_MOVED * 80 + 32);
 	HashMap<ObjectID, View *> views;
 	LocalVector<Change> changes;
 	int64_t changes_frame = -1;
+	// Часы вида и время последней смены солнца или неба: она меняет свет всего мира.
+	double clock = 0.0;
+	double world_light_time = -1e30;
 	RD *device = nullptr;
 	Ref<RefCounted> world_hash;
 	SurfaceCache::Kernel kernels[PASS_COUNT];
@@ -78,7 +93,7 @@ private:
 	void create_resources(View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, Vector2i p_size);
 	void build_sets(Sets &r_sets, View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, int p_current, Span<RID> p_resources, RID p_tlas, RID p_changes, bool p_diagnostics);
 	bool sets_valid(const Sets &p_sets) const;
-	void take_changes(int64_t p_frame);
+	void take_changes(double p_now);
 	void write_changes(Parameters &r_parameters);
 	void write_moves(Parameters &r_parameters, const LocalVector<Motion> &p_moves);
 	void mark(const char *p_name, ObjectID p_view, bool p_enabled);
@@ -87,7 +102,7 @@ private:
 public:
 	static constexpr int VIEW_BYTES = sizeof(Parameters);
 	bool initialize(RenderingDevice *p_device, const Ref<RefCounted> &p_world_hash);
-	String render(RenderData *p_data, Span<RID> p_resources, RID p_tlas, const Ref<Resource> &p_settings, int p_light_count, RID p_material_changes, const LocalVector<Motion> &p_moves);
+	String render(RenderData *p_data, Span<RID> p_resources, RID p_tlas, const Ref<Resource> &p_settings, int p_light_count, int p_emitter_count, RID p_material_changes, const LocalVector<Motion> &p_moves);
 	void dispose();
 	String get_error() const { return error; }
 	Array get_probe_views() const;
