@@ -130,7 +130,6 @@ class SurfaceCacheWorldRD : public RefCounted {
 	void write_surface_records(Instance &r_state);
 	// Поколение источников-прямоугольников: меняется вместе с их записями (число, порядок, место, размер) и с любым
 	// изменением экземпляра, у которого есть источник (материал — его свечение).
-	uint32_t emitter_generation = 0;
 	Array opacity_states;
 	bool initialized = false, disposed = false, opacity_pending = false, opacity_requested = false;
 	uint64_t capture_serial = 0, next_generation = 0;

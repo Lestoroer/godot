@@ -217,15 +217,11 @@ void SurfaceCacheWorldRD::update_world() {
 		}
 	}
 	bool geometry_changed = false;
-	bool emitters_touched = false;
 	LocalVector<Instance *> dirty;
 	for (int i = 0; i < selected.size(); ++i) {
 		Dictionary change = selected[i];
 		RID source = change["instance"];
 		ChangeKind kind = change_kind(change);
-		for (const Emitter &emitter : emitters) {
-			emitters_touched |= emitter.instance == source;
-		}
 		if (kind == REMOVE) {
 			if (instances.has(source)) {
 				remove_instance(source);
@@ -366,9 +362,7 @@ void SurfaceCacheWorldRD::update_world() {
 		emitter_records = records;
 		active_emitters = emitter_count;
 		lights_dirty = true;
-		emitters_touched = true;
 	}
-	emitter_generation += emitters_touched ? 1 : 0;
 	if (lights_dirty) {
 		upload_lights();
 		lights_dirty = false;
@@ -479,7 +473,7 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 	// Буферы зондов видов — под тем же лимитом памяти профиля, что буферы мира и захват.
 	const Vector2i capture_size = capture->get("size");
 	const uint64_t world_bytes = buffer_memory_bytes + uint64_t(capture_size.x) * capture_size.y * CAPTURE_TEXEL_BYTES;
-	String result = gather->render(data, resources, tlas, profile, active_emitters + lights.size(), active_emitters, buffers[MATERIAL_CHANGES], frame_moves, { change_serial, frame_changes, emitter_generation }, world_bytes);
+	String result = gather->render(data, resources, tlas, profile, active_emitters + lights.size(), active_emitters, buffers[MATERIAL_CHANGES], frame_moves, { change_serial, frame_changes }, world_bytes);
 	counters.gather_ms += milliseconds(start);
 	if (gather->get_transport_serial() == change_serial) {
 		frame_changes.clear();
