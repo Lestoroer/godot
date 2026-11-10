@@ -52,6 +52,8 @@ class SurfaceCacheWorldRD : public RefCounted {
 		Transform3D transform;
 		PackedInt32Array sides;
 		bool deformed = false;
+		// Экземпляр «только тени»: камера его не видит.
+		bool camera_hidden = false;
 		bool surfaces_written = false, geometry_dirty = true, pose_dirty = true, capture_dirty = true;
 		uint64_t capture_serial = 0, opacity_serial = 0;
 		PackedByteArray opaque;
@@ -120,17 +122,17 @@ class SurfaceCacheWorldRD : public RefCounted {
 	// непрозрачностью или новые — в последнем обновлении, которое строило TLAS. Транспорт зондов находит новые перекрытия
 	// запросом только по ним и продолжение луча — только по прежним; прочие лучи GI берут все биты. Маска снимается в
 	// следующую такую же стройку, а не отдельной: без изменений проверки транспорта нет, а лишняя маска делает её только
-	// строже.
+	// строже. У экземпляра, скрытого от камеры (Instance::camera_hidden), те же биты сдвинуты на HIDDEN_MASK_SHIFT: лучи
+	// ближней зоны пикселя берут только видимые (cache_trace шейдеров: CACHE_VISIBLE_MASK).
 	HashSet<RID> masked_instances;
 	// Экземпляры, чья точная непрозрачность пришла между обновлениями и изменилась: следующее обновление считает их
 	// изменившимися — флаги TLAS у них другие, сохранённые лучи через них устарели.
 	HashSet<RID> opacity_changed;
-	static constexpr uint8_t CHANGED_MASK = 2, STATIC_MASK = 1;
+	static constexpr uint8_t CHANGED_MASK = 2, STATIC_MASK = 1, HIDDEN_MASK_SHIFT = 2;
 	// Записи поверхностей экземпляра (CacheSurface) с нынешним номером изменения — одной командой.
 	void write_surface_records(Instance &r_state);
 	// Поколение источников-прямоугольников: меняется вместе с их записями (число, порядок, место, размер) и с любым
 	// изменением экземпляра, у которого есть источник (материал — его свечение).
-	uint32_t emitter_generation = 0;
 	Array opacity_states;
 	bool initialized = false, disposed = false, opacity_pending = false, opacity_requested = false;
 	uint64_t capture_serial = 0, next_generation = 0;

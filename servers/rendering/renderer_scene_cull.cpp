@@ -658,6 +658,8 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 				data["light_params"] = params;
 			} else {
 				data["deformed"] = instance->mesh_instance.is_valid();
+				// Геометрия «только тени» скрыта от камеры: GI не затеняет ею вплотную то, что камера видит. lestoroer#gi
+				data["camera_hidden"] = instance->cast_shadows == RSE::SHADOW_CASTING_SETTING_SHADOWS_ONLY;
 				data["mesh_revision"] = RSG::mesh_storage->mesh_get_geometry_revision(instance->base);
 				bool displacement = RSG::material_storage->material_has_shader_displacement(instance->material_overlay);
 				if (instance->material_override.is_valid()) {

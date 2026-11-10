@@ -30,9 +30,10 @@ bool SurfaceCacheGatherRD::initialize(RenderingDevice *p_device, const Ref<RefCo
 	const uint64_t subgroup_operations = p_device->limit_get(RD::LIMIT_SUBGROUP_OPERATIONS);
 	const uint64_t smallest_subgroup = MIN(p_device->limit_get(RD::LIMIT_SUBGROUP_MIN_SIZE), p_device->limit_get(RD::LIMIT_SUBGROUP_SIZE));
 	const uint64_t needed_operations = RD::SUBGROUP_BASIC_BIT | RD::SUBGROUP_ARITHMETIC_BIT;
-	subgroup_sums = (subgroup_stages & RD::SHADER_STAGE_COMPUTE_BIT) && (subgroup_operations & needed_operations) == needed_operations && smallest_subgroup >= 4;	// Ореол фильтра — вариант запроса, лучи и свет кадра — варианты одного шаблона.
+	subgroup_sums = (subgroup_stages & RD::SHADER_STAGE_COMPUTE_BIT) && (subgroup_operations & needed_operations) == needed_operations && smallest_subgroup >= 4;
+	// Ореол фильтра — вариант запроса, лучи и свет кадра — варианты одного шаблона.
 	const char *names[PASS_COUNT] = { "reflection_gather", "reflection_temporal", "world_probe_request", "world_probe_request", "world_probe_check", "world_probe_trace", "world_probe_trace",
-		"world_probe_filter", "world_probe_integrate", "world_probe_evict" };
+		"world_probe_filter", "pixel_light_sample", "pixel_light_gather", "pixel_light_resolve", "world_probe_evict" };
 	PackedStringArray reader = world_hash->call("reader_defines");
 	for (int i = 0; i < PASS_COUNT; ++i) {
 		PackedStringArray defines;
@@ -66,11 +67,13 @@ bool SurfaceCacheGatherRD::initialize(RenderingDevice *p_device, const Ref<RefCo
 void SurfaceCacheGatherRD::create_resources(View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, Vector2i p_size) {
 	ScopeTimer timer(resource_ms);
 	p_buffers->clear_context(SNAME("surface_cache"));
-	const char *textures[] = { "light_0", "light_1", "depth_0", "depth_1", "normal_0", "normal_1", "diffuse_raw", "rough_radiance", "gi", "reflection_raw", "reflection_0", "reflection_1", "reflection_material_0", "reflection_material_1", "reflection" };
+	// История пикселя (pixel_light_gather): закрытость и свет ближних препятствий; emitter — свет прямоугольников без
+	// тени в этом кадре.
+	const char *textures[] = { "occlusion_0", "occlusion_1", "near_0", "near_1", "emitter", "depth_0", "depth_1", "normal_0", "normal_1", "far_light", "rough_radiance", "gi", "reflection_raw", "reflection_0", "reflection_1", "reflection_material_0", "reflection_material_1", "reflection" };
 	for (const char *name : textures) {
 		String texture_name(name);
 		RD::DataFormat format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
-		if (texture_name == "light_0" || texture_name == "light_1" || texture_name == "reflection_0" || texture_name == "reflection_1") {
+		if (texture_name == "reflection_0" || texture_name == "reflection_1") {
 			format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
 		} else if (texture_name.begins_with("depth_")) {
 			format = RD::DATA_FORMAT_R32_SFLOAT;
@@ -80,6 +83,12 @@ void SurfaceCacheGatherRD::create_resources(View &r_view, const Ref<RenderSceneB
 				RD::TEXTURE_SAMPLES_1, p_size, 1, 1, true, false);
 		device->texture_clear(texture, Color(0, 0, 0, 0), 0, 1, 0, 1);
 	}
+	if (r_view.block_samples.is_valid()) {
+		device->free_rid(r_view.block_samples);
+	}
+	const uint64_t block_bytes = uint64_t((p_size.x + 1) / 2) * ((p_size.y + 1) / 2) * BLOCK_SAMPLE_BYTES;
+	r_view.block_samples = device->storage_buffer_create(block_bytes);
+	device->buffer_clear(r_view.block_samples, 0, block_bytes);
 	r_view.size = p_size;
 	r_view.frame = 0;
 	// Номера кадров мировых зондов (кадр использования, проверки, изменения) идут от кадра вида: с ним начинается и
@@ -90,19 +99,19 @@ void SurfaceCacheGatherRD::create_resources(View &r_view, const Ref<RenderSceneB
 	r_view.sets[1] = Sets();
 }
 
-uint32_t SurfaceCacheGatherRD::world_pool_for(Vector2i p_size, float p_spacing) {
-	const double cells = double(p_size.x) * p_size.y / (double(p_spacing) * p_spacing);
-	return MAX(Math::nearest_power_of_2_templated(uint32_t(Math::ceil(cells * WORLD_POOL_PER_CELL))), WORLD_POOL_MINIMUM);
+uint32_t SurfaceCacheGatherRD::world_pool_for(Vector2i p_size) {
+	const uint32_t probes = uint32_t(uint64_t(p_size.x) * p_size.y / WORLD_POOL_PIXELS);
+	return CLAMP(Math::nearest_power_of_2_templated(probes), WORLD_POOL_MINIMUM, WORLD_POOL_MAXIMUM);
 }
 
 uint64_t SurfaceCacheGatherRD::world_buffer_bytes(uint32_t p_pool, uint32_t p_table) {
-	const uint64_t per_probe = WORLD_INTERPOLATION_BYTES + WORLD_PIXEL_LIGHT_BYTES + WORLD_PROBE_BYTES + WORLD_RAYS * (WORLD_RAY_BYTES + WORLD_EMITTER_BYTES) + WORLD_LIGHT_BYTES + 12;
+	const uint64_t per_probe = WORLD_INTERPOLATION_BYTES + WORLD_PIXEL_LIGHT_BYTES + WORLD_PROBE_BYTES + WORLD_RAYS * WORLD_RAY_BYTES + WORLD_LIGHT_BYTES + 12;
 	return uint64_t(p_table) * WORLD_TABLE_SLOT_BYTES + uint64_t(p_pool) * per_probe + WORLD_HEADER_WORDS * 4 + 48 + sizeof(TransportParameters);
 }
 
-// Буферы мировых зондов вида — по его размеру и шагу зондов; при их смене — заново, с пустым кешем.
-bool SurfaceCacheGatherRD::create_world_resources(View &r_view, float p_spacing, int64_t p_budget) {
-	const uint32_t pool = world_pool_for(r_view.size, p_spacing);
+// Буферы мировых зондов вида — по его размеру; при его смене — заново, с пустым кешем.
+bool SurfaceCacheGatherRD::create_world_resources(View &r_view, int64_t p_budget) {
+	const uint32_t pool = world_pool_for(r_view.size);
 	const uint32_t table = pool * WORLD_TABLE_PER_PROBE;
 	const int64_t bytes = int64_t(world_buffer_bytes(pool, table));
 	// Лимит проверяется каждый кадр: мир мог вырасти и после создания буферов зондов.
@@ -111,17 +120,17 @@ bool SurfaceCacheGatherRD::create_world_resources(View &r_view, float p_spacing,
 		ERR_PRINT(error);
 		return false;
 	}
-	if (r_view.world_tags.is_valid() && pool == r_view.world_pool && p_spacing == r_view.world_spacing) {
+	if (r_view.world_tags.is_valid() && pool == r_view.world_pool) {
 		return true;
 	}
 	ScopeTimer timer(resource_ms);
 	free_world_resources(r_view);
-	RID *buffers[] = { &r_view.world_tags, &r_view.world_slots, &r_view.world_keys, &r_view.world_probes, &r_view.world_rays, &r_view.world_emitters, &r_view.world_light, &r_view.world_work };
-	// Таблица ключей, опоры зондов для пикселей, свет зондов для пикселей (half), зонды, записи лучей и выборок
-	// источников, свет зондов кадра; работа — заголовок и списки лучей, света и свободных зондов.
+	RID *buffers[] = { &r_view.world_tags, &r_view.world_slots, &r_view.world_keys, &r_view.world_probes, &r_view.world_rays, &r_view.world_light, &r_view.world_work };
+	// Таблица ключей, опоры зондов для пикселей, свет зондов для пикселей (half), зонды, записи лучей, свет зондов
+	// кадра; работа — заголовок и списки лучей, света и свободных зондов.
 	const uint64_t sizes[] = { uint64_t(table) * WORLD_TABLE_SLOT_BYTES, uint64_t(pool) * WORLD_INTERPOLATION_BYTES, uint64_t(pool) * WORLD_PIXEL_LIGHT_BYTES, uint64_t(pool) * WORLD_PROBE_BYTES,
-		uint64_t(pool) * WORLD_RAYS * WORLD_RAY_BYTES, uint64_t(pool) * WORLD_RAYS * WORLD_EMITTER_BYTES, uint64_t(pool) * WORLD_LIGHT_BYTES, uint64_t(WORLD_HEADER_WORDS) * 4 + uint64_t(pool) * 12 };
-	for (int i = 0; i < 8; ++i) {
+		uint64_t(pool) * WORLD_RAYS * WORLD_RAY_BYTES, uint64_t(pool) * WORLD_LIGHT_BYTES, uint64_t(WORLD_HEADER_WORDS) * 4 + uint64_t(pool) * 12 };
+	for (int i = 0; i < 7; ++i) {
 		*buffers[i] = device->storage_buffer_create(sizes[i]);
 		device->buffer_clear(*buffers[i], 0, sizes[i]);
 	}
@@ -129,7 +138,6 @@ bool SurfaceCacheGatherRD::create_world_resources(View &r_view, float p_spacing,
 	r_view.world_transport = device->storage_buffer_create(sizeof(TransportParameters));
 	r_view.world_pool = pool;
 	r_view.world_table = table;
-	r_view.world_spacing = p_spacing;
 	r_view.world_reset = true;
 	// Наборы ссылаются на прежние буферы.
 	r_view.sets[0] = Sets();
@@ -138,7 +146,7 @@ bool SurfaceCacheGatherRD::create_world_resources(View &r_view, float p_spacing,
 }
 
 void SurfaceCacheGatherRD::free_world_resources(View &r_view) {
-	for (RID *rid : { &r_view.world_tags, &r_view.world_slots, &r_view.world_keys, &r_view.world_probes, &r_view.world_rays, &r_view.world_emitters, &r_view.world_light, &r_view.world_work, &r_view.world_args, &r_view.world_transport }) {
+	for (RID *rid : { &r_view.world_tags, &r_view.world_slots, &r_view.world_keys, &r_view.world_probes, &r_view.world_rays, &r_view.world_light, &r_view.world_work, &r_view.world_args, &r_view.world_transport }) {
 		if (rid->is_valid()) {
 			device->free_rid(*rid);
 			*rid = RID();
@@ -185,7 +193,7 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	scene.push_back(sampled(8, sampler, buffers->get_depth_texture(0)));
 	RID normals = buffers->get_texture(SNAME("forward_clustered"), SNAME("normal_roughness"));
 	scene.push_back(sampled(9, sampler, normals));
-	const String outputs[] = { "diffuse_raw", "depth_" + cur, "normal_" + cur, "reflection_material_" + cur };
+	const String outputs[] = { "far_light", "depth_" + cur, "normal_" + cur, "reflection_material_" + cur };
 	for (int i = 0; i < 4; ++i) {
 		scene.push_back(uniform(10 + i, RD::UNIFORM_TYPE_IMAGE, texture(outputs[i])));
 	}
@@ -206,19 +214,24 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	replace(scene, uniform(14, RD::UNIFORM_TYPE_STORAGE_BUFFER, diagnostics ? v.stats : pass_stats[1]));
 	// Общий набор проходов мировых зондов: каждый берёт из него свои привязки.
 	LocalVector<RD::Uniform> world(scene);
-	const RID world_buffers[] = { v.world_tags, v.world_slots, v.world_keys, v.world_probes, v.world_rays, v.world_emitters, v.world_light, v.world_work, v.world_transport };
-	const uint32_t world_bindings[] = { 50, 51, 52, 53, 54, 55, 56, 58, 59 };
-	for (int i = 0; i < 9; ++i) {
+	const RID world_buffers[] = { v.world_tags, v.world_slots, v.world_keys, v.world_probes, v.world_rays, v.world_light, v.world_work, v.world_transport };
+	const uint32_t world_bindings[] = { 50, 51, 52, 53, 54, 56, 58, 59 };
+	for (int i = 0; i < 8; ++i) {
 		world.push_back(uniform(world_bindings[i], RD::UNIFORM_TYPE_STORAGE_BUFFER, world_buffers[i]));
 	}
 	world.push_back(uniform(22, RD::UNIFORM_TYPE_IMAGE, texture("rough_radiance")));
-	// История света — в сборке света зондов (world_probe_integrate: diffuse_history).
-	const String history[] = { "light_" + prev, "depth_" + prev, "normal_" + prev, "light_" + cur, "gi" };
+	// История пикселя — в сборе его света (pixel_light_gather), её свежая половина — и в сведении (pixel_light_resolve).
+	const String history[] = { "occlusion_" + prev, "depth_" + prev, "normal_" + prev, "occlusion_" + cur, "gi" };
 	for (int i = 0; i < 5; ++i) {
 		world.push_back(uniform(60 + i, RD::UNIFORM_TYPE_IMAGE, texture(history[i])));
 	}
 	world.push_back(uniform(65, RD::UNIFORM_TYPE_STORAGE_BUFFER, material_changes));
 	world.push_back(uniform(66, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.emission_change));
+	const String pixel_light[] = { "near_" + prev, "near_" + cur, "emitter" };
+	for (int i = 0; i < 3; ++i) {
+		world.push_back(uniform(67 + i, RD::UNIFORM_TYPE_IMAGE, texture(pixel_light[i])));
+	}
+	world.push_back(uniform(70, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.block_samples));
 	for (int pass = WORLD_REQUEST; pass < PASS_COUNT; ++pass) {
 		r_sets.passes[pass] = cached(kernels[pass], world);
 	}
@@ -397,7 +410,6 @@ void SurfaceCacheGatherRD::write_transport(View &v, TransportParameters &p, cons
 			transport_log.resize(TRANSPORT_LOG);
 		}
 	}
-	p.counts[2] = transport.emitter_generation;
 	// События, которые вид ещё не передал: старше начала журнала — потеряны, устарели все его зонды; рамки им не нужны.
 	const uint64_t first = transport_log.is_empty() ? transport_events + 1 : transport_log[0].number;
 	p.counts[3] = v.transport_consumed + 1 < first && v.transport_consumed < transport_events ? 1 : 0;
@@ -430,7 +442,6 @@ void SurfaceCacheGatherRD::write_transport(View &v, TransportParameters &p, cons
 	v.transport_last_serial = transport.serial;
 	p.sizes[0] = v.world_pool;
 	p.sizes[1] = v.world_table;
-	memcpy(&p.sizes[2], &v.world_spacing, sizeof(float));
 }
 
 String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID tlas, const Ref<Resource> &settings, int light_count, int emitter_count, RID material_changes, const LocalVector<Motion> &moves, const Transport &transport, uint64_t world_bytes) {
@@ -475,16 +486,15 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	bool reflection_history = v.frame > 0 && v.reflection_divisor == reflection_divisor && v.reflections;
 	v.reflection_divisor = reflection_divisor;
 	v.reflections = reflections;
-	if (!buffers->has_texture(SNAME("surface_cache"), SNAME("light_0")) || v.size != size) {
+	if (!buffers->has_texture(SNAME("surface_cache"), SNAME("occlusion_0")) || v.size != size) {
 		create_resources(v, buffers, size);
-		v.light_scheme = -1;
 	}
 	// Буферы зондов этого вида — под лимитом памяти профиля вместе с буферами мира и зондами прочих видов; свои нынешние
 	// буферы вид заменяет.
 	const int64_t limit = int64_t(int(settings->get("memory_limit_mib"))) * 1024 * 1024;
 	const int64_t own = v.world_tags.is_valid() ? int64_t(world_buffer_bytes(v.world_pool, v.world_table)) : 0;
 	const int64_t others = int64_t(get_probe_buffer_bytes()) - own;
-	if (!create_world_resources(v, float(settings->get("probe_spacing_pixels")), limit - int64_t(world_bytes) - others)) {
+	if (!create_world_resources(v, limit - int64_t(world_bytes) - others)) {
 		return String();
 	}
 	Projection projection = data->get_render_scene_data()->get_cam_projection();
@@ -516,6 +526,7 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	p.time[0] = delta;
 	p.history[0] = light_count;
 	p.history[1] = v.frame > 0;
+	p.history[2] = bool(settings->get("reference"));
 	p.history[3] = diagnostics;
 	p.reflection[0] = disabled;
 	p.reflection[1] = settings->get("reflection_samples");
@@ -529,6 +540,18 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	matrix(p.inverse_matrices + 16, v.previous.inverse());
 	write_moves(p, moves);
 	p.limits[0] = settings->get("diffuse_history_seconds");
+	// Выборки лучей блока — на заданной частоте в секунду: при частоте кадров выше блоки пускают лучи раз в период
+	// кадров. Период — по сглаженной длительности кадра и меняется с запасом: у границы он не скачет от кадра к кадру.
+	// Длинный кадр (загрузка, рывок) в сглаживание входит не длиннее 50 мс: иначе период долго помнил бы его.
+	v.smoothed_delta = v.smoothed_delta > 0.0 ? Math::lerp(v.smoothed_delta, MIN(delta, 0.05), 0.1) : MIN(delta, 0.05);
+	const double ray_rate = settings->get("ray_rate");
+	const double frames_per_sample = ray_rate > 0.0 ? 1.0 / (ray_rate * v.smoothed_delta) : 1.0;
+	int period = MAX(1, int(Math::floor(frames_per_sample)));
+	if ((period > v.sample_period && frames_per_sample < period + 0.15) || (period < v.sample_period && frames_per_sample > v.sample_period - 0.15)) {
+		period = v.sample_period;
+	}
+	v.sample_period = CLAMP(period, 1, 8);
+	p.limits[3] = v.sample_period;
 	// Сдвиг TAA в NDC: по нему точки пикселей берутся под центром пикселя без сдвига и не дрожат вместе с TAA.
 	RenderSceneDataRD *scene_data = Object::cast_to<RenderSceneDataRD>(data->get_render_scene_data());
 	if (scene_data) {
@@ -563,17 +586,7 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	mark("hash update end", id, markers);
 	world_hash->call("resolve");
 	mark("hash resolve end", id, markers);
-	// Без зондов свет пикселя — мировой кеш движка: нулевая глубина итога (surface_cache_inc), у отражений нет света
-	// зондов. При смене схемы история пикселя и отражений пуста: новая схема начинает со свежей оценки.
-	if (v.light_scheme != int(probes)) {
-		device->texture_clear(texture("gi"), Color(0, 0, 0, 0), 0, 1, 0, 1);
-		device->texture_clear(texture("light_0"), Color(0, 0, 0, 0), 0, 1, 0, 1);
-		device->texture_clear(texture("light_1"), Color(0, 0, 0, 0), 0, 1, 0, 1);
-		device->texture_clear(texture("rough_radiance"), Color(0, 0, 0, probes ? 0 : -1), 0, 1, 0, 1);
-		device->texture_clear(texture("reflection_0"), Color(0, 0, 0, 0), 0, 1, 0, 1);
-		device->texture_clear(texture("reflection_1"), Color(0, 0, 0, 0), 0, 1, 0, 1);
-		v.light_scheme = int(probes);
-	}
+	// Без зондов (BLOCK_PROBES) пиксель остаётся без отражённого света издалека: свет зондов прошлых кадров не годен.
 	if (probes) {
 		// Мировые зонды: запрос клеток пикселями (новые — в список лучей, отмеченные — в список света), ореол фильтра,
 		// проверка транспорта по изменениям мира, лучи, свет кадра из записей, фильтр.
@@ -636,9 +649,16 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 		Callable callback = callable_mp(this, &SurfaceCacheGatherRD::receive_world_header).bind(id);
 		device->buffer_get_data_async(v.world_work, callback, 0, WORLD_HEADER_WORDS * 4);
 	}
-	// Свет пикселей с историей и их глубина с поверхностью; без зондов — только глубина и поверхность для отражений.
-	kernels[WORLD_INTEGRATE].pixels(sets.passes[WORLD_INTEGRATE], size);
-	mark("integrate end", id, markers);
+	// Свет пикселей: выборки лучей — поток на блок 2 × 2 пикселя, затем их накопление в каждом пикселе и сведение с
+	// фильтром по соседям в итог для движка. Блок пускает лучи раз в период кадров, и потоки запускаются только для
+	// блоков этого кадра: каждой period-й их группы в строке (pixel_sample шейдеров: sampled_block).
+	const Vector2i block_groups((size.x + 15) / 16, (size.y + 15) / 16);
+	kernels[PIXEL_SAMPLE].dispatch(sets.passes[PIXEL_SAMPLE], nullptr, 0, Vector3i((block_groups.x + v.sample_period - 1) / v.sample_period, block_groups.y, 1));
+	mark("pixel sample end", id, markers);
+	kernels[PIXEL_GATHER].pixels(sets.passes[PIXEL_GATHER], size);
+	mark("pixel gather end", id, markers);
+	kernels[PIXEL_RESOLVE].pixels(sets.passes[PIXEL_RESOLVE], size);
+	mark("pixel resolve end", id, markers);
 	mark("reflections begin", id, markers);
 	// Без отражений GI нулевая глубина итога отдаёт отражения движку.
 	if (reflections) {
@@ -659,7 +679,7 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 
 void SurfaceCacheGatherRD::free_view(View *view) {
 	free_world_resources(*view);
-	for (RID rid : { view->camera, view->emission_change, view->stats }) {
+	for (RID rid : { view->camera, view->emission_change, view->stats, view->block_samples }) {
 		if (rid.is_valid()) {
 			device->free_rid(rid);
 		}
@@ -718,7 +738,6 @@ Array SurfaceCacheGatherRD::get_probe_views() const {
 			state["world_work"] = v.world_work;
 			state["world_probes"] = v.world_probes;
 			state["world_rays"] = v.world_rays;
-			state["world_emitters"] = v.world_emitters;
 			state["world_pool"] = v.world_pool;
 		}
 		result.push_back(state);
