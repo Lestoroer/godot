@@ -600,6 +600,7 @@ bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<R
 	state->transform = change["transform"];
 	state->shared = &geometry;
 	state->deformed = deformed;
+	state->camera_hidden = change.get("camera_hidden", false);
 	state->first_surface = surface_ranges.allocate(geometry.surfaces.size());
 	for (const Geometry::Surface &surface : geometry.surfaces) {
 		state->triangle_count += surface.triangles;
@@ -850,7 +851,7 @@ void SurfaceCacheWorldRD::write_tlas_instance(Instance &state) {
 	instance.blas = state.deformed ? state.blas : state.shared->blas;
 	instance.id = state.first_surface;
 	instance.transform = state.transform;
-	instance.mask = masked_instances.has(state.source) ? CHANGED_MASK : STATIC_MASK;
+	instance.mask = (masked_instances.has(state.source) ? CHANGED_MASK : STATIC_MASK) << (state.camera_hidden ? HIDDEN_MASK_SHIFT : 0);
 	bool opaque = state.opaque.size() == state.shared->surfaces.size();
 	for (int i = 0; opaque && i < state.opaque.size(); ++i) {
 		opaque &= state.opaque[i] != 0;

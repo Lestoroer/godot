@@ -92,6 +92,9 @@ private:
 		uint64_t transport_consumed = 0, transport_last_serial = 0;
 		Vector2i size;
 		int frame = 0;
+		// Период выборок лучей блока, кадров, и сглаженная длительность кадра, по которой он выбран.
+		int sample_period = 1;
+		double smoothed_delta = 0.0;
 		int reflection_divisor = 1;
 		bool reflections = false;
 		Projection previous;

@@ -67,12 +67,13 @@ bool SurfaceCacheGatherRD::initialize(RenderingDevice *p_device, const Ref<RefCo
 void SurfaceCacheGatherRD::create_resources(View &r_view, const Ref<RenderSceneBuffersRD> &p_buffers, Vector2i p_size) {
 	ScopeTimer timer(resource_ms);
 	p_buffers->clear_context(SNAME("surface_cache"));
-	// История пикселя (pixel_light_gather): закрытость, свет ближних препятствий и свет прямоугольников без тени.
-	const char *textures[] = { "occlusion_0", "occlusion_1", "near_0", "near_1", "emitter_0", "emitter_1", "depth_0", "depth_1", "normal_0", "normal_1", "far_light", "rough_radiance", "gi", "reflection_raw", "reflection_0", "reflection_1", "reflection_material_0", "reflection_material_1", "reflection" };
+	// История пикселя (pixel_light_gather): закрытость и свет ближних препятствий; emitter — свет прямоугольников без
+	// тени в этом кадре.
+	const char *textures[] = { "occlusion_0", "occlusion_1", "near_0", "near_1", "emitter", "depth_0", "depth_1", "normal_0", "normal_1", "far_light", "rough_radiance", "gi", "reflection_raw", "reflection_0", "reflection_1", "reflection_material_0", "reflection_material_1", "reflection" };
 	for (const char *name : textures) {
 		String texture_name(name);
 		RD::DataFormat format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
-		if (texture_name == "reflection_0" || texture_name == "reflection_1" || texture_name == "near_0" || texture_name == "near_1") {
+		if (texture_name == "reflection_0" || texture_name == "reflection_1") {
 			format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
 		} else if (texture_name.begins_with("depth_")) {
 			format = RD::DATA_FORMAT_R32_SFLOAT;
@@ -226,11 +227,11 @@ void SurfaceCacheGatherRD::build_sets(Sets &r_sets, View &v, const Ref<RenderSce
 	}
 	world.push_back(uniform(65, RD::UNIFORM_TYPE_STORAGE_BUFFER, material_changes));
 	world.push_back(uniform(66, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.emission_change));
-	const String pixel_history[] = { "near_" + prev, "near_" + cur, "emitter_" + prev, "emitter_" + cur };
-	for (int i = 0; i < 4; ++i) {
-		world.push_back(uniform(67 + i, RD::UNIFORM_TYPE_IMAGE, texture(pixel_history[i])));
+	const String pixel_light[] = { "near_" + prev, "near_" + cur, "emitter" };
+	for (int i = 0; i < 3; ++i) {
+		world.push_back(uniform(67 + i, RD::UNIFORM_TYPE_IMAGE, texture(pixel_light[i])));
 	}
-	world.push_back(uniform(71, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.block_samples));
+	world.push_back(uniform(70, RD::UNIFORM_TYPE_STORAGE_BUFFER, v.block_samples));
 	for (int pass = WORLD_REQUEST; pass < PASS_COUNT; ++pass) {
 		r_sets.passes[pass] = cached(kernels[pass], world);
 	}
@@ -539,6 +540,18 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 	matrix(p.inverse_matrices + 16, v.previous.inverse());
 	write_moves(p, moves);
 	p.limits[0] = settings->get("diffuse_history_seconds");
+	// Выборки лучей блока — на заданной частоте в секунду: при частоте кадров выше блоки пускают лучи раз в период
+	// кадров. Период — по сглаженной длительности кадра и меняется с запасом: у границы он не скачет от кадра к кадру.
+	// Длинный кадр (загрузка, рывок) в сглаживание входит не длиннее 50 мс: иначе период долго помнил бы его.
+	v.smoothed_delta = v.smoothed_delta > 0.0 ? Math::lerp(v.smoothed_delta, MIN(delta, 0.05), 0.1) : MIN(delta, 0.05);
+	const double ray_rate = settings->get("ray_rate");
+	const double frames_per_sample = ray_rate > 0.0 ? 1.0 / (ray_rate * v.smoothed_delta) : 1.0;
+	int period = MAX(1, int(Math::floor(frames_per_sample)));
+	if ((period > v.sample_period && frames_per_sample < period + 0.15) || (period < v.sample_period && frames_per_sample > v.sample_period - 0.15)) {
+		period = v.sample_period;
+	}
+	v.sample_period = CLAMP(period, 1, 8);
+	p.limits[3] = v.sample_period;
 	// Сдвиг TAA в NDC: по нему точки пикселей берутся под центром пикселя без сдвига и не дрожат вместе с TAA.
 	RenderSceneDataRD *scene_data = Object::cast_to<RenderSceneDataRD>(data->get_render_scene_data());
 	if (scene_data) {
@@ -637,8 +650,10 @@ String SurfaceCacheGatherRD::render(RenderData *data, Span<RID> resources, RID t
 		device->buffer_get_data_async(v.world_work, callback, 0, WORLD_HEADER_WORDS * 4);
 	}
 	// Свет пикселей: выборки лучей — поток на блок 2 × 2 пикселя, затем их накопление в каждом пикселе и сведение с
-	// фильтром по соседям в итог для движка.
-	kernels[PIXEL_SAMPLE].pixels(sets.passes[PIXEL_SAMPLE], Vector2i((size.x + 1) / 2, (size.y + 1) / 2));
+	// фильтром по соседям в итог для движка. Блок пускает лучи раз в период кадров, и потоки запускаются только для
+	// блоков этого кадра: каждой period-й их группы в строке (pixel_sample шейдеров: sampled_block).
+	const Vector2i block_groups((size.x + 15) / 16, (size.y + 15) / 16);
+	kernels[PIXEL_SAMPLE].dispatch(sets.passes[PIXEL_SAMPLE], nullptr, 0, Vector3i((block_groups.x + v.sample_period - 1) / v.sample_period, block_groups.y, 1));
 	mark("pixel sample end", id, markers);
 	kernels[PIXEL_GATHER].pixels(sets.passes[PIXEL_GATHER], size);
 	mark("pixel gather end", id, markers);
