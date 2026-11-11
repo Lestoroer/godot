@@ -1,6 +1,6 @@
 // lestoroer#gi
 #pragma once
-#include "surface_cache_gather.h"
+#include "surface_cache_runtime.h"
 
 #include "scene/resources/mesh.h"
 
@@ -87,8 +87,7 @@ class SurfaceCacheWorldRD : public RefCounted {
 	uint32_t capacities[BUFFER_COUNT] = {};
 	uint64_t buffer_memory_bytes = 0;
 	bool capacity_dirty = true;
-	Ref<SurfaceCacheGatherRD> gather;
-	Ref<RefCounted> capture, world_hash;
+	Ref<RefCounted> capture, world_hash, gather;
 	SurfaceCache::Kernel kernels[PASS_COUNT];
 	Vector2i capture_dimensions;
 	int64_t last_capture_frame = 0;
@@ -103,7 +102,8 @@ class SurfaceCacheWorldRD : public RefCounted {
 	LocalVector<RID> tlas_added;
 	HashMap<RID, bool> tlas_updates;
 	HashMap<RID, Dictionary> deferred_changes;
-	LocalVector<SurfaceCacheGatherRD::Motion> frame_moves;
+	// Экземпляры, сдвинувшиеся за кадр мира: from и to — прежнее и новое место, bounds — рамка сейчас.
+	TypedArray<Dictionary> frame_moves;
 	Array opacity_states;
 	bool initialized = false, disposed = false, opacity_pending = false, opacity_requested = false;
 	uint64_t capture_serial = 0, next_generation = 0;

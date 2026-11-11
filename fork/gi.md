@@ -29,9 +29,7 @@
   [light_storage.cpp](../servers/rendering/renderer_rd/storage_rd/light_storage.cpp),
   [utilities.h](../servers/rendering/storage/utilities.h).
 
-- **Экранный GI, отражения и история видов** —
-  [surface_cache_gather.cpp](../modules/interior_surface_cache/surface_cache_gather.cpp),
-  [surface_cache_gather.h](../modules/interior_surface_cache/surface_cache_gather.h),
+- **Чтение экранного GI и отражений в шейдере сцены** —
   [surface_cache_inc.glsl](../servers/rendering/renderer_rd/shaders/surface_cache_inc.glsl),
   [scene_forward_clustered.glsl](../servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl).
 
@@ -68,5 +66,5 @@
   [SCsub](../modules/interior_surface_cache/SCsub),
   [config.py](../modules/interior_surface_cache/config.py).
 
-Шаблоны GPU-проходов и скрипты игры — [освещение](../../is-game/game/features/lighting/subsystems/gi/README.md#код).
+Проходы экранного GI и отражений, их шаблоны и скрипты — в игре: [освещение](../../is-game/game/features/lighting/subsystems/gi/README.md#код).
 Расширения Vulkan/RenderingDevice — [ray query](ray-query.md).
