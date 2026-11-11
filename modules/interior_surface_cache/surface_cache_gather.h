@@ -10,58 +10,33 @@ public:
 		Transform3D from, to;
 		AABB bounds;
 	};
-	// Изменения мира для транспорта мировых зондов: номер набора (растёт с каждым обновлением мира) и рамки изменившейся
-	// геометрии этого набора.
-	struct Transport {
-		uint64_t serial;
-		const LocalVector<AABB> &changes;
-	};
-	// Рамок изменений, которые вид получает за кадр (остальные объединяются), и событий журнала сбора.
-	static constexpr int TRANSPORT_CHANGES = 16, TRANSPORT_LOG = 256;
 	// Лимит ограничивает проверки на пиксель; объединение сохраняет кадр самого свежего изменения.
 	enum { VIEW_CHANGES = 4,
 		VIEW_MOVED = 8 };
 	// Сколько секунд вид держит область изменения: столько отражение пути через неё укорочено.
 	static constexpr double CHANGE_SECONDS = 0.13;
 	// Биты поля профиля disabled_blocks в порядке его флагов (surface_cache_profile.gd). Выключенный блок не
-	// считается, следующие проходы получают его нейтральный результат; биты, которые читают шейдеры, — в
-	// GatherView.temporal.x (cache_types). Бит 2 не занят.
+	// считается, следующие проходы получают его нейтральный результат; биты историй шейдеры читают из
+	// GatherView.temporal.x (cache_types).
 	enum Block { BLOCK_REFLECTIONS = 1,
+		BLOCK_CONTACT = 2,
 		BLOCK_PROBE_FILTER = 4,
 		BLOCK_CACHE_UPDATE = 8,
 		BLOCK_DIFFUSE_HISTORY = 16,
 		BLOCK_REFLECTION_HISTORY = 32,
-		BLOCK_PROBES = 64,
-		BLOCK_PIXEL_FILTER = 128 };
-	// Мировые зонды поверхностей (world_probe шейдеров): таблица ключей мировых клеток → номер зонда в пуле; у зонда —
-	// опора, записи лучей (транспорт) и свет кадра. Заголовок работы: счётчики кадра, число зондов пула, аргументы
-	// запусков и список свободных (world_probe: WORLD_WORK_*).
-	static constexpr uint32_t WORLD_PROBE_BYTES = 112, WORLD_RAY_BYTES = 12, WORLD_RAYS = 64, WORLD_HEADER_WORDS = 24;
-	static constexpr uint32_t WORLD_LIGHT_BYTES = 144, WORLD_PIXEL_LIGHT_BYTES = 64, WORLD_INTERPOLATION_BYTES = 16, WORLD_TABLE_SLOT_BYTES = 16;
-	// Слова заголовка, которые пишет движок: кадр вида (+1) и кадр, раньше которого вытесняются неиспользованные зонды.
-	static constexpr uint32_t WORLD_WORD_POOL = 2, WORLD_WORD_FREE = 16, WORLD_WORD_FREE_TAKEN = 17, WORLD_WORD_FRAME = 19, WORLD_WORD_EVICT_BEFORE = 20;
-	// Шаг пикселей запроса зондов по каждой оси (world_probe: WORLD_REQUEST_STRIDE): клетку, которую он пропустит на
-	// дальнем плане или скользящем взгляде, добирает ореол фильтра.
-	static constexpr int WORLD_REQUEST_STRIDE = 8;
-	// Зондов нужно по числу видимых мировых клеток, а оно от разрешения вида почти не зависит: пул — пикселей вида на
-	// зонд в этих пределах, остальное — вытеснение. Слотов таблицы на зонд пула — WORLD_TABLE_PER_PROBE.
-	static constexpr uint32_t WORLD_POOL_PIXELS = 40, WORLD_POOL_MINIMUM = 16384, WORLD_POOL_MAXIMUM = 131072, WORLD_TABLE_PER_PROBE = 8;
-	// Байт выборки лучей блока 2 × 2 пикселя (pixel_sample шейдеров: семь слов uvec4).
-	static constexpr uint32_t BLOCK_SAMPLE_BYTES = 112;
+		BLOCK_SCREEN_PROBES = 64 };
+	static constexpr uint32_t PROBE_META_BYTES = 32, PROBE_LIGHT_BYTES = 144;
 
 private:
-	enum Pass { REFLECTION,
+	enum Pass { PLACE,
+		TRACE,
+		FILTER,
+		INTEGRATE,
+		CONTACT,
+		CONTACT_FILTER,
+		TEMPORAL,
+		REFLECTION,
 		REFLECTION_TEMPORAL,
-		WORLD_REQUEST,
-		WORLD_HALO,
-		WORLD_CHECK,
-		WORLD_TRACE,
-		WORLD_SHADE,
-		WORLD_FILTER,
-		PIXEL_SAMPLE,
-		PIXEL_GATHER,
-		PIXEL_RESOLVE,
-		WORLD_EVICT,
 		PASS_COUNT };
 	struct Sets {
 		RID passes[PASS_COUNT];
@@ -72,31 +47,13 @@ private:
 	};
 	struct View {
 		RID camera, emission_change, stats;
-		// Выборки лучей блоков кадра: их пишет проход выборок, читает сбор света пикселей.
-		RID block_samples;
-		// Мировые зонды: ключи таблицы, опоры для пикселей, свет для пикселей; зонды пула, записи лучей по полусфере,
-		// свет зонда кадра; работа, аргументы косвенных запусков и изменения мира кадра.
-		RID world_tags, world_slots, world_keys, world_probes, world_rays, world_light, world_work, world_args, world_transport;
-		// Зондов пула и слотов таблицы вида: по размеру вида, с которым созданы.
-		uint32_t world_pool = 0, world_table = 0;
-		// Кеш мировых зондов начинается заново: таблица, пул и свет.
-		bool world_reset = true;
-		// Свободных зондов почти не осталось (по чтению заголовка): кадр вытесняет зонды, не использованные world_evict_age
-		// кадров; world_evict_frame — кадр вида (+1) последнего вытеснения. Возраст уменьшается, если вытеснение нужно
-		// снова раньше, чем через два возраста, и растёт, когда оно редко.
-		bool world_evict = false;
-		uint32_t world_evict_age = 256, world_evict_frame = 0;
-		// Номер кадра вида (+1) последнего изменения мира: зонд, проверенный раньше него, пропустил изменения.
-		uint32_t world_last_change = 0;
-		// Последнее событие журнала, которое вид уже передал своим зондам.
-		uint64_t transport_consumed = 0, transport_last_serial = 0;
-		Vector2i size;
+		RID meta[2], light, filtered;
+		Vector2i size, grid;
 		int frame = 0;
-		// Период выборок лучей блока, кадров, и сглаженная длительность кадра, по которой он выбран.
-		int sample_period = 1;
-		double smoothed_delta = 0.0;
 		int reflection_divisor = 1;
 		bool reflections = false;
+		// Свет пикселя, для которого набраны выход и история: 1 — зонды, 0 — мировой кеш, −1 — не набраны.
+		int light_scheme = -1;
 		Projection previous;
 		Transform3D previous_camera;
 		Sets sets[2];
@@ -111,8 +68,9 @@ private:
 		float sky[4];
 		int32_t history[4];
 		int32_t reflection[4];
-		int32_t emitters[2];
+		int32_t probe_settings[2];
 		float roughness, reflection_history;
+		int32_t probes[4];
 		int32_t change_count[4];
 		float changes[VIEW_CHANGES][8];
 		float inverse_matrices[32];
@@ -121,25 +79,7 @@ private:
 		float limits[4];
 		float time[4];
 	};
-	static_assert(sizeof(Parameters) == 288 + VIEW_CHANGES * 32 + 128 + 16 + VIEW_MOVED * 80 + 32);
-	// Кадр мировых зондов вида (world_probe: WorldTransport): число рамок, кадр вида (+1) последнего изменения, потеря
-	// событий; номер набора изменений и признак ровно одного нового набора; копия слов 0–3 заголовка работы после
-	// запроса пикселями (пишет GPU); зондов пула и слотов таблицы; рамки.
-	struct TransportParameters {
-		uint32_t counts[4];
-		uint32_t serial[4];
-		uint32_t requested[4];
-		uint32_t sizes[4];
-		float changes[TRANSPORT_CHANGES][8];
-	};
-	struct TransportEvent {
-		uint64_t number;
-		AABB bounds;
-	};
-	// Журнал изменений геометрии для транспорта зондов всех видов: вид забирает события новее своего последнего.
-	LocalVector<TransportEvent> transport_log;
-	uint64_t transport_events = 0, transport_serial = 0;
-	void write_transport(View &r_view, TransportParameters &r_parameters, const Transport &p_transport);
+	static_assert(sizeof(Parameters) == 304 + VIEW_CHANGES * 32 + 128 + 16 + VIEW_MOVED * 80 + 32);
 	HashMap<ObjectID, View *> views;
 	LocalVector<Change> changes;
 	int64_t changes_frame = -1;
@@ -149,14 +89,6 @@ private:
 	RD *device = nullptr;
 	Ref<RefCounted> world_hash;
 	SurfaceCache::Kernel kernels[PASS_COUNT];
-	// Суммы по лучам зонда подгруппами (WORLD_SUBGROUP_ARITHMETIC шейдеров), иначе — общей памятью.
-	bool subgroup_sums = false;
-	static uint32_t world_pool_for(Vector2i p_size);
-	static uint64_t world_buffer_bytes(uint32_t p_pool, uint32_t p_table);
-	// p_budget — байт, которые буферы зондов этого вида могут занять под лимитом памяти (может быть меньше нуля).
-	bool create_world_resources(View &r_view, int64_t p_budget);
-	void free_world_resources(View &r_view);
-	void receive_world_header(const PackedByteArray &p_data, ObjectID p_view);
 	RID sampler, pass_stats[3];
 	String error;
 	double resource_ms = 0;
@@ -173,16 +105,9 @@ private:
 public:
 	static constexpr int VIEW_BYTES = sizeof(Parameters);
 	bool initialize(RenderingDevice *p_device, const Ref<RefCounted> &p_world_hash);
-	// p_world_bytes — буферы мира под тем же лимитом памяти профиля (memory_limit_mib): буферы зондов вида с ними
-	// в него помещаются, иначе сбор останавливается с ошибкой.
-	String render(RenderData *p_data, Span<RID> p_resources, RID p_tlas, const Ref<Resource> &p_settings, int p_light_count, int p_emitter_count, RID p_material_changes, const LocalVector<Motion> &p_moves, const Transport &p_transport, uint64_t p_world_bytes);
+	String render(RenderData *p_data, Span<RID> p_resources, RID p_tlas, const Ref<Resource> &p_settings, int p_light_count, int p_emitter_count, RID p_material_changes, const LocalVector<Motion> &p_moves);
 	void dispose();
 	String get_error() const { return error; }
-	// Номер последнего набора изменений мира, который сбор принял в журнал транспорта.
-	uint64_t get_transport_serial() const { return transport_serial; }
-	// Буферы видов для проверок: текстуры сбора, заголовок работы и записи мировых зондов.
 	Array get_probe_views() const;
 	double get_resource_ms() const { return resource_ms; }
-	// Буферы мировых зондов всех видов, байт.
-	uint64_t get_probe_buffer_bytes() const;
 };

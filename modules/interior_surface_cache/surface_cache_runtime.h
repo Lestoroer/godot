@@ -71,17 +71,6 @@ struct Kernel {
 		rd->compute_list_dispatch(list, p_groups.x, p_groups.y, p_groups.z);
 		rd->compute_list_end();
 	}
-	// Число групп по X, Y, Z — три uint буфера аргументов p_args со смещения p_offset. Буфер аргументов не должен
-	// быть привязан к проходу хранилищем: граф команд держит у ресурса одно использование на проход, и барьер
-	// чтения аргументов иначе теряется.
-	void dispatch_indirect(RID p_set, RID p_args, uint32_t p_offset) const {
-		RD *rd = RD::get_singleton();
-		RD::ComputeListID list = rd->compute_list_begin();
-		rd->compute_list_bind_compute_pipeline(list, pipeline);
-		rd->compute_list_bind_uniform_set(list, p_set, 0);
-		rd->compute_list_dispatch_indirect(list, p_args, p_offset);
-		rd->compute_list_end();
-	}
 	void pixels(RID p_set, const Vector2i &p_size) const {
 		dispatch(p_set, nullptr, 0, Vector3i((p_size.x + 7) / 8, (p_size.y + 7) / 8, 1));
 	}
