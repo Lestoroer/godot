@@ -10,7 +10,6 @@
 #include "servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 #include "servers/rendering/rendering_device.h"
-#include "servers/rendering/rendering_device_binds.h"
 #include "servers/rendering/storage/render_data.h"
 
 namespace SurfaceCache {
@@ -23,6 +22,23 @@ inline Ref<RefCounted> script_object(const String &p_name) {
 	ERR_FAIL_COND_V(object.is_null(), Ref<RefCounted>());
 	object->set_script(script);
 	return object;
+}
+
+// Вызов метода скрипта игры. Отказ вызова — нет метода, не те аргументы — возвращает пустое значение, как и
+// обычный результат: его описание получает r_failure.
+template <typename... VarArgs>
+Variant call_script(Object *p_object, const StringName &p_method, String &r_failure, VarArgs... p_args) {
+	Variant arguments[sizeof...(p_args) + 1] = { p_args..., Variant() };
+	const Variant *pointers[sizeof...(p_args) + 1];
+	for (uint32_t i = 0; i < sizeof...(p_args); ++i) {
+		pointers[i] = &arguments[i];
+	}
+	Callable::CallError call_error;
+	Variant result = p_object->callp(p_method, pointers, sizeof...(p_args), call_error);
+	if (call_error.error != Callable::CallError::CALL_OK) {
+		r_failure = Variant::get_call_error_text(p_object, p_method, pointers, sizeof...(p_args), call_error);
+	}
+	return result;
 }
 
 inline double milliseconds(uint64_t p_start) {
@@ -71,9 +87,6 @@ struct Kernel {
 		rd->compute_list_dispatch(list, p_groups.x, p_groups.y, p_groups.z);
 		rd->compute_list_end();
 	}
-	void pixels(RID p_set, const Vector2i &p_size) const {
-		dispatch(p_set, nullptr, 0, Vector3i((p_size.x + 7) / 8, (p_size.y + 7) / 8, 1));
-	}
 	void elements(RID p_set, const void *p_push, uint32_t p_bytes, int p_count) const {
 		dispatch(p_set, p_push, p_bytes, Vector3i(MAX((p_count + 63) / 64, 1), 1, 1));
 	}
@@ -86,20 +99,6 @@ inline RD::Uniform uniform(uint32_t p_binding, RD::UniformType p_type, RID p_res
 	result.append_id(p_resource);
 	return result;
 }
-inline RD::Uniform sampled(uint32_t p_binding, RID p_sampler, RID p_texture) {
-	RD::Uniform result = uniform(p_binding, RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, p_sampler);
-	result.append_id(p_texture);
-	return result;
-}
-inline void replace(LocalVector<RD::Uniform> &r_uniforms, const RD::Uniform &p_uniform) {
-	for (RD::Uniform &entry : r_uniforms) {
-		if (entry.binding == p_uniform.binding) {
-			entry = p_uniform;
-			return;
-		}
-	}
-	r_uniforms.push_back(p_uniform);
-}
 inline RID cached(const Kernel &p_kernel, const LocalVector<RD::Uniform> &p_uniforms) {
 	return UniformSetCacheRD::get_singleton()->get_cache_vec(p_kernel.shader, 0, p_uniforms);
 }
@@ -109,27 +108,6 @@ inline RID cached_buffers(const Kernel &p_kernel, std::initializer_list<RID> p_b
 		uniforms.push_back(uniform(uniforms.size(), RD::UNIFORM_TYPE_STORAGE_BUFFER, buffer));
 	}
 	return cached(p_kernel, uniforms);
-}
-inline TypedArray<RDUniform> script_uniforms(const LocalVector<RD::Uniform> &p_uniforms) {
-	TypedArray<RDUniform> result;
-	for (const RD::Uniform &entry : p_uniforms) {
-		Ref<RDUniform> item;
-		item.instantiate();
-		item->set_binding(entry.binding);
-		item->set_uniform_type(entry.uniform_type);
-		for (uint32_t i = 0; i < entry.get_id_count(); ++i) {
-			item->add_id(entry.get_id(i));
-		}
-		result.push_back(item);
-	}
-	return result;
-}
-inline void matrix(float *r_target, const Projection &p_matrix) {
-	for (int col = 0; col < 4; ++col) {
-		for (int row = 0; row < 4; ++row) {
-			r_target[col * 4 + row] = p_matrix[col][row];
-		}
-	}
 }
 
 struct Ranges {

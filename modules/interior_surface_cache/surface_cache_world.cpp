@@ -7,6 +7,7 @@
 #include "core/object/class_db.h"
 #include "servers/rendering/renderer_compositor.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
+#include "servers/rendering/renderer_rd/storage_rd/render_scene_data_rd.h"
 #include "servers/rendering/rendering_server.h"
 #include "servers/rendering/rendering_server_globals.h"
 
@@ -111,8 +112,9 @@ bool SurfaceCacheWorldRD::initialize_gpu() {
 	if (!bool(world_hash->call("initialize", device))) {
 		return fail(world_hash->get("error"));
 	}
-	if (!gather->initialize(device, world_hash)) {
-		return fail(gather->get_error());
+	String gather_failure;
+	if (!bool(call_script(gather.ptr(), SNAME("initialize"), gather_failure, device, world_hash))) {
+		return fail(gather_failure.is_empty() ? String(gather->get("error")) : gather_failure);
 	}
 	dummy = device->storage_buffer_create(64);
 	device->buffer_clear(dummy, 0, 64);
@@ -272,7 +274,11 @@ void SurfaceCacheWorldRD::update_world() {
 				}
 				Transform3D transform = change["transform"];
 				if (!state.transform.is_equal_approx(transform)) {
-					frame_moves.push_back({ state.transform, transform, bounds });
+					Dictionary move;
+					move["from"] = state.transform;
+					move["to"] = transform;
+					move["bounds"] = bounds;
+					frame_moves.push_back(move);
 				}
 				state.transform = transform;
 				int bits = change["changes"];
@@ -426,15 +432,26 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 	String suffix = " " + itos(int64_t(view->get_instance_id()));
 	mark("SurfaceCache gather begin" + suffix, true);
 	uint64_t start = OS::get_singleton()->get_ticks_usec();
-	RID resources[] = { buffers[SURFACES], buffers[ORIENTATIONS], buffers[MATERIALS], buffers[LIGHTS] };
-	String result = gather->render(data, resources, tlas, profile, active_emitters + lights.size(), active_emitters, buffers[MATERIAL_CHANGES], frame_moves);
+	TypedArray<RID> scene;
+	for (Buffer buffer : { SURFACES, ORIENTATIONS, MATERIALS, LIGHTS }) {
+		scene.push_back(buffers[buffer]);
+	}
+	Vector2 taa_jitter;
+	if (const RenderSceneDataRD *scene_data = Object::cast_to<RenderSceneDataRD>(data->get_render_scene_data())) {
+		taa_jitter = scene_data->taa_jitter;
+	}
+	String gather_error;
+	Variant texture = call_script(gather.ptr(), SNAME("render"), gather_error, data, profile, scene, tlas, buffers[MATERIAL_CHANGES], active_emitters + lights.size(), active_emitters, frame_moves, RSG::rasterizer->get_frame_delta_time(), taa_jitter);
 	counters.gather_ms += milliseconds(start);
 	mark("SurfaceCache gather end" + suffix, true);
-	if (!gather->get_error().is_empty()) {
-		fail(gather->get_error());
+	if (gather_error.is_empty()) {
+		gather_error = gather->get("error");
+	}
+	if (!gather_error.is_empty()) {
+		fail(gather_error);
 		return String();
 	}
-	return result;
+	return texture;
 }
 
 static constexpr uint32_t RAY_GEOMETRY_BITS = RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT;
@@ -1061,7 +1078,7 @@ Dictionary SurfaceCacheWorldRD::get_operation_ms() const {
 	result["blas_create_build"] = counters.blas_ms;
 	result["buffer_capacity"] = counters.capacity_ms;
 	result["geometry_upload"] = counters.geometry_ms;
-	result["view_resources"] = gather.is_valid() ? gather->get_resource_ms() : 0.0;
+	result["view_resources"] = gather.is_valid() ? gather->get("resource_ms") : Variant(0.0);
 	return result;
 }
 Dictionary SurfaceCacheWorldRD::buffer_report() const {
@@ -1095,7 +1112,7 @@ void SurfaceCacheWorldRD::dispose() {
 	server->scenario_set_surface_cache_callback(scenario, Callable());
 	server->scenario_set_surface_cache_view_callback(scenario, Callable());
 	if (gather.is_valid()) {
-		gather->dispose();
+		gather->call("dispose");
 	}
 	if (world_hash.is_valid()) {
 		world_hash->call("dispose");
