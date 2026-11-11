@@ -112,8 +112,9 @@ bool SurfaceCacheWorldRD::initialize_gpu() {
 	if (!bool(world_hash->call("initialize", device))) {
 		return fail(world_hash->get("error"));
 	}
-	if (!bool(gather->call("initialize", device, world_hash))) {
-		return fail(gather->get("error"));
+	String gather_failure;
+	if (!bool(call_script(gather.ptr(), SNAME("initialize"), gather_failure, device, world_hash))) {
+		return fail(gather_failure.is_empty() ? String(gather->get("error")) : gather_failure);
 	}
 	dummy = device->storage_buffer_create(64);
 	device->buffer_clear(dummy, 0, 64);
@@ -439,15 +440,18 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 	if (const RenderSceneDataRD *scene_data = Object::cast_to<RenderSceneDataRD>(data->get_render_scene_data())) {
 		taa_jitter = scene_data->taa_jitter;
 	}
-	String result = gather->call("render", data, profile, scene, tlas, buffers[MATERIAL_CHANGES], active_emitters + lights.size(), active_emitters, frame_moves, RSG::rasterizer->get_frame_delta_time(), taa_jitter);
+	String gather_error;
+	Variant texture = call_script(gather.ptr(), SNAME("render"), gather_error, data, profile, scene, tlas, buffers[MATERIAL_CHANGES], active_emitters + lights.size(), active_emitters, frame_moves, RSG::rasterizer->get_frame_delta_time(), taa_jitter);
 	counters.gather_ms += milliseconds(start);
 	mark("SurfaceCache gather end" + suffix, true);
-	String gather_error = gather->get("error");
+	if (gather_error.is_empty()) {
+		gather_error = gather->get("error");
+	}
 	if (!gather_error.is_empty()) {
 		fail(gather_error);
 		return String();
 	}
-	return result;
+	return texture;
 }
 
 static constexpr uint32_t RAY_GEOMETRY_BITS = RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT;

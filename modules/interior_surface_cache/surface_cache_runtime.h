@@ -24,6 +24,23 @@ inline Ref<RefCounted> script_object(const String &p_name) {
 	return object;
 }
 
+// Вызов метода скрипта игры. Отказ вызова — нет метода, не те аргументы — возвращает пустое значение, как и
+// обычный результат: его описание получает r_failure.
+template <typename... VarArgs>
+Variant call_script(Object *p_object, const StringName &p_method, String &r_failure, VarArgs... p_args) {
+	Variant arguments[sizeof...(p_args) + 1] = { p_args..., Variant() };
+	const Variant *pointers[sizeof...(p_args) + 1];
+	for (uint32_t i = 0; i < sizeof...(p_args); ++i) {
+		pointers[i] = &arguments[i];
+	}
+	Callable::CallError call_error;
+	Variant result = p_object->callp(p_method, pointers, sizeof...(p_args), call_error);
+	if (call_error.error != Callable::CallError::CALL_OK) {
+		r_failure = Variant::get_call_error_text(p_object, p_method, pointers, sizeof...(p_args), call_error);
+	}
+	return result;
+}
+
 inline double milliseconds(uint64_t p_start) {
 	return double(OS::get_singleton()->get_ticks_usec() - p_start) / 1000.0;
 }
