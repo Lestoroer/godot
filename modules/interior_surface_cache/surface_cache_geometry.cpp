@@ -14,6 +14,10 @@ static constexpr int SURFACE_CAPTURE_SIZE = 16;
 // Граница разделяет поверхности: консервативный захват расширяет треугольники на пиксель.
 static constexpr int SURFACE_CAPTURE_BORDER = 1;
 static constexpr int SURFACE_CAPTURE_CELL = SURFACE_CAPTURE_SIZE + 2 * SURFACE_CAPTURE_BORDER;
+// Захват усредняет материал поверхности по её квадрату, и вся плотная геометрия в среднее не попадает: поверхность
+// отдаёт захвату не больше стольких треугольников, равномерно по их списку. Предел — 64 на тексель: при меньшем
+// у листвы с вырезом среднее покрытие заметно завышается.
+static constexpr int SURFACE_CAPTURE_TRIANGLES = SURFACE_CAPTURE_SIZE * SURFACE_CAPTURE_SIZE * 64;
 
 // Потоки копируются в исходной кодировке, включая сжатие, чтобы захват сохранил точные атрибуты.
 static void _remap_stream(const uint8_t *p_source, uint32_t p_element_size, const Vector<int> &p_remap, uint8_t *r_target) {
@@ -104,12 +108,16 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	Array vertex_data;
 	Array index_data;
 	Array result_surfaces;
-	int corner_total = 0;
+	// Вершины углов треугольников, которые поверхность отдаёт захвату.
+	LocalVector<Vector<int>> capture_remaps;
+	capture_remaps.resize(surface_count);
+	int capture_corner_total = 0;
 	for (int surface = 0; surface < surface_count; surface++) {
-		corner_total += indices[surface].size();
+		capture_remaps[surface].resize(MIN(indices[surface].size() / 3, SURFACE_CAPTURE_TRIANGLES) * 3);
+		capture_corner_total += capture_remaps[surface].size();
 	}
 	Vector<Vector2> capture_corners;
-	capture_corners.resize_uninitialized(corner_total);
+	capture_corners.resize_uninitialized(capture_corner_total);
 	Vector2 *pixel_write = capture_corners.ptrw();
 	for (int surface = 0; surface < surface_count; surface++) {
 		const int sides = p_surface_sides[surface];
@@ -130,6 +138,9 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 		bits.fill(0);
 		uint32_t *bit_write = bits.ptrw();
 		int along = 0;
+		int *capture_remap = capture_remaps[surface].ptrw();
+		const int capture_count = capture_remaps[surface].size() / 3;
+		int captured = 0;
 		for (int corner = 0; corner < corner_count; corner += 3) {
 			const int triangle = corner / 3;
 			Vector3 vertex[3];
@@ -137,18 +148,22 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 				vertex[c] = position[index[corner + c]];
 			}
 			const Vector3 face = (vertex[1] - vertex[0]).cross(vertex[2] - vertex[0]);
-			const int axis = face.abs().max_axis_index();
-			const int u = (axis + 1) % 3, v = (axis + 2) % 3;
-			for (int c = 0; c < 3; c++) {
-				const Vector2 square((vertex[c][u] - bounds.position[u]) / MAX(bounds.size[u], real_t(1e-6)), (vertex[c][v] - bounds.position[v]) / MAX(bounds.size[v], real_t(1e-6)));
-				pixel_write[corner + c] = Vector2(offset) + square * SURFACE_CAPTURE_SIZE;
+			if (captured < capture_count && triangle == int(int64_t(captured) * triangle_count / capture_count)) {
+				const int axis = face.abs().max_axis_index();
+				const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+				for (int c = 0; c < 3; c++) {
+					const Vector2 square((vertex[c][u] - bounds.position[u]) / MAX(bounds.size[u], real_t(1e-6)), (vertex[c][v] - bounds.position[v]) / MAX(bounds.size[v], real_t(1e-6)));
+					pixel_write[captured * 3 + c] = Vector2(offset) + square * SURFACE_CAPTURE_SIZE;
+					capture_remap[captured * 3 + c] = index[corner + c];
+				}
+				++captured;
 			}
 			if (normal && normal[index[corner]].dot(face) > 0) {
 				bit_write[triangle >> 5] |= 1u << (triangle & 31);
 				++along;
 			}
 		}
-		pixel_write += corner_count;
+		pixel_write += capture_count * 3;
 		PackedByteArray orientation_bits;
 		int orientation = along == triangle_count ? 1 : (along == 0 ? -1 : 0);
 		if (orientation == 0) {
@@ -181,7 +196,7 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	capture_mesh->set_blend_shape_mode(Mesh::BlendShapeMode(server->mesh_get_blend_shape_mode(mesh_rid)));
 	for (int surface = 0; surface < surface_count; surface++) {
 		const RenderingServerTypes::SurfaceData &source = sources[surface];
-		const Vector<int> &remap = indices[surface];
+		const Vector<int> &remap = capture_remaps[surface];
 		const int corner_count = remap.size();
 		uint32_t offsets[RSE::ARRAY_MAX];
 		uint32_t vertex_size, normal_size, attribute_size, skin_size;
