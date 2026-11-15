@@ -38,6 +38,27 @@ static Vector<uint8_t> _remap_vertices(const uint8_t *p_source, uint32_t p_verte
 	return result;
 }
 
+// Позиции вершин поверхности тройками float — вход BLAS. Несжатые лежат в потоке вершин как есть, сжатые
+// (ARRAY_FLAG_COMPRESS_ATTRIBUTES) — долями рамки поверхности в 16 битах; разбор — тот же, что в RenderingServer.
+static Vector<uint8_t> _ray_vertices(const RenderingServerTypes::SurfaceData &p_data, uint32_t p_vertex_size) {
+	Vector<uint8_t> result;
+	result.resize_uninitialized(size_t(p_data.vertex_count) * sizeof(Vector3));
+	const uint8_t *source = p_data.vertex_data.ptr();
+	Vector3 *write = reinterpret_cast<Vector3 *>(result.ptrw());
+	if (!(p_data.format & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES)) {
+		for (uint32_t i = 0; i < p_data.vertex_count; i++) {
+			memcpy(&write[i], source + size_t(i) * p_vertex_size, sizeof(Vector3));
+		}
+		return result;
+	}
+	for (uint32_t i = 0; i < p_data.vertex_count; i++) {
+		const uint16_t *v = reinterpret_cast<const uint16_t *>(source + size_t(i) * p_vertex_size);
+		const Vector3 share(float(v[0]) / 65535.0, float(v[1]) / 65535.0, float(v[2]) / 65535.0);
+		write[i] = (share * p_data.aabb.size) + p_data.aabb.position;
+	}
+	return result;
+}
+
 Dictionary SurfaceCacheGeometry::prepare(const Ref<Mesh> &p_mesh, const Vector<int32_t> &p_surface_sides) {
 	ERR_FAIL_COND_V(p_mesh.is_null(), Dictionary());
 	return _prepare(p_mesh.ptr(), RID(), p_surface_sides, nullptr);
@@ -62,37 +83,39 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	ERR_FAIL_COND_V(p_source && p_source->size() != surface_count, Dictionary());
 	const RID mesh_rid = p_resource ? p_resource->get_rid() : p_mesh;
 	const int shape_count = server->mesh_get_blend_shape_count(mesh_rid);
-	const uint64_t attribute_formats = RSE::ARRAY_FORMAT_COLOR | RSE::ARRAY_FORMAT_TEX_UV | RSE::ARRAY_FORMAT_TEX_UV2 | RSE::ARRAY_FORMAT_CUSTOM0 | RSE::ARRAY_FORMAT_CUSTOM1 | RSE::ARRAY_FORMAT_CUSTOM2 | RSE::ARRAY_FORMAT_CUSTOM3 | RSE::ARRAY_FORMAT_BONES | RSE::ARRAY_FORMAT_WEIGHTS;
+	// Лучам от поверхности нужны только позиции и индексы — они берутся прямо из её байтов: нормали не читаются,
+	// лицевую сторону треугольника задаёт порядок обхода вершин, как у растра. Индексы остаются в ширине меша;
+	// поверхность без индексов получает номера вершин подряд.
 	LocalVector<RenderingServerTypes::SurfaceData> sources;
-	LocalVector<Vector<Vector3>> positions;
-	LocalVector<Vector<int>> indices;
+	LocalVector<Vector<uint8_t>> positions;
+	LocalVector<Vector<uint8_t>> indices;
+	LocalVector<int> index_sizes;
 	sources.resize(surface_count);
 	positions.resize(surface_count);
 	indices.resize(surface_count);
+	index_sizes.resize(surface_count);
 	for (int surface = 0; surface < surface_count; ++surface) {
 		sources[surface] = p_source ? (*p_source)[surface] : server->mesh_get_surface(mesh_rid, surface);
 		const RenderingServerTypes::SurfaceData &data = sources[surface];
-		ERR_FAIL_COND_V(data.primitive != RSE::PRIMITIVE_TRIANGLES, Dictionary());
-		RenderingServerTypes::SurfaceData geometry;
-		// Нормали не читаются: лицевую сторону треугольника для лучей задаёт порядок обхода вершин, как у растра.
-		geometry.format = data.format & ~attribute_formats & ~uint64_t(RSE::ARRAY_FORMAT_NORMAL | RSE::ARRAY_FORMAT_TANGENT);
-		geometry.vertex_data = data.vertex_data;
-		geometry.vertex_count = data.vertex_count;
-		geometry.index_data = data.index_data;
-		geometry.index_count = data.index_count;
-		geometry.aabb = data.aabb;
-		const Array arrays = server->mesh_create_arrays_from_surface_data(geometry);
-		positions[surface] = arrays[Mesh::ARRAY_VERTEX];
-		indices[surface] = arrays[Mesh::ARRAY_INDEX];
-		ERR_FAIL_COND_V(positions[surface].is_empty(), Dictionary());
-		if (indices[surface].is_empty()) {
-			indices[surface].resize(positions[surface].size());
-			int *index = indices[surface].ptrw();
-			for (int i = 0; i < positions[surface].size(); i++) {
+		ERR_FAIL_COND_V(data.primitive != RSE::PRIMITIVE_TRIANGLES || data.vertex_count == 0 || (data.format & RSE::ARRAY_FLAG_USE_2D_VERTICES), Dictionary());
+		uint32_t offsets[RSE::ARRAY_MAX];
+		uint32_t vertex_size, normal_size, attribute_size, skin_size;
+		server->mesh_surface_make_offsets_from_format(data.format, data.vertex_count, data.index_count, offsets, vertex_size, normal_size, attribute_size, skin_size);
+		ERR_FAIL_COND_V(size_t(data.vertex_data.size()) < size_t(data.vertex_count) * vertex_size, Dictionary());
+		positions[surface] = _ray_vertices(data, vertex_size);
+		if (data.index_count > 0) {
+			indices[surface] = data.index_data;
+			index_sizes[surface] = data.index_data.size() / data.index_count;
+			ERR_FAIL_COND_V(index_sizes[surface] != 2 && index_sizes[surface] != 4, Dictionary());
+		} else {
+			indices[surface].resize_uninitialized(size_t(data.vertex_count) * sizeof(uint32_t));
+			uint32_t *index = reinterpret_cast<uint32_t *>(indices[surface].ptrw());
+			for (uint32_t i = 0; i < data.vertex_count; i++) {
 				index[i] = i;
 			}
+			index_sizes[surface] = sizeof(uint32_t);
 		}
-		ERR_FAIL_COND_V(indices[surface].size() % 3 != 0, Dictionary());
+		ERR_FAIL_COND_V((indices[surface].size() / index_sizes[surface]) % 3 != 0, Dictionary());
 	}
 	operation_ms["mesh_read"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
 
@@ -110,7 +133,7 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	capture_remaps.resize(surface_count);
 	int capture_corner_total = 0;
 	for (int surface = 0; surface < surface_count; surface++) {
-		capture_remaps[surface].resize(MIN(indices[surface].size() / 3, SURFACE_CAPTURE_TRIANGLES) * 3);
+		capture_remaps[surface].resize(MIN(indices[surface].size() / index_sizes[surface] / 3, SURFACE_CAPTURE_TRIANGLES) * 3);
 		capture_corner_total += capture_remaps[surface].size();
 	}
 	Vector<Vector2> capture_corners;
@@ -119,12 +142,14 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	for (int surface = 0; surface < surface_count; surface++) {
 		const int sides = p_surface_sides[surface];
 		ERR_FAIL_COND_V_MSG(sides != 1 && sides != 2, Dictionary(), "Surface Cache: a surface has one or two sides.");
-		const Vector3 *position = positions[surface].ptr();
-		const int *index = indices[surface].ptr();
-		const int corner_count = indices[surface].size();
+		const Vector3 *position = reinterpret_cast<const Vector3 *>(positions[surface].ptr());
+		const int vertex_count = positions[surface].size() / sizeof(Vector3);
+		const uint16_t *narrow = index_sizes[surface] == 2 ? reinterpret_cast<const uint16_t *>(indices[surface].ptr()) : nullptr;
+		const uint32_t *wide = reinterpret_cast<const uint32_t *>(indices[surface].ptr());
+		const int corner_count = indices[surface].size() / index_sizes[surface];
 		const Vector2i offset((surface % columns) * SURFACE_CAPTURE_CELL + SURFACE_CAPTURE_BORDER, (surface / columns) * SURFACE_CAPTURE_CELL + SURFACE_CAPTURE_BORDER);
 		AABB bounds(position[0], Vector3());
-		for (int i = 1; i < positions[surface].size(); i++) {
+		for (int i = 1; i < vertex_count; i++) {
 			bounds.expand_to(position[i]);
 		}
 		const int triangle_count = corner_count / 3;
@@ -132,29 +157,26 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 		const int capture_count = capture_remaps[surface].size() / 3;
 		for (int captured = 0; captured < capture_count; captured++) {
 			const int corner = int(int64_t(captured) * triangle_count / capture_count) * 3;
+			int vertex_index[3];
 			Vector3 vertex[3];
 			for (int c = 0; c < 3; c++) {
-				vertex[c] = position[index[corner + c]];
+				vertex_index[c] = narrow ? int(narrow[corner + c]) : int(wide[corner + c]);
+				vertex[c] = position[vertex_index[c]];
 			}
 			const int axis = (vertex[1] - vertex[0]).cross(vertex[2] - vertex[0]).abs().max_axis_index();
 			const int u = (axis + 1) % 3, v = (axis + 2) % 3;
 			for (int c = 0; c < 3; c++) {
 				const Vector2 square((vertex[c][u] - bounds.position[u]) / MAX(bounds.size[u], real_t(1e-6)), (vertex[c][v] - bounds.position[v]) / MAX(bounds.size[v], real_t(1e-6)));
 				pixel_write[captured * 3 + c] = Vector2(offset) + square * SURFACE_CAPTURE_SIZE;
-				capture_remap[captured * 3 + c] = index[corner + c];
+				capture_remap[captured * 3 + c] = vertex_index[c];
 			}
 		}
 		pixel_write += capture_count * 3;
-		Vector<uint8_t> ray_vertices;
-		ray_vertices.resize(positions[surface].size() * 12);
-		memcpy(ray_vertices.ptrw(), positions[surface].ptr(), ray_vertices.size());
-		vertex_data.push_back(ray_vertices);
-		Vector<uint8_t> ray_indices;
-		ray_indices.resize(corner_count * 4);
-		memcpy(ray_indices.ptrw(), index, ray_indices.size());
-		index_data.push_back(ray_indices);
+		vertex_data.push_back(positions[surface]);
+		index_data.push_back(indices[surface]);
 		Dictionary result_surface;
 		result_surface["offset"] = offset;
+		result_surface["index_size"] = index_sizes[surface];
 		result_surfaces.push_back(result_surface);
 	}
 	operation_ms["mesh_pack"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;

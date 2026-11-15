@@ -122,7 +122,7 @@ class SurfaceCacheWorldRD : public RefCounted {
 	void remove_instance(RID p_source);
 	void release_geometry(Geometry *p_geometry);
 	LocalVector<RID> vertex_buffers(const TypedArray<PackedByteArray> &p_vertex_data);
-	LocalVector<RID> index_buffers(const TypedArray<PackedByteArray> &p_index_data);
+	LocalVector<RID> index_buffers(const TypedArray<PackedByteArray> &p_index_data, const Geometry &p_geometry);
 	LocalVector<RID> copy_vertex_buffers(const Geometry &p_geometry);
 	RID create_blas(const LocalVector<RID> &p_vertices, const Geometry &p_geometry, bool p_build = true);
 	bool ensure_capacity();
