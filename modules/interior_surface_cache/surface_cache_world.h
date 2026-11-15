@@ -7,7 +7,6 @@
 class SurfaceCacheWorldRD : public RefCounted {
 	GDCLASS(SurfaceCacheWorldRD, RefCounted);
 	enum Buffer { SURFACES,
-		ORIENTATIONS,
 		MATERIALS,
 		LIGHTS,
 		MATERIAL_CHANGES,
@@ -32,13 +31,8 @@ class SurfaceCacheWorldRD : public RefCounted {
 		struct Surface {
 			int triangles = 0;
 			int vertices = 0;
-			// +1/-1 задают общую ориентацию; при нуле она хранится для каждого треугольника битом от orientation_bit.
-			int orientation = 0;
-			int orientation_bit = 0;
 		};
 		LocalVector<Surface> surfaces;
-		TypedArray<PackedByteArray> orientation_bits;
-		int orientation_offset = 0, orientation_words = 0;
 		LocalVector<RID> vertices, indices;
 		RID blas;
 	};
@@ -81,7 +75,7 @@ class SurfaceCacheWorldRD : public RefCounted {
 	LocalVector<Emitter> emitters;
 	PackedByteArray emitter_records;
 	int active_emitters = 0;
-	SurfaceCache::Ranges surface_ranges, orientation_ranges;
+	SurfaceCache::Ranges surface_ranges;
 	int64_t triangle_total = 0;
 	RID buffers[BUFFER_COUNT];
 	uint32_t capacities[BUFFER_COUNT] = {};

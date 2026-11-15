@@ -65,18 +65,17 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	const uint64_t attribute_formats = RSE::ARRAY_FORMAT_COLOR | RSE::ARRAY_FORMAT_TEX_UV | RSE::ARRAY_FORMAT_TEX_UV2 | RSE::ARRAY_FORMAT_CUSTOM0 | RSE::ARRAY_FORMAT_CUSTOM1 | RSE::ARRAY_FORMAT_CUSTOM2 | RSE::ARRAY_FORMAT_CUSTOM3 | RSE::ARRAY_FORMAT_BONES | RSE::ARRAY_FORMAT_WEIGHTS;
 	LocalVector<RenderingServerTypes::SurfaceData> sources;
 	LocalVector<Vector<Vector3>> positions;
-	LocalVector<Vector<Vector3>> normals;
 	LocalVector<Vector<int>> indices;
 	sources.resize(surface_count);
 	positions.resize(surface_count);
-	normals.resize(surface_count);
 	indices.resize(surface_count);
 	for (int surface = 0; surface < surface_count; ++surface) {
 		sources[surface] = p_source ? (*p_source)[surface] : server->mesh_get_surface(mesh_rid, surface);
 		const RenderingServerTypes::SurfaceData &data = sources[surface];
 		ERR_FAIL_COND_V(data.primitive != RSE::PRIMITIVE_TRIANGLES, Dictionary());
 		RenderingServerTypes::SurfaceData geometry;
-		geometry.format = data.format & ~attribute_formats;
+		// Нормали не читаются: лицевую сторону треугольника для лучей задаёт порядок обхода вершин, как у растра.
+		geometry.format = data.format & ~attribute_formats & ~uint64_t(RSE::ARRAY_FORMAT_NORMAL | RSE::ARRAY_FORMAT_TANGENT);
 		geometry.vertex_data = data.vertex_data;
 		geometry.vertex_count = data.vertex_count;
 		geometry.index_data = data.index_data;
@@ -84,7 +83,6 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 		geometry.aabb = data.aabb;
 		const Array arrays = server->mesh_create_arrays_from_surface_data(geometry);
 		positions[surface] = arrays[Mesh::ARRAY_VERTEX];
-		normals[surface] = arrays[Mesh::ARRAY_NORMAL];
 		indices[surface] = arrays[Mesh::ARRAY_INDEX];
 		ERR_FAIL_COND_V(positions[surface].is_empty(), Dictionary());
 		if (indices[surface].is_empty()) {
@@ -104,7 +102,6 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	operation_ms["mesh_layout"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
 
 	stage_start = OS::get_singleton()->get_ticks_usec();
-	Array orientation_data;
 	Array vertex_data;
 	Array index_data;
 	Array result_surfaces;
@@ -123,7 +120,6 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 		const int sides = p_surface_sides[surface];
 		ERR_FAIL_COND_V_MSG(sides != 1 && sides != 2, Dictionary(), "Surface Cache: a surface has one or two sides.");
 		const Vector3 *position = positions[surface].ptr();
-		const Vector3 *normal = normals[surface].is_empty() ? nullptr : normals[surface].ptr();
 		const int *index = indices[surface].ptr();
 		const int corner_count = indices[surface].size();
 		const Vector2i offset((surface % columns) * SURFACE_CAPTURE_CELL + SURFACE_CAPTURE_BORDER, (surface / columns) * SURFACE_CAPTURE_CELL + SURFACE_CAPTURE_BORDER);
@@ -131,46 +127,24 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 		for (int i = 1; i < positions[surface].size(); i++) {
 			bounds.expand_to(position[i]);
 		}
-		// Нормали вершин задают лицевую сторону; бит 1 означает совпадение с нормалью winding.
 		const int triangle_count = corner_count / 3;
-		Vector<uint32_t> bits;
-		bits.resize((triangle_count + 31) / 32);
-		bits.fill(0);
-		uint32_t *bit_write = bits.ptrw();
-		int along = 0;
 		int *capture_remap = capture_remaps[surface].ptrw();
 		const int capture_count = capture_remaps[surface].size() / 3;
-		int captured = 0;
-		for (int corner = 0; corner < corner_count; corner += 3) {
-			const int triangle = corner / 3;
+		for (int captured = 0; captured < capture_count; captured++) {
+			const int corner = int(int64_t(captured) * triangle_count / capture_count) * 3;
 			Vector3 vertex[3];
 			for (int c = 0; c < 3; c++) {
 				vertex[c] = position[index[corner + c]];
 			}
-			const Vector3 face = (vertex[1] - vertex[0]).cross(vertex[2] - vertex[0]);
-			if (captured < capture_count && triangle == int(int64_t(captured) * triangle_count / capture_count)) {
-				const int axis = face.abs().max_axis_index();
-				const int u = (axis + 1) % 3, v = (axis + 2) % 3;
-				for (int c = 0; c < 3; c++) {
-					const Vector2 square((vertex[c][u] - bounds.position[u]) / MAX(bounds.size[u], real_t(1e-6)), (vertex[c][v] - bounds.position[v]) / MAX(bounds.size[v], real_t(1e-6)));
-					pixel_write[captured * 3 + c] = Vector2(offset) + square * SURFACE_CAPTURE_SIZE;
-					capture_remap[captured * 3 + c] = index[corner + c];
-				}
-				++captured;
-			}
-			if (normal && normal[index[corner]].dot(face) > 0) {
-				bit_write[triangle >> 5] |= 1u << (triangle & 31);
-				++along;
+			const int axis = (vertex[1] - vertex[0]).cross(vertex[2] - vertex[0]).abs().max_axis_index();
+			const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+			for (int c = 0; c < 3; c++) {
+				const Vector2 square((vertex[c][u] - bounds.position[u]) / MAX(bounds.size[u], real_t(1e-6)), (vertex[c][v] - bounds.position[v]) / MAX(bounds.size[v], real_t(1e-6)));
+				pixel_write[captured * 3 + c] = Vector2(offset) + square * SURFACE_CAPTURE_SIZE;
+				capture_remap[captured * 3 + c] = index[corner + c];
 			}
 		}
 		pixel_write += capture_count * 3;
-		PackedByteArray orientation_bits;
-		int orientation = along == triangle_count ? 1 : (along == 0 ? -1 : 0);
-		if (orientation == 0) {
-			orientation_bits.resize(bits.size() * 4);
-			memcpy(orientation_bits.ptrw(), bits.ptr(), orientation_bits.size());
-		}
-		orientation_data.push_back(orientation_bits);
 		Vector<uint8_t> ray_vertices;
 		ray_vertices.resize(positions[surface].size() * 12);
 		memcpy(ray_vertices.ptrw(), positions[surface].ptr(), ray_vertices.size());
@@ -181,7 +155,6 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 		index_data.push_back(ray_indices);
 		Dictionary result_surface;
 		result_surface["offset"] = offset;
-		result_surface["orientation"] = orientation;
 		result_surfaces.push_back(result_surface);
 	}
 	operation_ms["mesh_pack"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
@@ -241,7 +214,6 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	result["operation_ms"] = operation_ms;
 	result["layout"] = layout;
 	result["mesh"] = capture_mesh;
-	result["orientation_data"] = orientation_data;
 	result["vertex_data"] = vertex_data;
 	result["index_data"] = index_data;
 	return result;

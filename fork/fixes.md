@@ -27,3 +27,6 @@
 
 - **Release-сборка не отклоняет любой индексный буфер при создании BLAS: `max_index` известен только с DEBUG_ENABLED** —
   [rendering_device.cpp](../servers/rendering/rendering_device.cpp).
+
+- **Разбор сжатой поверхности без нормалей возвращает позиции: массив заполнялся и терялся** —
+  [rendering_server.cpp](../servers/rendering/rendering_server.cpp).
