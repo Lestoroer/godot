@@ -8,7 +8,6 @@ layout(set = 1, binding = 38, std430) readonly buffer SurfaceCacheHashRooms { uv
 layout(set = 1, binding = 41) uniform texture2D surface_cache_gather;
 layout(set = 1, binding = 43) uniform texture2D surface_cache_reflection;
 
-const float SURFACE_CACHE_HASH_CELL = 0.08;
 const float SURFACE_CACHE_HASH_NEAR = 12.0;
 const float SURFACE_CACHE_HASH_ROOM_PROBE = 0.05;
 // Сдвиг слоёв ячеек вдоль главной оси грани в долях шага (HASH_LAYER_SHIFT игры).
@@ -23,6 +22,11 @@ uint surface_cache_hash(uint x) {
 	x ^= x >> 15u;
 	x *= 0x846ca68bu;
 	return x ^ (x >> 16u);
+}
+
+// Шаг ячеек у камеры, м: игра пишет его битами float во второе слово заголовка помещений (world_hash_cache.gd).
+float surface_cache_hash_cell() {
+	return uintBitsToFloat(surface_cache_hash_rooms.header.y);
 }
 
 uint surface_cache_hash_room(vec3 position) {
@@ -62,7 +66,7 @@ bool surface_cache_hash_light(uvec2 key, out vec3 light) {
 }
 
 bool surface_cache_hash_smooth(vec3 position, uint axis, uint tag, uint level, out vec3 light) {
-	vec3 scaled = position / (SURFACE_CACHE_HASH_CELL * float(1u << level));
+	vec3 scaled = position / (surface_cache_hash_cell() * float(1u << level));
 	scaled[axis] += SURFACE_CACHE_HASH_LAYER_SHIFT;
 	ivec3 cell = ivec3(floor(scaled));
 	uint u = (axis + 1u) % 3u, v = (axis + 2u) % 3u;
