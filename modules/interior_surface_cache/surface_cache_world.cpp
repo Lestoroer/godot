@@ -466,11 +466,13 @@ LocalVector<RID> SurfaceCacheWorldRD::vertex_buffers(const TypedArray<PackedByte
 	return result;
 }
 
-LocalVector<RID> SurfaceCacheWorldRD::index_buffers(const TypedArray<PackedByteArray> &p_index_data) {
+// Индексы — в ширине меша: 16 или 32 бита.
+LocalVector<RID> SurfaceCacheWorldRD::index_buffers(const TypedArray<PackedByteArray> &p_index_data, const Geometry &p_geometry) {
 	LocalVector<RID> result;
 	for (int i = 0; i < p_index_data.size(); ++i) {
 		PackedByteArray data = p_index_data[i];
-		result.push_back(device->index_buffer_create(data.size() / 4, RD::INDEX_BUFFER_FORMAT_UINT32, data, false, RAY_GEOMETRY_BITS));
+		const uint32_t count = p_geometry.surfaces[i].triangles * 3;
+		result.push_back(device->index_buffer_create(count, data.size() / count == 2 ? RD::INDEX_BUFFER_FORMAT_UINT16 : RD::INDEX_BUFFER_FORMAT_UINT32, data, false, RAY_GEOMETRY_BITS));
 	}
 	return result;
 }
@@ -536,11 +538,13 @@ bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<R
 		geometry->columns = geometry->size.x / (geometry->square + 2);
 		TypedArray<PackedByteArray> vertex_data = prepared["vertex_data"];
 		TypedArray<PackedByteArray> index_data = prepared["index_data"];
+		Array layout_surfaces = layout["surfaces"];
 		for (int i = 0; i < vertex_data.size(); ++i) {
-			geometry->surfaces.push_back({ int(PackedByteArray(index_data[i]).size() / 12), int(PackedByteArray(vertex_data[i]).size() / 12) });
+			const int index_size = Dictionary(layout_surfaces[i])["index_size"];
+			geometry->surfaces.push_back({ int(PackedByteArray(index_data[i]).size() / (3 * index_size)), int(PackedByteArray(vertex_data[i]).size() / 12) });
 		}
 		geometry->vertices = vertex_buffers(vertex_data);
-		geometry->indices = index_buffers(index_data);
+		geometry->indices = index_buffers(index_data, *geometry);
 		geometry->blas = create_blas(geometry->vertices, *geometry);
 		capture_dimensions = capture_dimensions.max(geometry->size);
 		geometries.insert(key, geometry);
