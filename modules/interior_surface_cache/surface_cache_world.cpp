@@ -16,8 +16,8 @@
 using namespace SurfaceCache;
 bool SurfaceCacheWorldRD::measure_gpu_time = false;
 double SurfaceCacheWorldRD::gpu_time_ms = 0;
-static const char *buffer_names[] = { "surfaces", "orientations", "materials", "lights", "material_changes", "surface_flags" };
-static constexpr uint32_t MATERIAL_BYTES = 64, SURFACE_BYTES = 32, LIGHT_BYTES = 64;
+static const char *buffer_names[] = { "surfaces", "materials", "lights", "material_changes", "surface_flags" };
+static constexpr uint32_t MATERIAL_BYTES = 64, SURFACE_BYTES = 16, LIGHT_BYTES = 64;
 // Тип записи источника для светящегося прямоугольника: после типов RSE::LightType (cache_trace, LIGHT_EMITTER).
 static constexpr float LIGHT_EMITTER = 4.0f;
 static constexpr uint32_t PAGE_BYTES = 2097152;
@@ -433,7 +433,7 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 	mark("SurfaceCache gather begin" + suffix, true);
 	uint64_t start = OS::get_singleton()->get_ticks_usec();
 	TypedArray<RID> scene;
-	for (Buffer buffer : { SURFACES, ORIENTATIONS, MATERIALS, LIGHTS }) {
+	for (Buffer buffer : { SURFACES, MATERIALS, LIGHTS }) {
 		scene.push_back(buffers[buffer]);
 	}
 	Vector2 taa_jitter;
@@ -534,20 +534,10 @@ bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<R
 		geometry->size = layout["size"];
 		geometry->square = layout["capture_size"];
 		geometry->columns = geometry->size.x / (geometry->square + 2);
-		Array layout_surfaces = layout["surfaces"];
 		TypedArray<PackedByteArray> vertex_data = prepared["vertex_data"];
 		TypedArray<PackedByteArray> index_data = prepared["index_data"];
-		geometry->orientation_bits = prepared["orientation_data"];
 		for (int i = 0; i < vertex_data.size(); ++i) {
-			const Dictionary surface = layout_surfaces[i];
-			geometry->surfaces.push_back({ int(PackedByteArray(index_data[i]).size() / 12), int(PackedByteArray(vertex_data[i]).size() / 12), int(surface["orientation"]), geometry->orientation_words * 32 });
-			geometry->orientation_words += PackedByteArray(geometry->orientation_bits[i]).size() / 4;
-		}
-		if (geometry->orientation_words > 0) {
-			geometry->orientation_offset = orientation_ranges.allocate(geometry->orientation_words);
-			for (Geometry::Surface &surface : geometry->surfaces) {
-				surface.orientation_bit += geometry->orientation_offset * 32;
-			}
+			geometry->surfaces.push_back({ int(PackedByteArray(index_data[i]).size() / 12), int(PackedByteArray(vertex_data[i]).size() / 12) });
 		}
 		geometry->vertices = vertex_buffers(vertex_data);
 		geometry->indices = index_buffers(index_data);
@@ -650,7 +640,6 @@ void SurfaceCacheWorldRD::required_sizes(uint32_t *r_sizes) const {
 	const uint32_t surfaces = Math::nearest_power_of_2_templated(MAX(1u, uint32_t(surface_ranges.extent)));
 	const uint32_t sizes[BUFFER_COUNT] = {
 		surfaces * SURFACE_BYTES,
-		MAX(16u, uint32_t(orientation_ranges.extent) * 4),
 		surfaces * MATERIAL_BYTES,
 		MAX(LIGHT_BYTES, Math::nearest_power_of_2_templated(uint32_t(emitters.size() + lights.size())) * LIGHT_BYTES), 16,
 		MAX(16u, surfaces * 4)
@@ -707,18 +696,8 @@ void SurfaceCacheWorldRD::update_geometry(Instance &state) {
 
 void SurfaceCacheWorldRD::write_surfaces(Instance &state) {
 	Geometry &geometry = *state.shared;
-	if (!geometry.orientation_bits.is_empty()) {
-		int written = 0;
-		for (int surface = 0; surface < geometry.orientation_bits.size(); ++surface) {
-			PackedByteArray bits = geometry.orientation_bits[surface];
-			device->buffer_update(buffers[ORIENTATIONS], (geometry.orientation_offset + written) * 4, bits.size(), bits.ptr());
-			written += bits.size() / 4;
-		}
-		geometry.orientation_bits.clear();
-	}
 	for (uint32_t surface = 0; surface < geometry.surfaces.size(); ++surface) {
-		const Geometry::Surface &record = geometry.surfaces[surface];
-		const int32_t mapping[] = { record.orientation, record.orientation_bit, 0, 0, state.sides[surface], 0, 0, 0 };
+		const int32_t mapping[] = { state.sides[surface], 0, 0, 0 };
 		device->buffer_update(buffers[SURFACES], (state.first_surface + surface) * SURFACE_BYTES, sizeof(mapping), mapping);
 	}
 	state.surfaces_written = true;
@@ -993,9 +972,6 @@ void SurfaceCacheWorldRD::release_geometry(Geometry *geometry) {
 	}
 	for (RID rid : geometry->indices) {
 		device->free_rid(rid);
-	}
-	if (geometry->orientation_words > 0) {
-		orientation_ranges.release(geometry->orientation_offset, geometry->orientation_words);
 	}
 	geometries.erase(geometry->key);
 	memdelete(geometry);
