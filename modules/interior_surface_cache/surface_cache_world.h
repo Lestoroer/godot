@@ -9,7 +9,7 @@ class SurfaceCacheWorldRD : public RefCounted {
 	enum Buffer { SURFACES,
 		MATERIALS,
 		LIGHTS,
-		MATERIAL_CHANGES,
+		WORLD_EVENTS,
 		SURFACE_FLAGS,
 		BUFFER_COUNT };
 	enum Pass { POSE,
@@ -102,6 +102,8 @@ class SurfaceCacheWorldRD : public RefCounted {
 	bool initialized = false, disposed = false, opacity_pending = false, opacity_requested = false;
 	uint64_t capture_serial = 0, next_generation = 0;
 	int64_t frame = 0;
+	// Часы мира, с: идут с его кадрами. По ним считается возраст событий мира; от видов и их кадров они не зависят.
+	double world_seconds = 0;
 	Vector3 view_origin;
 	bool has_view = false;
 	int64_t prepared_triangles = 0;
