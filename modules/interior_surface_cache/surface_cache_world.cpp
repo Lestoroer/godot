@@ -16,7 +16,9 @@
 using namespace SurfaceCache;
 bool SurfaceCacheWorldRD::measure_gpu_time = false;
 double SurfaceCacheWorldRD::gpu_time_ms = 0;
-static const char *buffer_names[] = { "surfaces", "materials", "lights", "world_events", "surface_flags" };
+static const char *buffer_names[] = { "surfaces", "materials", "lights", "world_events", "surface_flags", "changes" };
+// Запись изменений предметов мира (cache_types игры: WORLD_CHANGES): заголовок и узлы деревьев рамок — пары углов.
+static constexpr uint32_t CHANGE_HEADER_BYTES = 32, CHANGE_NODE_BYTES = 32;
 // Запись событий мира (cache_types игры: WorldEvents): часы мира, мс, и время последней смены свечения по ним;
 // EVENT_NEVER — её ещё не было.
 static constexpr uint32_t WORLD_EVENTS_BYTES = 16, EVENT_NEVER = 0xFFFFFFFF;
@@ -115,6 +117,11 @@ bool SurfaceCacheWorldRD::initialize_gpu() {
 	if (!bool(world_hash->call("initialize", device))) {
 		return fail(world_hash->get("error"));
 	}
+	change_seconds = world_hash->get("CHANGE_SECONDS");
+	change_margin = world_hash->get("CHANGE_MARGIN");
+	if (change_seconds <= 0 || change_margin <= 0 || world_hash->get("resolve_count").get_type() != Variant::INT) {
+		return fail("Surface Cache world hash does not declare CHANGE_SECONDS, CHANGE_MARGIN and resolve_count");
+	}
 	String gather_failure;
 	if (!bool(call_script(gather.ptr(), SNAME("initialize"), gather_failure, device, world_hash))) {
 		return fail(gather_failure.is_empty() ? String(gather->get("error")) : gather_failure);
@@ -129,6 +136,10 @@ void SurfaceCacheWorldRD::render_frame() {
 	if (disposed || !error.is_empty() || (!initialized && !initialize_gpu())) {
 		return;
 	}
+	// Часы мира — до событий кадра: начало сетки и изменения предметов датируются уже его временем.
+	const double frame_seconds = RSG::rasterizer->get_frame_delta_time();
+	world_seconds += frame_seconds;
+	world_hash->call("begin_frame", frame_seconds, world_seconds);
 	if (rooms_dirty) {
 		world_hash->call("set_rooms", rooms);
 		rooms_dirty = false;
@@ -136,9 +147,6 @@ void SurfaceCacheWorldRD::render_frame() {
 	if (measure_gpu_time) {
 		read_gpu_time();
 	}
-	const double frame_seconds = RSG::rasterizer->get_frame_delta_time();
-	world_seconds += frame_seconds;
-	world_hash->call("begin_frame", frame_seconds, world_seconds);
 	uint64_t start = OS::get_singleton()->get_ticks_usec();
 	int64_t previous_frame = frame;
 	update_world();
@@ -262,7 +270,7 @@ void SurfaceCacheWorldRD::update_world() {
 		} else {
 			Instance &state = *instances[source];
 			AABB bounds = change["bounds"];
-			note_dirty(state.bounds.merge(bounds));
+			note_dirty(source, state.bounds.merge(bounds));
 			state.bounds = bounds;
 			if (kind == REPLACE) {
 				remove_instance(source);
@@ -354,8 +362,11 @@ void SurfaceCacheWorldRD::update_world() {
 		return;
 	}
 	RenderingServer::get_singleton()->scenario_set_surface_cache_buffers(scenario, world_hash->call("engine_buffers"));
-	world_hash->call("note_changes", dirty_bounds, light_changes, sun_changed || sky_changed);
-	dirty_bounds.clear();
+	const bool objects_changed = !pending_changes.is_empty();
+	if (!write_changes()) {
+		return;
+	}
+	world_hash->call("note_changes", objects_changed, light_changes, sun_changed || sky_changed);
 	light_changes.clear();
 	sun_changed = false;
 	sky_changed = false;
@@ -446,7 +457,7 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 		taa_jitter = scene_data->taa_jitter;
 	}
 	String gather_error;
-	Variant texture = call_script(gather.ptr(), SNAME("render"), gather_error, data, profile, scene, tlas, buffers[WORLD_EVENTS], active_emitters + lights.size(), active_emitters, frame_moves, RSG::rasterizer->get_frame_delta_time(), taa_jitter);
+	Variant texture = call_script(gather.ptr(), SNAME("render"), gather_error, data, profile, scene, tlas, buffers[WORLD_EVENTS], buffers[CHANGES], active_emitters + lights.size(), active_emitters, frame_moves, RSG::rasterizer->get_frame_delta_time(), taa_jitter);
 	counters.gather_ms += milliseconds(start);
 	mark("SurfaceCache gather end" + suffix, true);
 	if (gather_error.is_empty()) {
@@ -585,7 +596,7 @@ bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<R
 	}
 	RenderingServer::get_singleton()->instance_set_surface_cache_ids(state->source, ids);
 	tlas_added.push_back(state->source);
-	note_dirty(state->bounds);
+	note_dirty(state->source, state->bounds);
 	instances.insert(state->source, state);
 	capacity_dirty = true;
 	return error.is_empty();
@@ -654,7 +665,8 @@ void SurfaceCacheWorldRD::required_sizes(uint32_t *r_sizes) const {
 		surfaces * SURFACE_BYTES,
 		surfaces * MATERIAL_BYTES,
 		MAX(LIGHT_BYTES, Math::nearest_power_of_2_templated(uint32_t(emitters.size() + lights.size())) * LIGHT_BYTES), WORLD_EVENTS_BYTES,
-		MAX(16u, surfaces * 4)
+		MAX(16u, surfaces * 4),
+		MAX(CHANGE_HEADER_BYTES, change_bytes)
 	};
 	memcpy(r_sizes, sizes, sizeof(sizes));
 }
@@ -855,7 +867,7 @@ void SurfaceCacheWorldRD::receive_opacity(const PackedByteArray &data, uint64_t 
 			state.opaque = opaque;
 			tlas_updates.insert(source, true);
 			if (lost) {
-				note_dirty(state.bounds);
+				note_dirty(source, state.bounds);
 			}
 		}
 	}
@@ -935,8 +947,124 @@ void SurfaceCacheWorldRD::note_light_change(const PackedByteArray &previous, con
 	light_changes.push_back(pair);
 }
 
-void SurfaceCacheWorldRD::note_dirty(const AABB &bounds) {
-	dirty_bounds.push_back(bounds.grow(0.001));
+void SurfaceCacheWorldRD::note_dirty(RID source, const AABB &bounds) {
+	pending_changes.push_back({ source, bounds });
+}
+
+struct AreaCenterLess {
+	int axis = 0;
+	bool operator()(const AABB &p_a, const AABB &p_b) const {
+		return p_a.position[axis] * 2 + p_a.size[axis] < p_b.position[axis] * 2 + p_b.size[axis];
+	}
+};
+
+// Дерево рамок areas с запасом margin — в r_data, узлы в порядке обхода в глубину. Узел — пара углов рамки всех
+// рамок под ним; w нижнего угла — номер узла от начала дерева (tree_start), к которому поиск на GPU переходит, если
+// точка или отрезок рамку узла не задели; w верхнего — единица у листа, рамки изменения. Узел делит свои рамки
+// пополам по самой длинной оси их центров; порядок areas при этом меняется.
+static void append_tree(AABB *areas, uint32_t count, real_t margin, uint32_t tree_start, LocalVector<float> &r_data) {
+	AABB bounds = areas[0];
+	AABB centers(areas[0].get_center(), Vector3());
+	for (uint32_t i = 1; i < count; ++i) {
+		bounds.merge_with(areas[i]);
+		centers.expand_to(areas[i].get_center());
+	}
+	bounds.grow_by(margin);
+	const Vector3 end = bounds.get_end();
+	const uint32_t node = r_data.size();
+	for (float value : { float(bounds.position.x), float(bounds.position.y), float(bounds.position.z), 0.0f, float(end.x), float(end.y), float(end.z), count == 1 ? 1.0f : 0.0f }) {
+		r_data.push_back(value);
+	}
+	if (count > 1) {
+		SortArray<AABB, AreaCenterLess> sorter;
+		sorter.compare.axis = centers.get_longest_axis_index();
+		sorter.nth_element(0, count, count / 2, areas);
+		append_tree(areas, count / 2, margin, tree_start, r_data);
+		append_tree(areas + count / 2, count - count / 2, margin, tree_start, r_data);
+	}
+	r_data[node + 3] = float((r_data.size() - tree_start) / (CHANGE_NODE_BYTES / 4));
+}
+
+// Запись изменений предметов мира для GPU. У предмета одна рамка на его изменения, которые мировой кеш ещё не
+// свёл, — по ним сведение отправляет ячейки в работу — и одна на все его изменения, которые мир ещё помнит: по ним
+// виды решают, годится ли история. Рамок столько, сколько предметов менялось: общей рамки на всех нет. Рамки
+// каждого рода сложены в дерево: поиск на GPU не перебирает их все.
+bool SurfaceCacheWorldRD::write_changes() {
+	// Рамки ждут кеша до его сведения, а не до конца кадра: кадр мира без сведения — без кадра вида — их не теряет.
+	const int64_t resolve_count = world_hash->get("resolve_count");
+	if (resolve_count != changes_resolve_count) {
+		awaiting_changes.clear();
+		changes_resolve_count = resolve_count;
+	}
+	for (const Pair<RID, AABB> &change : pending_changes) {
+		if (AABB *awaiting = awaiting_changes.getptr(change.first)) {
+			awaiting->merge_with(change.second);
+		} else {
+			awaiting_changes.insert(change.first, change.second);
+		}
+		// Изменения одного момента часов мира — одна запись: пока часы стоят, список предмета не растёт.
+		LocalVector<Change> &list = remembered_changes[change.first];
+		if (!list.is_empty() && list[list.size() - 1].seconds == world_seconds) {
+			list[list.size() - 1].bounds.merge_with(change.second);
+		} else {
+			list.push_back({ change.second, world_seconds });
+		}
+	}
+	pending_changes.clear();
+	LocalVector<AABB> awaiting, remembered;
+	for (const KeyValue<RID, AABB> &entry : awaiting_changes) {
+		awaiting.push_back(entry.value);
+	}
+	LocalVector<RID> forgotten;
+	for (KeyValue<RID, LocalVector<Change>> &entry : remembered_changes) {
+		LocalVector<Change> &list = entry.value;
+		uint32_t expired = 0;
+		while (expired < list.size() && world_seconds - list[expired].seconds >= change_seconds) {
+			++expired;
+		}
+		for (uint32_t i = expired; i < list.size(); ++i) {
+			list[i - expired] = list[i];
+		}
+		list.resize(list.size() - expired);
+		if (list.is_empty()) {
+			forgotten.push_back(entry.key);
+			continue;
+		}
+		AABB bounds = list[0].bounds;
+		for (uint32_t i = 1; i < list.size(); ++i) {
+			bounds.merge_with(list[i].bounds);
+		}
+		remembered.push_back(bounds);
+	}
+	for (RID source : forgotten) {
+		remembered_changes.erase(source);
+	}
+	// У дерева из n рамок 2n − 1 узел.
+	const uint32_t counts[] = { awaiting.is_empty() ? 0 : awaiting.size() * 2 - 1, remembered.is_empty() ? 0 : remembered.size() * 2 - 1, 0, 0 };
+	const uint32_t nodes = counts[0] + counts[1];
+	if (nodes == 0 && change_nodes == 0) {
+		return true;
+	}
+	LocalVector<float> data;
+	data.resize(CHANGE_HEADER_BYTES / 4);
+	const float margin[] = { float(change_margin), 0.0f, 0.0f, 0.0f };
+	memcpy(data.ptr(), counts, sizeof(counts));
+	memcpy(data.ptr() + 4, margin, sizeof(margin));
+	for (LocalVector<AABB> *areas : { &awaiting, &remembered }) {
+		if (!areas->is_empty()) {
+			append_tree(areas->ptr(), areas->size(), change_margin, data.size(), data);
+		}
+	}
+	change_nodes = nodes;
+	change_bytes = CHANGE_HEADER_BYTES + nodes * CHANGE_NODE_BYTES;
+	if (change_bytes > capacities[CHANGES]) {
+		capacity_dirty = true;
+		if (!ensure_capacity()) {
+			return false;
+		}
+	}
+	device->buffer_update(buffers[CHANGES], 0, change_bytes, data.ptr());
+	return true;
 }
 
 // Прямоугольники идут первыми: зонды перебирают только их (GatherView.probe_settings.y).
@@ -955,7 +1083,7 @@ void SurfaceCacheWorldRD::upload_lights() {
 void SurfaceCacheWorldRD::remove_instance(RID source) {
 	Instance *state = instances[source];
 	tlas_updates.erase(source);
-	note_dirty(state->bounds);
+	note_dirty(source, state->bounds);
 	RenderingServer::get_singleton()->instance_set_surface_cache_ids(source, PackedInt32Array());
 	triangle_total -= state->triangle_count;
 	surface_ranges.release(state->first_surface, state->shared->surfaces.size());
