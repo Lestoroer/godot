@@ -11,6 +11,7 @@ class SurfaceCacheWorldRD : public RefCounted {
 		LIGHTS,
 		WORLD_EVENTS,
 		SURFACE_FLAGS,
+		CHANGES,
 		BUFFER_COUNT };
 	enum Pass { POSE,
 		MATERIAL,
@@ -88,7 +89,24 @@ class SurfaceCacheWorldRD : public RefCounted {
 	Array rooms;
 	bool rooms_dirty = false, lights_dirty = true, sun_changed = false, sky_changed = false;
 	TypedArray<PackedByteArray> light_changes;
-	TypedArray<AABB> dirty_bounds;
+	// Изменение предмета: рамка его мест до и после и время по часам мира.
+	struct Change {
+		AABB bounds;
+		double seconds = 0;
+	};
+	// Изменения предметов. pending_changes — замеченные после прошлой записи кадра мира. awaiting_changes — рамки,
+	// которые мировой кеш ещё не свёл, у предмета одна: ждут его сведения сколько угодно. remembered_changes —
+	// недавние изменения для истории изображения, по порядку времени: мир помнит их change_seconds. Срок памяти и
+	// запас рамок задаёт мировой кеш игры (CHANGE_SECONDS, CHANGE_MARGIN).
+	LocalVector<Pair<RID, AABB>> pending_changes;
+	HashMap<RID, AABB> awaiting_changes;
+	HashMap<RID, LocalVector<Change>> remembered_changes;
+	double change_seconds = 0, change_margin = 0;
+	// Счётчик сведений мирового кеша (world_hash_cache: resolve_count) при последней записи изменений: сведение
+	// после неё получило рамки, которые его ждали.
+	int64_t changes_resolve_count = 0;
+	// Узлов деревьев рамок в записи изменений на GPU и её размер, байт.
+	uint32_t change_nodes = 0, change_bytes = 0;
 	RID tlas, dummy;
 	int tlas_capacity = 0;
 	LocalVector<RD::AccelerationStructureInstance> tlas_instances;
@@ -139,7 +157,8 @@ class SurfaceCacheWorldRD : public RefCounted {
 	PackedByteArray encode_light(const Dictionary &p_light);
 	PackedByteArray encode_emitters(int &r_count) const;
 	void note_light_change(const PackedByteArray &p_previous, const PackedByteArray &p_current);
-	void note_dirty(const AABB &p_bounds);
+	void note_dirty(RID p_source, const AABB &p_bounds);
+	bool write_changes();
 	void upload_lights();
 	void request_opacity();
 	void receive_opacity(const PackedByteArray &p_data, uint64_t p_serial, const Array &p_states);
