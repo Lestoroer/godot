@@ -16,7 +16,10 @@
 using namespace SurfaceCache;
 bool SurfaceCacheWorldRD::measure_gpu_time = false;
 double SurfaceCacheWorldRD::gpu_time_ms = 0;
-static const char *buffer_names[] = { "surfaces", "materials", "lights", "material_changes", "surface_flags" };
+static const char *buffer_names[] = { "surfaces", "materials", "lights", "world_events", "surface_flags" };
+// Запись событий мира (cache_types игры: WorldEvents): часы мира, мс, и время последней смены свечения по ним;
+// EVENT_NEVER — её ещё не было.
+static constexpr uint32_t WORLD_EVENTS_BYTES = 16, EVENT_NEVER = 0xFFFFFFFF;
 static constexpr uint32_t MATERIAL_BYTES = 64, SURFACE_BYTES = 16, LIGHT_BYTES = 64;
 // Тип записи источника для светящегося прямоугольника: после типов RSE::LightType (cache_trace, LIGHT_EMITTER).
 static constexpr float LIGHT_EMITTER = 4.0f;
@@ -133,7 +136,9 @@ void SurfaceCacheWorldRD::render_frame() {
 	if (measure_gpu_time) {
 		read_gpu_time();
 	}
-	world_hash->call("begin_frame", RSG::rasterizer->get_frame_delta_time());
+	const double frame_seconds = RSG::rasterizer->get_frame_delta_time();
+	world_seconds += frame_seconds;
+	world_hash->call("begin_frame", frame_seconds, world_seconds);
 	uint64_t start = OS::get_singleton()->get_ticks_usec();
 	int64_t previous_frame = frame;
 	update_world();
@@ -150,9 +155,6 @@ static String geometry_key(const Dictionary &change) {
 
 void SurfaceCacheWorldRD::update_world() {
 	frame_moves.clear();
-	if (buffers[MATERIAL_CHANGES].is_valid()) {
-		device->buffer_clear(buffers[MATERIAL_CHANGES], 0, 16);
-	}
 	const int capture_limit = frame > 0 ? UPDATE_CAPTURE_LIMIT : INT_MAX;
 	const double budget_ms = frame > 0 ? UPDATE_BUDGET_MS : STARTUP_BUDGET_MS;
 	Array changes = take_changes();
@@ -308,6 +310,9 @@ void SurfaceCacheWorldRD::update_world() {
 	if (!ensure_capacity()) {
 		return;
 	}
+	// Часы мира — до сведения материалов: смену свечения оно отмечает их временем.
+	const uint32_t world_milliseconds = uint32_t(uint64_t(world_seconds * 1000.0));
+	device->buffer_update(buffers[WORLD_EVENTS], 0, sizeof(world_milliseconds), &world_milliseconds);
 	mark("SurfaceCache update begin", true);
 	for (Instance *state : dirty) {
 		if (!state->surfaces_written) {
@@ -441,7 +446,7 @@ String SurfaceCacheWorldRD::render_view(RenderData *data) {
 		taa_jitter = scene_data->taa_jitter;
 	}
 	String gather_error;
-	Variant texture = call_script(gather.ptr(), SNAME("render"), gather_error, data, profile, scene, tlas, buffers[MATERIAL_CHANGES], active_emitters + lights.size(), active_emitters, frame_moves, RSG::rasterizer->get_frame_delta_time(), taa_jitter);
+	Variant texture = call_script(gather.ptr(), SNAME("render"), gather_error, data, profile, scene, tlas, buffers[WORLD_EVENTS], active_emitters + lights.size(), active_emitters, frame_moves, RSG::rasterizer->get_frame_delta_time(), taa_jitter);
 	counters.gather_ms += milliseconds(start);
 	mark("SurfaceCache gather end" + suffix, true);
 	if (gather_error.is_empty()) {
@@ -629,6 +634,9 @@ bool SurfaceCacheWorldRD::ensure_capacity() {
 			device->free_rid(buffers[i]);
 		}
 		device->buffer_clear(replacement, current, size - current);
+		if (i == WORLD_EVENTS && current == 0) {
+			device->buffer_update(replacement, 4, sizeof(EVENT_NEVER), &EVENT_NEVER);
+		}
 		buffers[i] = replacement;
 		capacities[i] = size;
 	}
@@ -645,7 +653,7 @@ void SurfaceCacheWorldRD::required_sizes(uint32_t *r_sizes) const {
 	const uint32_t sizes[BUFFER_COUNT] = {
 		surfaces * SURFACE_BYTES,
 		surfaces * MATERIAL_BYTES,
-		MAX(LIGHT_BYTES, Math::nearest_power_of_2_templated(uint32_t(emitters.size() + lights.size())) * LIGHT_BYTES), 16,
+		MAX(LIGHT_BYTES, Math::nearest_power_of_2_templated(uint32_t(emitters.size() + lights.size())) * LIGHT_BYTES), WORLD_EVENTS_BYTES,
 		MAX(16u, surfaces * 4)
 	};
 	memcpy(r_sizes, sizes, sizeof(sizes));
@@ -723,7 +731,7 @@ void SurfaceCacheWorldRD::capture_material(Instance &state) {
 	const int surface_count = geometry.surfaces.size();
 	device->buffer_clear(buffers[SURFACE_FLAGS], state.first_surface * 4, surface_count * 4);
 	LocalVector<RD::Uniform> bindings;
-	for (RID rid : { buffers[MATERIALS], buffers[MATERIAL_CHANGES], buffers[SURFACE_FLAGS] }) {
+	for (RID rid : { buffers[MATERIALS], buffers[WORLD_EVENTS], buffers[SURFACE_FLAGS] }) {
 		bindings.push_back(uniform(bindings.size(), RD::UNIFORM_TYPE_STORAGE_BUFFER, rid));
 	}
 	TypedArray<RID> textures = capture->get("textures");
