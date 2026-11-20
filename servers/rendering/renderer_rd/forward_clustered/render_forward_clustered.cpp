@@ -3169,10 +3169,6 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	stamp("enable_shaders");
 	_update_render_base_uniform_set();
 	stamp("base_uniform");
-	if (!surface_cache_capture_samplers_allocated) {
-		surface_cache_capture_samplers = RendererRD::MaterialStorage::get_singleton()->samplers_rd_allocate(0.0f, RSE::VIEWPORT_ANISOTROPY_DISABLED, true);
-		surface_cache_capture_samplers_allocated = true;
-	}
 	uint32_t uniform_buffer_index = _setup_environment(&render_data, true, RD::get_singleton()->framebuffer_get_size(p_framebuffer), p_region.size, Color());
 	stamp("environment");
 	_fill_render_list(RENDER_LIST_SURFACE_CACHE_CAPTURE, &render_data, PASS_MODE_DEPTH_MATERIAL);
@@ -3180,7 +3176,7 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	stamp("list");
 	_fill_instance_data(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, 0, -1, true, chart);
 	stamp("instance_data");
-	RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, RID(), surface_cache_capture_samplers, uniform_buffer_index);
+	RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, RID(), RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default(), uniform_buffer_index);
 	RenderListParameters params(render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].element_info.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
 	params.capture_geometry = chart;
 	Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
@@ -5527,12 +5523,6 @@ RenderForwardClustered::~RenderForwardClustered() {
 			scene_state.instance_buffer[i].uninit();
 		}
 		memdelete_arr(scene_state.lightmap_captures);
-	}
-
-	// lestoroer#gi
-	if (surface_cache_capture_samplers_allocated) {
-		RendererRD::MaterialStorage::get_singleton()->samplers_rd_free(surface_cache_capture_samplers);
-		surface_cache_capture_samplers_allocated = false;
 	}
 
 	while (sdfgi_framebuffer_size_cache.begin()) {

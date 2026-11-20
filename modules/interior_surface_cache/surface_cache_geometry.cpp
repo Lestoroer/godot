@@ -149,7 +149,7 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 		const Vector2i offset((surface % columns) * SURFACE_CAPTURE_SIZE, (surface / columns) * SURFACE_CAPTURE_SIZE);
 		capture_remaps[surface].resize(SURFACE_CAPTURE_SAMPLES * 3);
 		int *capture_remap = capture_remaps[surface].ptrw();
-		constexpr float HALF_SPAN = 0.45f;
+		constexpr float HALF_SPAN = 0.95f;
 		for (int sample = 0; sample < SURFACE_CAPTURE_SAMPLES; sample++) {
 			int tri = 0;
 			if (total_area > 0.0) {
@@ -177,7 +177,7 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 				u = 1.0 - u;
 				v = 1.0 - v;
 			}
-			const Vector2 shift(float(0.02 + 0.94 * u), float(0.02 + 0.94 * v));
+			const Vector2 shift(float(0.12 + 0.76 * u), float(0.12 + 0.76 * v));
 			const Vector2 center(float(offset.x + (sample % SURFACE_CAPTURE_SIZE)) + 0.5f, float(offset.y + (sample / SURFACE_CAPTURE_SIZE)) + 0.5f);
 			pixel_write[sample * 3 + 0] = center + (Vector2(0.0f, 0.0f) - shift) * HALF_SPAN;
 			pixel_write[sample * 3 + 1] = center + (Vector2(1.0f, 0.0f) - shift) * HALF_SPAN;
