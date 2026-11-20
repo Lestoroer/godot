@@ -1,15 +1,14 @@
 // lestoroer#gi
 // Alpha экранного GI хранит глубину поверхности pre-pass; другие поверхности читают мировой кеш.
 
-// Хеширование и выборка должны совпадать с world_hash_layout/world_hash_access игры; это проверяет world_cache_fragments.gd.
+// Хеширование и выборка должны совпадать с world_hash_layout/world_hash_access игры.
 layout(set = 1, binding = 37, std430) readonly buffer SurfaceCacheHashLookup { uvec4 data[]; } surface_cache_hash_lookup;
 layout(set = 1, binding = 38, std430) readonly buffer SurfaceCacheHashRooms { uvec4 header; vec4 data[]; } surface_cache_hash_rooms;
 
 layout(set = 1, binding = 41) uniform texture2D surface_cache_gather;
 layout(set = 1, binding = 43) uniform texture2D surface_cache_reflection;
 
-const float SURFACE_CACHE_HASH_CELL = 0.08;
-const float SURFACE_CACHE_HASH_NEAR = 12.0;
+const float SURFACE_CACHE_HASH_CELL_FALLBACK = 0.08;
 const float SURFACE_CACHE_HASH_ROOM_PROBE = 0.05;
 // Сдвиг слоёв ячеек вдоль главной оси грани в долях шага (HASH_LAYER_SHIFT игры).
 const float SURFACE_CACHE_HASH_LAYER_SHIFT = 0.37;
@@ -38,9 +37,9 @@ uint surface_cache_hash_room(vec3 position) {
 	return 0u;
 }
 
-uvec2 surface_cache_hash_key(ivec3 cell, uint tag, uint level) {
+uvec2 surface_cache_hash_key(ivec3 cell, uint tag) {
 	uvec3 wrapped = uvec3(cell + ivec3(32768)) & 65535u;
-	return uvec2(wrapped.x | (wrapped.y << 16u), wrapped.z | tag | (level << 19u));
+	return uvec2(wrapped.x | (wrapped.y << 16u), wrapped.z | tag);
 }
 
 bool surface_cache_hash_light(uvec2 key, out vec3 light) {
@@ -61,8 +60,9 @@ bool surface_cache_hash_light(uvec2 key, out vec3 light) {
 	return false;
 }
 
-bool surface_cache_hash_smooth(vec3 position, uint axis, uint tag, uint level, out vec3 light) {
-	vec3 scaled = position / (SURFACE_CACHE_HASH_CELL * float(1u << level));
+bool surface_cache_hash_smooth(vec3 position, uint axis, uint tag, out vec3 light) {
+	float cell_size = uintBitsToFloat(surface_cache_hash_rooms.header.y);
+	vec3 scaled = position / (cell_size > 0.0 ? cell_size : SURFACE_CACHE_HASH_CELL_FALLBACK);
 	scaled[axis] += SURFACE_CACHE_HASH_LAYER_SHIFT;
 	ivec3 cell = ivec3(floor(scaled));
 	uint u = (axis + 1u) % 3u, v = (axis + 2u) % 3u;
@@ -76,7 +76,7 @@ bool surface_cache_hash_smooth(vec3 position, uint axis, uint tag, uint level, o
 			cell[u] = corner.x + x;
 			cell[v] = corner.y + y;
 			vec3 value;
-			if (surface_cache_hash_light(surface_cache_hash_key(cell, tag, level), value)) {
+			if (surface_cache_hash_light(surface_cache_hash_key(cell, tag), value)) {
 				float weight = (x == 0 ? 1.0 - fraction.x : fraction.x) * (y == 0 ? 1.0 - fraction.y : fraction.y);
 				sum += value * weight;
 				total += weight;
@@ -87,24 +87,20 @@ bool surface_cache_hash_smooth(vec3 position, uint axis, uint tag, uint level, o
 	return total > 1e-4;
 }
 
-vec3 surface_cache_world_irradiance(vec3 position, vec3 normal, vec3 camera) {
+vec3 surface_cache_world_irradiance(vec3 position, vec3 normal) {
 	vec3 magnitude = abs(normal);
 	uint axis = magnitude.x >= magnitude.y && magnitude.x >= magnitude.z ? 0u : (magnitude.y >= magnitude.z ? 1u : 2u);
 	uint face = axis * 2u + (normal[axis] < 0.0 ? 1u : 0u);
 	uint tag = (face << 16u) | (surface_cache_hash_room(position + normal * SURFACE_CACHE_HASH_ROOM_PROBE) << 20u);
-	uint level = distance(position, camera) < SURFACE_CACHE_HASH_NEAR ? 0u : 1u;
 	vec3 light;
-	if (surface_cache_hash_smooth(position, axis, tag, level, light) || surface_cache_hash_smooth(position, axis, tag, 1u - level, light)) {
-		return max(light, vec3(0.0));
-	}
-	return vec3(0.0);
+	return surface_cache_hash_smooth(position, axis, tag, light) ? max(light, vec3(0.0)) : vec3(0.0);
 }
 
 bool surface_cache_texel_owned(float texel_depth, float fragment_depth) {
 	return texel_depth > 0.0 && abs(texel_depth - fragment_depth) <= texel_depth * SURFACE_CACHE_DEPTH_TOLERANCE;
 }
 
-vec3 surface_cache_for_fragment(vec3 position, vec3 normal, vec3 camera, vec3 fragment, out bool gather_used) {
+vec3 surface_cache_for_fragment(vec3 position, vec3 normal, vec3 fragment, out bool gather_used) {
 	ivec2 pixel = ivec2(fragment.xy);
 	ivec2 size = textureSize(sampler2D(surface_cache_gather, SAMPLER_NEAREST_CLAMP), 0);
 	gather_used = false;
@@ -115,7 +111,7 @@ vec3 surface_cache_for_fragment(vec3 position, vec3 normal, vec3 camera, vec3 fr
 			return gather.rgb;
 		}
 	}
-	return surface_cache_world_irradiance(position, normal, camera);
+	return surface_cache_world_irradiance(position, normal);
 }
 
 bool surface_cache_reflection_for_fragment(vec3 fragment, out vec3 radiance) {
@@ -129,4 +125,3 @@ bool surface_cache_reflection_for_fragment(vec3 fragment, out vec3 radiance) {
 	radiance = value.rgb;
 	return surface_cache_texel_owned(value.a, fragment.z);
 }
-

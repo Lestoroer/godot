@@ -17,22 +17,16 @@ using namespace SurfaceCache;
 bool SurfaceCacheWorldRD::measure_gpu_time = false;
 double SurfaceCacheWorldRD::gpu_time_ms = 0;
 static const char *buffer_names[] = { "surfaces", "materials", "lights", "world_events", "surface_flags", "changes" };
-// Запись изменений предметов мира (cache_types игры: WORLD_CHANGES): заголовок и узлы деревьев рамок — пары углов.
 static constexpr uint32_t CHANGE_HEADER_BYTES = 32, CHANGE_NODE_BYTES = 32;
-// Запись событий мира (cache_types игры: WorldEvents): часы мира, мс, и время последней смены свечения по ним;
-// EVENT_NEVER — её ещё не было.
 static constexpr uint32_t WORLD_EVENTS_BYTES = 16, EVENT_NEVER = 0xFFFFFFFF;
 static constexpr uint32_t MATERIAL_BYTES = 64, SURFACE_BYTES = 16, LIGHT_BYTES = 64;
-// Тип записи источника для светящегося прямоугольника: после типов RSE::LightType (cache_trace, LIGHT_EMITTER).
 static constexpr float LIGHT_EMITTER = 4.0f;
 static constexpr uint32_t PAGE_BYTES = 2097152;
-// При загрузке допустим больший бюджет: меньший лишь продлевает ожидание; после загрузки работа не должна задерживать игру.
 static constexpr double STARTUP_BUDGET_MS = 33.0, UPDATE_BUDGET_MS = 4.0;
 static constexpr int UPDATE_CAPTURE_LIMIT = 4;
 static uint32_t round_up(uint32_t value, uint32_t step) {
 	return ((value + step - 1) / step) * step;
 }
-// Размер кратен 16 байтам: иначе очистка добавленной части буфера отвергает диапазон.
 static uint32_t page_size(uint32_t size) {
 	return round_up(size, size > PAGE_BYTES ? PAGE_BYTES : 16);
 }
@@ -109,9 +103,8 @@ bool SurfaceCacheWorldRD::initialize_gpu() {
 		}
 	}
 	world_hash = script_object("world_hash_cache");
-	capture = script_object("surface_material");
 	gather = script_object("final_gather");
-	if (world_hash.is_null() || capture.is_null() || gather.is_null()) {
+	if (world_hash.is_null() || gather.is_null()) {
 		return fail("Cannot initialize Surface Cache helpers");
 	}
 	if (!bool(world_hash->call("initialize", device))) {
@@ -132,11 +125,95 @@ bool SurfaceCacheWorldRD::initialize_gpu() {
 	return true;
 }
 
+bool SurfaceCacheWorldRD::allocate_capture(const Vector2i &p_size) {
+	free_capture();
+	capture_size = p_size;
+	RD::TextureFormat color_format;
+	color_format.texture_type = RD::TEXTURE_TYPE_2D_ARRAY;
+	color_format.width = p_size.x;
+	color_format.height = p_size.y;
+	color_format.array_layers = 1;
+	color_format.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+	color_format.usage_bits = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+	Vector<RID> attachments;
+	attachments.resize(6);
+	for (int i = 0; i < 4; i++) {
+		capture_textures[i] = device->texture_create(color_format, RD::TextureView());
+		if (!capture_textures[i].is_valid()) {
+			free_capture();
+			return false;
+		}
+		capture_views[i] = device->texture_create_shared_from_slice(RD::TextureView(), capture_textures[i], 0, 0);
+		if (!capture_views[i].is_valid()) {
+			free_capture();
+			return false;
+		}
+		attachments.write[i] = capture_views[i];
+	}
+	RD::TextureFormat depth_color_format;
+	depth_color_format.width = p_size.x;
+	depth_color_format.height = p_size.y;
+	depth_color_format.format = RD::DATA_FORMAT_R32_SFLOAT;
+	depth_color_format.usage_bits = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT;
+	capture_depth_color = device->texture_create(depth_color_format, RD::TextureView());
+	if (!capture_depth_color.is_valid()) {
+		free_capture();
+		return false;
+	}
+	attachments.write[4] = capture_depth_color;
+	RD::TextureFormat depth_format;
+	depth_format.width = p_size.x;
+	depth_format.height = p_size.y;
+	depth_format.format = RD::DATA_FORMAT_D32_SFLOAT;
+	depth_format.usage_bits = RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+	capture_depth = device->texture_create(depth_format, RD::TextureView());
+	if (!capture_depth.is_valid()) {
+		free_capture();
+		return false;
+	}
+	attachments.write[5] = capture_depth;
+	capture_framebuffer = device->framebuffer_create(attachments);
+	if (!capture_framebuffer.is_valid()) {
+		free_capture();
+		return false;
+	}
+	return true;
+}
+
+void SurfaceCacheWorldRD::free_capture() {
+	if (!device) {
+		capture_size = Vector2i();
+		return;
+	}
+	if (capture_framebuffer.is_valid() && device->framebuffer_is_valid(capture_framebuffer)) {
+		device->free_rid(capture_framebuffer);
+	}
+	capture_framebuffer = RID();
+	for (RID &view : capture_views) {
+		if (view.is_valid() && device->texture_is_valid(view)) {
+			device->free_rid(view);
+		}
+		view = RID();
+	}
+	for (RID &tex : capture_textures) {
+		if (tex.is_valid() && device->texture_is_valid(tex)) {
+			device->free_rid(tex);
+		}
+		tex = RID();
+	}
+	for (RID *tex : { &capture_depth_color, &capture_depth }) {
+		if (tex->is_valid() && device->texture_is_valid(*tex)) {
+			device->free_rid(*tex);
+		}
+		*tex = RID();
+	}
+	capture_size = Vector2i();
+}
+
 void SurfaceCacheWorldRD::render_frame() {
 	if (disposed || !error.is_empty() || (!initialized && !initialize_gpu())) {
 		return;
 	}
-	// Часы мира — до событий кадра: начало сетки и изменения предметов датируются уже его временем.
 	const double frame_seconds = RSG::rasterizer->get_frame_delta_time();
 	world_seconds += frame_seconds;
 	world_hash->call("begin_frame", frame_seconds, world_seconds);
@@ -157,32 +234,29 @@ void SurfaceCacheWorldRD::render_frame() {
 	}
 }
 
-static String geometry_key(const Dictionary &change) {
-	return vformat("%s/%d/%s", change["base"], change["mesh_revision"], change["surface_sides"]);
+static String geometry_key(const RenderingServerTypes::SurfaceCacheChange &change) {
+	return vformat("%s/%d/%s", change.base, change.mesh_revision, change.surface_sides);
 }
 
 void SurfaceCacheWorldRD::update_world() {
 	frame_moves.clear();
 	const int capture_limit = frame > 0 ? UPDATE_CAPTURE_LIMIT : INT_MAX;
 	const double budget_ms = frame > 0 ? UPDATE_BUDGET_MS : STARTUP_BUDGET_MS;
-	Array changes = take_changes();
-	// Все readback выполняются до upload, чтобы чтение не ждало только что отправленных данных.
+	Vector<RenderingServerTypes::SurfaceCacheChange> changes = take_changes();
 	struct Pending {
-		Dictionary change;
+		int index;
 		real_t distance;
 		bool operator<(const Pending &p_other) const { return distance < p_other.distance; }
 	};
 	LocalVector<Pending> pending;
-	Array selected;
+	LocalVector<int> selected_indices;
 	for (int i = 0; i < changes.size(); ++i) {
-		Dictionary change = changes[i];
-		RID source = change["instance"];
+		const RenderingServerTypes::SurfaceCacheChange &change = changes[i];
 		ChangeKind kind = change_kind(change);
-		if (kind == ADD || kind == REPLACE || (kind == RECAPTURE && !instances[source]->deformed)) {
-			const AABB bounds = change["bounds"];
-			pending.push_back({ change, has_view ? bounds.get_center().distance_squared_to(view_origin) : real_t(0) });
+		if (kind == ADD || kind == REPLACE || (kind == RECAPTURE && !instances[change.instance]->deformed)) {
+			pending.push_back({ i, has_view ? change.bounds.get_center().distance_squared_to(view_origin) : real_t(0) });
 		} else {
-			selected.push_back(change);
+			selected_indices.push_back(i);
 		}
 	}
 	pending.sort();
@@ -190,47 +264,45 @@ void SurfaceCacheWorldRD::update_world() {
 	double estimate_ms = 0;
 	HashSet<RID> estimated;
 	for (const Pending &entry : pending) {
-		const Dictionary &change = entry.change;
-		RID base = change["base"];
+		const RenderingServerTypes::SurfaceCacheChange &change = changes[entry.index];
 		ChangeKind kind = change_kind(change);
-		const bool prepares = (kind == ADD || kind == REPLACE) && !geometries.has(geometry_key(change)) && !estimated.has(base);
+		const bool prepares = (kind == ADD || kind == REPLACE) && !geometries.has(geometry_key(change)) && !estimated.has(change.base);
 		if (captures == capture_limit || (captures > 0 && prepares && estimate_ms >= budget_ms)) {
-			deferred_changes.insert(change["instance"], change);
+			deferred_changes.insert(change.instance, change);
 			continue;
 		}
 		++captures;
 		if (prepares) {
-			estimated.insert(base);
-			estimate_ms += triangle_count(base) * prepare_ms_per_triangle;
+			estimated.insert(change.base);
+			estimate_ms += triangle_count(change.base) * prepare_ms_per_triangle;
 		}
-		selected.push_back(change);
+		selected_indices.push_back(entry.index);
 	}
 	HashMap<RID, Vector<RenderingServerTypes::SurfaceData>> sources;
 	{
 		RenderingServer *server = RenderingServer::get_singleton();
-		for (int i = 0; i < selected.size(); ++i) {
-			Dictionary change = selected[i];
+		for (int index : selected_indices) {
+			const RenderingServerTypes::SurfaceCacheChange &change = changes[index];
 			ChangeKind kind = change_kind(change);
 			if (kind != ADD && kind != REPLACE) {
 				continue;
 			}
-			RID base = change["base"];
-			if (sources.has(base) || geometries.has(geometry_key(change))) {
+			if (sources.has(change.base) || geometries.has(geometry_key(change))) {
 				continue;
 			}
 			ScopeTimer read_timer(counters.mesh_read_ms);
 			ScopeTimer layout_timer(counters.layouts_ms);
-			Vector<RenderingServerTypes::SurfaceData> &surfaces = sources[base];
-			for (int surface = 0; surface < server->mesh_get_surface_count(base); ++surface) {
-				surfaces.push_back(RendererRD::MeshStorage::get_singleton()->mesh_get_surface(base, surface, false));
+			Vector<RenderingServerTypes::SurfaceData> &surfaces = sources[change.base];
+			for (int surface = 0; surface < server->mesh_get_surface_count(change.base); ++surface) {
+				surfaces.push_back(RendererRD::MeshStorage::get_singleton()->mesh_get_surface(change.base, surface, false));
 			}
 		}
 	}
 	bool geometry_changed = false;
 	LocalVector<Instance *> dirty;
-	for (int i = 0; i < selected.size(); ++i) {
-		Dictionary change = selected[i];
-		RID source = change["instance"];
+	for (int index : selected_indices) {
+		const RenderingServerTypes::SurfaceCacheChange &change = changes[index];
+		RID source = change.instance;
 		ChangeKind kind = change_kind(change);
 		if (kind == REMOVE) {
 			if (instances.has(source)) {
@@ -258,7 +330,7 @@ void SurfaceCacheWorldRD::update_world() {
 			}
 			continue;
 		}
-		if (bool(change["shader_displacement"])) {
+		if (change.shader_displacement) {
 			fail("Surface Cache does not support shader vertex displacement; use mesh, skin or morph geometry");
 			return;
 		}
@@ -269,9 +341,8 @@ void SurfaceCacheWorldRD::update_world() {
 			geometry_changed = true;
 		} else {
 			Instance &state = *instances[source];
-			AABB bounds = change["bounds"];
-			note_dirty(source, state.bounds.merge(bounds));
-			state.bounds = bounds;
+			note_dirty(source, state.bounds.merge(change.bounds));
+			state.bounds = change.bounds;
 			if (kind == REPLACE) {
 				remove_instance(source);
 				if (!add_instance(change, sources)) {
@@ -282,18 +353,17 @@ void SurfaceCacheWorldRD::update_world() {
 				if (kind == RECAPTURE) {
 					state.capture_dirty = true;
 				}
-				Transform3D transform = change["transform"];
-				if (!state.transform.is_equal_approx(transform)) {
+				if (!state.transform.is_equal_approx(change.transform)) {
 					Dictionary move;
 					move["from"] = state.transform;
-					move["to"] = transform;
-					move["bounds"] = bounds;
+					move["to"] = change.transform;
+					move["bounds"] = change.bounds;
 					frame_moves.push_back(move);
 				}
-				state.transform = transform;
-				int bits = change["changes"];
-				state.geometry_dirty |= (bits & 10) != 0;
-				state.pose_dirty |= (bits & 8) != 0;
+				state.transform = change.transform;
+				const uint32_t bits = change.changes;
+				state.geometry_dirty |= (bits & (RenderingServerTypes::SURFACE_CACHE_DIRTY_TRANSFORM | RenderingServerTypes::SURFACE_CACHE_DIRTY_POSE)) != 0;
+				state.pose_dirty |= (bits & RenderingServerTypes::SURFACE_CACHE_DIRTY_POSE) != 0;
 				if (state.geometry_dirty) {
 					tlas_updates.insert(source, true);
 					geometry_changed = true;
@@ -318,7 +388,6 @@ void SurfaceCacheWorldRD::update_world() {
 	if (!ensure_capacity()) {
 		return;
 	}
-	// Часы мира — до сведения материалов: смену свечения оно отмечает их временем.
 	const uint32_t world_milliseconds = uint32_t(uint64_t(world_seconds * 1000.0));
 	device->buffer_update(buffers[WORLD_EVENTS], 0, sizeof(world_milliseconds), &world_milliseconds);
 	mark("SurfaceCache update begin", true);
@@ -336,8 +405,8 @@ void SurfaceCacheWorldRD::update_world() {
 			return;
 		}
 	}
-	if (Vector2i(capture->get("size")) != Vector2i() && frame - last_capture_frame > 120) {
-		capture->call("dispose");
+	if (capture_size != Vector2i() && frame - last_capture_frame > 120) {
+		free_capture();
 	}
 	if (opacity_requested && !opacity_pending) {
 		request_opacity();
@@ -387,23 +456,22 @@ int SurfaceCacheWorldRD::triangle_count(RID p_base) const {
 	return corners / 3;
 }
 
-Array SurfaceCacheWorldRD::take_changes() {
-	Array fresh;
-	Array polled = RenderingServer::get_singleton()->scenario_surface_cache_poll(scenario);
+Vector<RenderingServerTypes::SurfaceCacheChange> SurfaceCacheWorldRD::take_changes() {
+	Vector<RenderingServerTypes::SurfaceCacheChange> fresh;
+	Vector<RenderingServerTypes::SurfaceCacheChange> polled = RenderingServer::get_singleton()->scenario_surface_cache_poll(scenario);
 	for (int i = 0; i < polled.size(); ++i) {
-		Dictionary change = polled[i];
-		RID source = change["instance"];
-		if (bool(change["active"]) && deferred_changes.has(source)) {
-			change = change.duplicate();
-			change["changes"] = int(change["changes"]) | int(deferred_changes[source]["changes"]);
-			deferred_changes[source] = change;
+		RenderingServerTypes::SurfaceCacheChange change = polled[i];
+		if (change.active && deferred_changes.has(change.instance)) {
+			change.changes |= deferred_changes[change.instance].changes;
+			deferred_changes[change.instance] = change;
 		} else {
-			deferred_changes.erase(source);
+			deferred_changes.erase(change.instance);
 			fresh.push_back(change);
 		}
 	}
-	Array result;
-	for (const KeyValue<RID, Dictionary> &entry : deferred_changes) {
+	Vector<RenderingServerTypes::SurfaceCacheChange> result;
+	result.reserve(deferred_changes.size() + fresh.size());
+	for (const KeyValue<RID, RenderingServerTypes::SurfaceCacheChange> &entry : deferred_changes) {
 		result.push_back(entry.value);
 	}
 	deferred_changes.clear();
@@ -411,23 +479,23 @@ Array SurfaceCacheWorldRD::take_changes() {
 	return result;
 }
 
-SurfaceCacheWorldRD::ChangeKind SurfaceCacheWorldRD::change_kind(const Dictionary &change) const {
-	if (!bool(change["active"])) {
+SurfaceCacheWorldRD::ChangeKind SurfaceCacheWorldRD::change_kind(const RenderingServerTypes::SurfaceCacheChange &change) const {
+	if (!change.active) {
 		return REMOVE;
 	}
-	if (int(change["type"]) == RSE::INSTANCE_LIGHT) {
+	if (change.type == RSE::INSTANCE_LIGHT) {
 		return LIGHT;
 	}
-	RID source = change["instance"];
-	if (!instances.has(source)) {
+	if (!instances.has(change.instance)) {
 		return ADD;
 	}
-	const Instance &state = *instances[source];
-	if (state.base != RID(change["base"]) || state.mesh_revision != int64_t(change["mesh_revision"]) || state.sides != PackedInt32Array(change["surface_sides"])) {
+	const Instance &state = *instances[change.instance];
+	if (state.base != change.base || state.mesh_revision != change.mesh_revision || state.sides != change.surface_sides) {
 		return REPLACE;
 	}
-	int bits = change["changes"];
-	if ((bits & ~10) == 0 && state.capture_serial > 0 && !state.capture_dirty && (state.deformed || bits == 2)) {
+	const uint32_t bits = change.changes;
+	constexpr uint32_t MOVE_OR_POSE_MASK = RenderingServerTypes::SURFACE_CACHE_DIRTY_TRANSFORM | RenderingServerTypes::SURFACE_CACHE_DIRTY_POSE;
+	if ((bits & ~MOVE_OR_POSE_MASK) == 0 && state.capture_serial > 0 && !state.capture_dirty && (state.deformed || bits == RenderingServerTypes::SURFACE_CACHE_DIRTY_TRANSFORM)) {
 		return MOVE_OR_POSE;
 	}
 	return RECAPTURE;
@@ -482,7 +550,6 @@ LocalVector<RID> SurfaceCacheWorldRD::vertex_buffers(const TypedArray<PackedByte
 	return result;
 }
 
-// Индексы — в ширине меша: 16 или 32 бита.
 LocalVector<RID> SurfaceCacheWorldRD::index_buffers(const TypedArray<PackedByteArray> &p_index_data, const Geometry &p_geometry) {
 	LocalVector<RID> result;
 	for (int i = 0; i < p_index_data.size(); ++i) {
@@ -525,13 +592,13 @@ RID SurfaceCacheWorldRD::create_blas(const LocalVector<RID> &vertices, const Geo
 	return blas;
 }
 
-bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<RID, Vector<RenderingServerTypes::SurfaceData>> &sources) {
+bool SurfaceCacheWorldRD::add_instance(const RenderingServerTypes::SurfaceCacheChange &change, const HashMap<RID, Vector<RenderingServerTypes::SurfaceData>> &sources) {
 	String key = geometry_key(change);
 	if (!geometries.has(key)) {
 		++counters.layouts;
 		uint64_t start = OS::get_singleton()->get_ticks_usec();
-		const Vector<RenderingServerTypes::SurfaceData> *source = sources.getptr(change["base"]);
-		Dictionary prepared = source ? SurfaceCacheGeometry::prepare_from_surfaces(change["base"], *source, change["surface_sides"]) : SurfaceCacheGeometry::prepare_from_rid(change["base"], change["surface_sides"]);
+		const Vector<RenderingServerTypes::SurfaceData> *source = sources.getptr(change.base);
+		Dictionary prepared = source ? SurfaceCacheGeometry::prepare_from_surfaces(change.base, *source, change.surface_sides) : SurfaceCacheGeometry::prepare_from_rid(change.base, change.surface_sides);
 		if (prepared.is_empty()) {
 			return fail("Surface Cache geometry preparation failed");
 		}
@@ -543,7 +610,7 @@ bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<R
 		const double prepare_ms = milliseconds(start);
 		counters.mesh_prepare_ms += prepare_ms;
 		counters.layouts_ms += prepare_ms;
-		prepared_triangles += triangle_count(change["base"]);
+		prepared_triangles += triangle_count(change.base);
 		prepare_ms_per_triangle = counters.mesh_prepare_ms / MAX(prepared_triangles, int64_t(1));
 		Dictionary layout = prepared["layout"];
 		Geometry *geometry = memnew(Geometry);
@@ -551,7 +618,7 @@ bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<R
 		geometry->mesh = prepared["mesh"];
 		geometry->size = layout["size"];
 		geometry->square = layout["capture_size"];
-		geometry->columns = geometry->size.x / (geometry->square + 2);
+		geometry->columns = geometry->size.x / geometry->square;
 		TypedArray<PackedByteArray> vertex_data = prepared["vertex_data"];
 		TypedArray<PackedByteArray> index_data = prepared["index_data"];
 		Array layout_surfaces = layout["surfaces"];
@@ -567,17 +634,16 @@ bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<R
 	}
 	Geometry &geometry = *geometries[key];
 	++geometry.references;
-	bool deformed = change["deformed"];
 	Instance *state = memnew(Instance);
 	state->generation = ++next_generation;
-	state->mesh_revision = change["mesh_revision"];
-	state->sides = change["surface_sides"];
-	state->bounds = change["bounds"];
-	state->base = change["base"];
-	state->source = change["instance"];
-	state->transform = change["transform"];
+	state->mesh_revision = change.mesh_revision;
+	state->sides = change.surface_sides;
+	state->bounds = change.bounds;
+	state->base = change.base;
+	state->source = change.instance;
+	state->transform = change.transform;
 	state->shared = &geometry;
-	state->deformed = deformed;
+	state->deformed = change.deformed;
 	state->first_surface = surface_ranges.allocate(geometry.surfaces.size());
 	for (const Geometry::Surface &surface : geometry.surfaces) {
 		state->triangle_count += surface.triangles;
@@ -585,16 +651,13 @@ bool SurfaceCacheWorldRD::add_instance(const Dictionary &change, const HashMap<R
 	triangle_total += state->triangle_count;
 	state->chart = RenderingServer::get_singleton()->instance_create();
 	RenderingServer::get_singleton()->instance_set_base(state->chart, geometry.mesh->get_rid());
-	PackedInt32Array ids;
-	ids.resize(geometry.surfaces.size());
-	for (int i = 0; i < ids.size(); ++i) {
-		ids.set(i, state->first_surface + i);
-	}
-	if (deformed) {
+	if (change.deformed) {
 		state->vertices = copy_vertex_buffers(geometry);
 		state->blas = create_blas(state->vertices, geometry, false);
 	}
-	RenderingServer::get_singleton()->instance_set_surface_cache_ids(state->source, ids);
+	PackedInt32Array marker;
+	marker.push_back(1);
+	RenderingServer::get_singleton()->instance_set_surface_cache_ids(state->source, marker);
 	tlas_added.push_back(state->source);
 	note_dirty(state->source, state->bounds);
 	instances.insert(state->source, state);
@@ -731,10 +794,9 @@ void SurfaceCacheWorldRD::capture_material(Instance &state) {
 	++counters.captures;
 	uint64_t start = OS::get_singleton()->get_ticks_usec();
 	last_capture_frame = frame;
-	if (Vector2i(capture->get("size")) != capture_dimensions) {
+	if (capture_size != capture_dimensions) {
 		ScopeTimer allocation_timer(counters.capture_allocate_ms);
-		capture->call("dispose");
-		if (!bool(capture->call("allocate", device, capture_dimensions))) {
+		if (!allocate_capture(capture_dimensions)) {
 			fail("Surface Cache capture allocation failed");
 			return;
 		}
@@ -746,14 +808,13 @@ void SurfaceCacheWorldRD::capture_material(Instance &state) {
 	for (RID rid : { buffers[MATERIALS], buffers[WORLD_EVENTS], buffers[SURFACE_FLAGS] }) {
 		bindings.push_back(uniform(bindings.size(), RD::UNIFORM_TYPE_STORAGE_BUFFER, rid));
 	}
-	TypedArray<RID> textures = capture->get("textures");
-	for (int i = 0; i < textures.size(); ++i) {
-		bindings.push_back(uniform(bindings.size(), RD::UNIFORM_TYPE_IMAGE, textures[i]));
+	for (RID tex : capture_textures) {
+		bindings.push_back(uniform(bindings.size(), RD::UNIFORM_TYPE_IMAGE, tex));
 	}
 	RID set = cached(kernels[MATERIAL], bindings);
 	{
 		ScopeTimer draw_timer(counters.capture_draw_ms);
-		capture->call("capture", state.source, state.chart, geometry.size);
+		RenderingServer::get_singleton()->instance_surface_cache_capture(state.source, state.chart, capture_framebuffer, Rect2i(Vector2i(), geometry.size));
 	}
 	int32_t push[] = { state.first_surface, surface_count, geometry.columns, geometry.square };
 	kernels[MATERIAL].dispatch(set, push, sizeof(push), Vector3i(surface_count, 1, 1));
@@ -873,20 +934,18 @@ void SurfaceCacheWorldRD::receive_opacity(const PackedByteArray &data, uint64_t 
 	}
 }
 
-PackedByteArray SurfaceCacheWorldRD::encode_light(const Dictionary &light) {
-	int type = light["light_type"];
-	if (type == RSE::LIGHT_AREA) {
+PackedByteArray SurfaceCacheWorldRD::encode_light(const RenderingServerTypes::SurfaceCacheChange &light) {
+	if (light.light_type == RSE::LIGHT_AREA) {
 		fail("AreaLight transport is not implemented yet");
 		return PackedByteArray();
 	}
-	Transform3D transform = light["transform"];
-	Vector3 direction = -transform.basis.get_column(2).normalized();
-	bool directional = type == RSE::LIGHT_DIRECTIONAL;
-	Vector3 position = directional ? Vector3() : transform.origin;
-	Color color = Color(light["color"]).srgb_to_linear();
-	PackedFloat32Array params = light["light_params"];
+	Vector3 direction = -light.transform.basis.get_column(2).normalized();
+	bool directional = light.light_type == RSE::LIGHT_DIRECTIONAL;
+	Vector3 position = directional ? Vector3() : light.transform.origin;
+	Color color = light.color.srgb_to_linear();
+	const float *params = light.light_params;
 	float values[] = {
-		position.x, position.y, position.z, float(type), direction.x, direction.y, direction.z, directional ? 0.0f : params[RSE::LIGHT_PARAM_RANGE],
+		position.x, position.y, position.z, float(light.light_type), direction.x, direction.y, direction.z, directional ? 0.0f : params[RSE::LIGHT_PARAM_RANGE],
 		color.r, color.g, color.b, params[RSE::LIGHT_PARAM_ENERGY] * params[RSE::LIGHT_PARAM_INDIRECT_ENERGY],
 		params[RSE::LIGHT_PARAM_ATTENUATION], float(Math::cos(Math::deg_to_rad(double(params[RSE::LIGHT_PARAM_SPOT_ANGLE])))),
 		params[RSE::LIGHT_PARAM_SPOT_ATTENUATION],
@@ -898,7 +957,6 @@ PackedByteArray SurfaceCacheWorldRD::encode_light(const Dictionary &light) {
 	return result;
 }
 
-// Записи прямоугольников, чей экземпляр уже в GI и захвачен: свечение берёт материал поверхности по её номеру.
 PackedByteArray SurfaceCacheWorldRD::encode_emitters(int &r_count) const {
 	PackedByteArray result;
 	r_count = 0;
@@ -958,10 +1016,6 @@ struct AreaCenterLess {
 	}
 };
 
-// Дерево рамок areas с запасом margin — в r_data, узлы в порядке обхода в глубину. Узел — пара углов рамки всех
-// рамок под ним; w нижнего угла — номер узла от начала дерева (tree_start), к которому поиск на GPU переходит, если
-// точка или отрезок рамку узла не задели; w верхнего — единица у листа, рамки изменения. Узел делит свои рамки
-// пополам по самой длинной оси их центров; порядок areas при этом меняется.
 static void append_tree(AABB *areas, uint32_t count, real_t margin, uint32_t tree_start, LocalVector<float> &r_data) {
 	AABB bounds = areas[0];
 	AABB centers(areas[0].get_center(), Vector3());
@@ -985,12 +1039,7 @@ static void append_tree(AABB *areas, uint32_t count, real_t margin, uint32_t tre
 	r_data[node + 3] = float((r_data.size() - tree_start) / (CHANGE_NODE_BYTES / 4));
 }
 
-// Запись изменений предметов мира для GPU. У предмета одна рамка на его изменения, которые мировой кеш ещё не
-// свёл, — по ним сведение отправляет ячейки в работу — и одна на все его изменения, которые мир ещё помнит: по ним
-// виды решают, годится ли история. Рамок столько, сколько предметов менялось: общей рамки на всех нет. Рамки
-// каждого рода сложены в дерево: поиск на GPU не перебирает их все.
 bool SurfaceCacheWorldRD::write_changes() {
-	// Рамки ждут кеша до его сведения, а не до конца кадра: кадр мира без сведения — без кадра вида — их не теряет.
 	const int64_t resolve_count = world_hash->get("resolve_count");
 	if (resolve_count != changes_resolve_count) {
 		awaiting_changes.clear();
@@ -1002,7 +1051,6 @@ bool SurfaceCacheWorldRD::write_changes() {
 		} else {
 			awaiting_changes.insert(change.first, change.second);
 		}
-		// Изменения одного момента часов мира — одна запись: пока часы стоят, список предмета не растёт.
 		LocalVector<Change> &list = remembered_changes[change.first];
 		if (!list.is_empty() && list[list.size() - 1].seconds == world_seconds) {
 			list[list.size() - 1].bounds.merge_with(change.second);
@@ -1039,7 +1087,6 @@ bool SurfaceCacheWorldRD::write_changes() {
 	for (RID source : forgotten) {
 		remembered_changes.erase(source);
 	}
-	// У дерева из n рамок 2n − 1 узел.
 	const uint32_t counts[] = { awaiting.is_empty() ? 0 : awaiting.size() * 2 - 1, remembered.is_empty() ? 0 : remembered.size() * 2 - 1, 0, 0 };
 	const uint32_t nodes = counts[0] + counts[1];
 	if (nodes == 0 && change_nodes == 0) {
@@ -1067,7 +1114,6 @@ bool SurfaceCacheWorldRD::write_changes() {
 	return true;
 }
 
-// Прямоугольники идут первыми: зонды перебирают только их (GatherView.probe_settings.y).
 void SurfaceCacheWorldRD::upload_lights() {
 	PackedByteArray data;
 	data.resize(MAX(uint32_t(LIGHT_BYTES), emitter_records.size() + lights.size() * LIGHT_BYTES));
@@ -1162,8 +1208,7 @@ Dictionary SurfaceCacheWorldRD::get_metrics() const {
 	result["emitters"] = active_emitters;
 	result["cpu_submit_ms"] = cpu_submit_ms;
 	result["gpu_buffer_bytes"] = buffer_memory_bytes;
-	Vector2i size = capture->get("size");
-	result["capture_texture_bytes"] = uint64_t(size.x) * size.y * CAPTURE_TEXEL_BYTES;
+	result["capture_texture_bytes"] = uint64_t(capture_size.x) * capture_size.y * CAPTURE_TEXEL_BYTES;
 	return result;
 }
 Dictionary SurfaceCacheWorldRD::get_operations() const {
@@ -1189,7 +1234,6 @@ Dictionary SurfaceCacheWorldRD::get_operation_ms() const {
 	result["capture_mesh"] = counters.capture_mesh_ms;
 	result["capture_allocate"] = counters.capture_allocate_ms;
 	result["capture_draw"] = counters.capture_draw_ms;
-
 	result["mesh_prepare"] = counters.mesh_prepare_ms;
 	result["blas_create_build"] = counters.blas_ms;
 	result["buffer_capacity"] = counters.capacity_ms;
@@ -1202,8 +1246,7 @@ Dictionary SurfaceCacheWorldRD::buffer_report() const {
 	for (int i = 0; i < BUFFER_COUNT; ++i) {
 		result[buffer_names[i]] = capacities[i];
 	}
-	Vector2i size = capture.is_valid() ? Vector2i(capture->get("size")) : Vector2i();
-	result["capture"] = uint64_t(size.x) * size.y * CAPTURE_TEXEL_BYTES;
+	result["capture"] = uint64_t(capture_size.x) * capture_size.y * CAPTURE_TEXEL_BYTES;
 	result["world_hash"] = world_hash.is_valid() ? world_hash->call("buffer_bytes") : Variant(0);
 	return result;
 }
@@ -1233,9 +1276,7 @@ void SurfaceCacheWorldRD::dispose() {
 	if (world_hash.is_valid()) {
 		world_hash->call("dispose");
 	}
-	if (capture.is_valid()) {
-		capture->call("dispose");
-	}
+	free_capture();
 	server->scenario_set_surface_cache_buffers(scenario, TypedArray<RID>());
 	while (!instances.is_empty()) {
 		remove_instance(instances.begin()->key);

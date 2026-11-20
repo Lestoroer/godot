@@ -3296,7 +3296,6 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("instance_surface_cache_capture", "instance", "chart_instance", "framebuffer", "region"), &RenderingServer::instance_surface_cache_capture);
 	ClassDB::bind_method(D_METHOD("scenario_set_surface_cache_callback", "scenario", "callback"), &RenderingServer::scenario_set_surface_cache_callback);
 	ClassDB::bind_method(D_METHOD("scenario_set_surface_cache_view_callback", "scenario", "callback"), &RenderingServer::scenario_set_surface_cache_view_callback);
-	ClassDB::bind_method(D_METHOD("scenario_surface_cache_poll", "scenario"), &RenderingServer::scenario_surface_cache_poll);
 	// lestoroer#sun
 	ClassDB::bind_method(D_METHOD("sun_map_debug_set_option", "option", "value"), &RenderingServer::sun_map_debug_set_option);
 	ClassDB::bind_method(D_METHOD("sun_map_debug_get_state", "scenario"), &RenderingServer::sun_map_debug_get_state);

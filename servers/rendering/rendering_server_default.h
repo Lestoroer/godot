@@ -981,7 +981,7 @@ public:
 	FUNC4(instance_surface_cache_capture, RID, RID, RID, const Rect2i &)
 	FUNC2(scenario_set_surface_cache_callback, RID, const Callable &)
 	FUNC2(scenario_set_surface_cache_view_callback, RID, const Callable &)
-	FUNC1R(Array, scenario_surface_cache_poll, RID)
+	FUNC1R(Vector<RenderingServerTypes::SurfaceCacheChange>, scenario_surface_cache_poll, RID)
 	// lestoroer#sun
 	FUNC2(sun_map_debug_set_option, const StringName &, const Variant &)
 	FUNC1R(Dictionary, sun_map_debug_get_state, RID)

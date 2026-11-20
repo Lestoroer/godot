@@ -2691,7 +2691,7 @@ void MaterialStorage::material_update_dependency(RID p_material, DependencyTrack
 	}
 }
 
-MaterialStorage::Samplers MaterialStorage::samplers_rd_allocate(float p_mipmap_bias, RSE::ViewportAnisotropicFiltering anisotropic_filtering_level) const {
+MaterialStorage::Samplers MaterialStorage::samplers_rd_allocate(float p_mipmap_bias, RSE::ViewportAnisotropicFiltering anisotropic_filtering_level, bool p_force_base_mip) const { // lestoroer#gi
 	Samplers samplers;
 	samplers.mipmap_bias = p_mipmap_bias;
 	samplers.anisotropic_filtering_level = (int)anisotropic_filtering_level;
@@ -2746,6 +2746,11 @@ MaterialStorage::Samplers MaterialStorage::samplers_rd_allocate(float p_mipmap_b
 				} break;
 				default: {
 				}
+			}
+			// lestoroer#gi: Захват материалов берёт точечные выборки по треугольникам, поэтому читает базовый mip без фильтрации по dFdx.
+			if (p_force_base_mip) {
+				sampler_state.max_lod = 0.0f;
+				sampler_state.use_anisotropy = false;
 			}
 			switch (j) {
 				case RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED: {

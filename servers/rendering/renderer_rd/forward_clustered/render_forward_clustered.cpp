@@ -886,8 +886,8 @@ void RenderForwardClustered::_fill_instance_data(RenderListType p_render_list, i
 
 		instance_data.set_compressed_aabb(surface_aabb);
 		instance_data.set_uv_scale(uv_scale);
-		// lestoroer#gi: Свободная компонента хранит id поверхности + 1; ноль означает отсутствие GI.
-		instance_data.compressed_aabb_position[3] = float(surface->surface_index < inst->surface_cache_ids.size() ? inst->surface_cache_ids[surface->surface_index] + 1 : 0);
+		// lestoroer#gi: Свободная компонента отмечает участие экземпляра в GI.
+		instance_data.compressed_aabb_position[3] = inst->surface_cache_registered ? 1.0f : 0.0f;
 		if (p_capture_geometry) {
 			// Биты свободной компоненты хранят номер первого треугольника захвата.
 			const uint32_t first_triangle = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_surface_cache_first_triangle(geometry_surface);
@@ -3169,28 +3169,29 @@ void RenderForwardClustered::surface_cache_capture(RenderGeometryInstance *p_sou
 	stamp("enable_shaders");
 	_update_render_base_uniform_set();
 	stamp("base_uniform");
-	for (int capture_pass = 0; capture_pass < 2; capture_pass++) {
-		scene_data.surface_cache_coverage = capture_pass == 0;
-		uint32_t uniform_buffer_index = _setup_environment(&render_data, true, RD::get_singleton()->framebuffer_get_size(p_framebuffer), p_region.size, Color());
-		stamp("environment");
-		_fill_render_list(RENDER_LIST_SURFACE_CACHE_CAPTURE, &render_data, PASS_MODE_DEPTH_MATERIAL);
-		render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].sort_by_key();
-		stamp("list");
-		_fill_instance_data(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, 0, -1, true, chart);
-		stamp("instance_data");
-		RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, RID(), RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default(), uniform_buffer_index);
-		RenderListParameters params(render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].element_info.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
-		params.capture_geometry = chart;
-		Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
-		RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, capture_pass == 0 ? RD::DRAW_CLEAR_ALL : RD::DRAW_DEFAULT_ALL, clear, 0.0f, 0, p_region);
-		params.force_wireframe = false;
-		params.uv_offset = Vector2();
-		stamp("draw_setup");
-		_render_list(draw_list, RD::get_singleton()->framebuffer_get_format(p_framebuffer), &params, 0, params.element_count);
-		stamp("draw");
-		RD::get_singleton()->draw_list_end();
-		stamp("end");
+	if (!surface_cache_capture_samplers_allocated) {
+		surface_cache_capture_samplers = RendererRD::MaterialStorage::get_singleton()->samplers_rd_allocate(0.0f, RSE::VIEWPORT_ANISOTROPY_DISABLED, true);
+		surface_cache_capture_samplers_allocated = true;
 	}
+	uint32_t uniform_buffer_index = _setup_environment(&render_data, true, RD::get_singleton()->framebuffer_get_size(p_framebuffer), p_region.size, Color());
+	stamp("environment");
+	_fill_render_list(RENDER_LIST_SURFACE_CACHE_CAPTURE, &render_data, PASS_MODE_DEPTH_MATERIAL);
+	render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].sort_by_key();
+	stamp("list");
+	_fill_instance_data(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, 0, -1, true, chart);
+	stamp("instance_data");
+	RID uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SURFACE_CACHE_CAPTURE, nullptr, RID(), surface_cache_capture_samplers, uniform_buffer_index);
+	RenderListParameters params(render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].element_info.ptr(), render_list[RENDER_LIST_SURFACE_CACHE_CAPTURE].elements.size(), false, PASS_MODE_DEPTH_MATERIAL, 0, true, false, uniform_set);
+	params.capture_geometry = chart;
+	Vector<Color> clear = { Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0), Color(0, 0, 0, 0) };
+	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, RD::DRAW_CLEAR_ALL, clear, 0.0f, 0, p_region);
+	params.force_wireframe = false;
+	params.uv_offset = Vector2();
+	stamp("draw_setup");
+	_render_list(draw_list, RD::get_singleton()->framebuffer_get_format(p_framebuffer), &params, 0, params.element_count);
+	stamp("draw");
+	RD::get_singleton()->draw_list_end();
+	stamp("end");
 	cull_argument[0] = nullptr;
 	surface_cache_capture_corners = RID();
 	if (profiling && OS::get_singleton()->get_ticks_usec() - started > 5000) {
@@ -4184,18 +4185,18 @@ RID RenderForwardClustered::_setup_sdfgi_render_pass_uniform_set(RID p_albedo_te
 	}
 
 	// lestoroer#gi: Даже неиспользуемые дескрипторы GI должны соответствовать общему layout.
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < 3; i++) {
 		RD::Uniform u;
 		u.binding = 37 + i;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		u.append_id(scene_shader.default_vec4_xform_buffer);
 		uniforms.push_back(u);
 	}
-	{
+	for (int i = 0; i < 2; i++) {
 		RD::Uniform u;
-		u.binding = 41;
+		u.binding = i == 0 ? 41 : 43;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		u.append_id(texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
+		u.append_id(texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_TRANSPARENT));
 		uniforms.push_back(u);
 	}
 	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.default_shader_sdfgi_rd, RENDER_PASS_UNIFORM_SET, uniforms);
@@ -5526,6 +5527,12 @@ RenderForwardClustered::~RenderForwardClustered() {
 			scene_state.instance_buffer[i].uninit();
 		}
 		memdelete_arr(scene_state.lightmap_captures);
+	}
+
+	// lestoroer#gi
+	if (surface_cache_capture_samplers_allocated) {
+		RendererRD::MaterialStorage::get_singleton()->samplers_rd_free(surface_cache_capture_samplers);
+		surface_cache_capture_samplers_allocated = false;
 	}
 
 	while (sdfgi_framebuffer_size_cache.begin()) {

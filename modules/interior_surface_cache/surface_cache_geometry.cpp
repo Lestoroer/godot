@@ -11,13 +11,7 @@ void SurfaceCacheGeometry::_bind_methods() {
 }
 
 static constexpr int SURFACE_CAPTURE_SIZE = 16;
-// Граница разделяет поверхности: консервативный захват расширяет треугольники на пиксель.
-static constexpr int SURFACE_CAPTURE_BORDER = 1;
-static constexpr int SURFACE_CAPTURE_CELL = SURFACE_CAPTURE_SIZE + 2 * SURFACE_CAPTURE_BORDER;
-// Захват усредняет материал поверхности по её квадрату, и вся плотная геометрия в среднее не попадает: поверхность
-// отдаёт захвату не больше стольких треугольников, равномерно по их списку. Предел — 64 на тексель: при меньшем
-// у листвы с вырезом среднее покрытие заметно завышается.
-static constexpr int SURFACE_CAPTURE_TRIANGLES = SURFACE_CAPTURE_SIZE * SURFACE_CAPTURE_SIZE * 64;
+static constexpr int SURFACE_CAPTURE_SAMPLES = SURFACE_CAPTURE_SIZE * SURFACE_CAPTURE_SIZE;
 
 // Потоки копируются в исходной кодировке, включая сжатие, чтобы захват сохранил точные атрибуты.
 static void _remap_stream(const uint8_t *p_source, uint32_t p_element_size, const Vector<int> &p_remap, uint8_t *r_target) {
@@ -83,9 +77,6 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 	ERR_FAIL_COND_V(p_source && p_source->size() != surface_count, Dictionary());
 	const RID mesh_rid = p_resource ? p_resource->get_rid() : p_mesh;
 	const int shape_count = server->mesh_get_blend_shape_count(mesh_rid);
-	// Лучам от поверхности нужны только позиции и индексы — они берутся прямо из её байтов: нормали не читаются,
-	// лицевую сторону треугольника задаёт порядок обхода вершин, как у растра. Индексы остаются в ширине меша;
-	// поверхность без индексов получает номера вершин подряд.
 	LocalVector<RenderingServerTypes::SurfaceData> sources;
 	LocalVector<Vector<uint8_t>> positions;
 	LocalVector<Vector<uint8_t>> indices;
@@ -121,57 +112,78 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 
 	stage_start = OS::get_singleton()->get_ticks_usec();
 	const int columns = int(Math::ceil(Math::sqrt(double(surface_count))));
-	const Size2i atlas_size(columns * SURFACE_CAPTURE_CELL, ((surface_count + columns - 1) / columns) * SURFACE_CAPTURE_CELL);
+	const Size2i atlas_size(columns * SURFACE_CAPTURE_SIZE, ((surface_count + columns - 1) / columns) * SURFACE_CAPTURE_SIZE);
 	operation_ms["mesh_layout"] = (OS::get_singleton()->get_ticks_usec() - stage_start) / 1000.0;
 
 	stage_start = OS::get_singleton()->get_ticks_usec();
 	Array vertex_data;
 	Array index_data;
 	Array result_surfaces;
-	// Вершины углов треугольников, которые поверхность отдаёт захвату.
+	// 256 взвешенных по площади выборок на поверхность: по одному неперекрывающемуся треугольнику на пиксель
+	// с заданными барицентрическими координатами ровно в центре пикселя.
 	LocalVector<Vector<int>> capture_remaps;
 	capture_remaps.resize(surface_count);
-	int capture_corner_total = 0;
-	for (int surface = 0; surface < surface_count; surface++) {
-		capture_remaps[surface].resize(MIN(indices[surface].size() / index_sizes[surface] / 3, SURFACE_CAPTURE_TRIANGLES) * 3);
-		capture_corner_total += capture_remaps[surface].size();
-	}
+	const int capture_corner_total = surface_count * SURFACE_CAPTURE_SAMPLES * 3;
 	Vector<Vector2> capture_corners;
 	capture_corners.resize_uninitialized(capture_corner_total);
 	Vector2 *pixel_write = capture_corners.ptrw();
+	LocalVector<double> area_cdf;
 	for (int surface = 0; surface < surface_count; surface++) {
 		const int sides = p_surface_sides[surface];
 		ERR_FAIL_COND_V_MSG(sides != 1 && sides != 2, Dictionary(), "Surface Cache: a surface has one or two sides.");
 		const Vector3 *position = reinterpret_cast<const Vector3 *>(positions[surface].ptr());
-		const int vertex_count = positions[surface].size() / sizeof(Vector3);
 		const uint16_t *narrow = index_sizes[surface] == 2 ? reinterpret_cast<const uint16_t *>(indices[surface].ptr()) : nullptr;
 		const uint32_t *wide = reinterpret_cast<const uint32_t *>(indices[surface].ptr());
-		const int corner_count = indices[surface].size() / index_sizes[surface];
-		const Vector2i offset((surface % columns) * SURFACE_CAPTURE_CELL + SURFACE_CAPTURE_BORDER, (surface / columns) * SURFACE_CAPTURE_CELL + SURFACE_CAPTURE_BORDER);
-		AABB bounds(position[0], Vector3());
-		for (int i = 1; i < vertex_count; i++) {
-			bounds.expand_to(position[i]);
+		const int triangle_count = (indices[surface].size() / index_sizes[surface]) / 3;
+		ERR_FAIL_COND_V(triangle_count <= 0, Dictionary());
+		area_cdf.resize(triangle_count);
+		double total_area = 0.0;
+		for (int t = 0; t < triangle_count; t++) {
+			const int c0 = t * 3;
+			const int i0 = narrow ? int(narrow[c0]) : int(wide[c0]);
+			const int i1 = narrow ? int(narrow[c0 + 1]) : int(wide[c0 + 1]);
+			const int i2 = narrow ? int(narrow[c0 + 2]) : int(wide[c0 + 2]);
+			total_area += 0.5 * double((position[i1] - position[i0]).cross(position[i2] - position[i0]).length());
+			area_cdf[t] = total_area;
 		}
-		const int triangle_count = corner_count / 3;
+		const Vector2i offset((surface % columns) * SURFACE_CAPTURE_SIZE, (surface / columns) * SURFACE_CAPTURE_SIZE);
+		capture_remaps[surface].resize(SURFACE_CAPTURE_SAMPLES * 3);
 		int *capture_remap = capture_remaps[surface].ptrw();
-		const int capture_count = capture_remaps[surface].size() / 3;
-		for (int captured = 0; captured < capture_count; captured++) {
-			const int corner = int(int64_t(captured) * triangle_count / capture_count) * 3;
-			int vertex_index[3];
-			Vector3 vertex[3];
-			for (int c = 0; c < 3; c++) {
-				vertex_index[c] = narrow ? int(narrow[corner + c]) : int(wide[corner + c]);
-				vertex[c] = position[vertex_index[c]];
+		constexpr float HALF_SPAN = 0.45f;
+		for (int sample = 0; sample < SURFACE_CAPTURE_SAMPLES; sample++) {
+			int tri = 0;
+			if (total_area > 0.0) {
+				const double target = ((double(sample) + 0.5) / double(SURFACE_CAPTURE_SAMPLES)) * total_area;
+				int lo = 0, hi = triangle_count - 1;
+				while (lo < hi) {
+					const int mid = (lo + hi) >> 1;
+					if (area_cdf[mid] < target) {
+						lo = mid + 1;
+					} else {
+						hi = mid;
+					}
+				}
+				tri = lo;
+			} else {
+				tri = int(int64_t(sample) * triangle_count / SURFACE_CAPTURE_SAMPLES);
 			}
-			const int axis = (vertex[1] - vertex[0]).cross(vertex[2] - vertex[0]).abs().max_axis_index();
-			const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+			const int corner = tri * 3;
 			for (int c = 0; c < 3; c++) {
-				const Vector2 square((vertex[c][u] - bounds.position[u]) / MAX(bounds.size[u], real_t(1e-6)), (vertex[c][v] - bounds.position[v]) / MAX(bounds.size[v], real_t(1e-6)));
-				pixel_write[captured * 3 + c] = Vector2(offset) + square * SURFACE_CAPTURE_SIZE;
-				capture_remap[captured * 3 + c] = vertex_index[c];
+				capture_remap[sample * 3 + c] = narrow ? int(narrow[corner + c]) : int(wide[corner + c]);
 			}
+			double u = Math::fposmod((double(sample) + 0.5) * 0.7548776662466927, 1.0);
+			double v = Math::fposmod((double(sample) + 0.5) * 0.5698402909980532, 1.0);
+			if (u + v > 1.0) {
+				u = 1.0 - u;
+				v = 1.0 - v;
+			}
+			const Vector2 shift(float(0.02 + 0.94 * u), float(0.02 + 0.94 * v));
+			const Vector2 center(float(offset.x + (sample % SURFACE_CAPTURE_SIZE)) + 0.5f, float(offset.y + (sample / SURFACE_CAPTURE_SIZE)) + 0.5f);
+			pixel_write[sample * 3 + 0] = center + (Vector2(0.0f, 0.0f) - shift) * HALF_SPAN;
+			pixel_write[sample * 3 + 1] = center + (Vector2(1.0f, 0.0f) - shift) * HALF_SPAN;
+			pixel_write[sample * 3 + 2] = center + (Vector2(0.0f, 1.0f) - shift) * HALF_SPAN;
 		}
-		pixel_write += capture_count * 3;
+		pixel_write += SURFACE_CAPTURE_SAMPLES * 3;
 		vertex_data.push_back(positions[surface]);
 		index_data.push_back(indices[surface]);
 		Dictionary result_surface;
@@ -216,7 +228,6 @@ Dictionary SurfaceCacheGeometry::_prepare(const Mesh *p_resource, RID p_mesh, co
 				shapes.append_array(_remap_vertices(source.blend_shape_data.ptr() + shape_bytes * shape, shape_vertex_size, shape_normal_size, source.vertex_count, remap));
 			}
 		}
-		// После раздельного хранения углов индексный буфер был бы тождественным.
 		capture_mesh->add_surface(source.format & ~uint64_t(RSE::ARRAY_FORMAT_INDEX), Mesh::PRIMITIVE_TRIANGLES,
 				_remap_vertices(source.vertex_data.ptr(), vertex_size, normal_size, source.vertex_count, remap),
 				attributes, skin, corner_count, Vector<uint8_t>(), 0, source.aabb, shapes, source.bone_aabbs,

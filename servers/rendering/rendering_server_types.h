@@ -220,4 +220,31 @@ struct RenderInfo {
 	int info[RSE::VIEWPORT_RENDER_INFO_TYPE_MAX][RSE::VIEWPORT_RENDER_INFO_MAX] = {};
 };
 
+// lestoroer#gi
+enum SurfaceCacheDirtyFlags : uint32_t {
+	SURFACE_CACHE_DIRTY_BASE = 1 << 0,
+	SURFACE_CACHE_DIRTY_TRANSFORM = 1 << 1,
+	SURFACE_CACHE_DIRTY_MATERIAL = 1 << 2,
+	SURFACE_CACHE_DIRTY_POSE = 1 << 3,
+	SURFACE_CACHE_DIRTY_ALL = SURFACE_CACHE_DIRTY_BASE | SURFACE_CACHE_DIRTY_TRANSFORM | SURFACE_CACHE_DIRTY_MATERIAL | SURFACE_CACHE_DIRTY_POSE,
+};
+
+struct SurfaceCacheChange {
+	RID instance;
+	RID base;
+	uint32_t changes = 0;
+	RSE::InstanceType type = RSE::INSTANCE_NONE;
+	bool active = false;
+	bool deformed = false;
+	bool shader_displacement = false;
+	uint32_t layers = 0;
+	int64_t mesh_revision = 0;
+	Transform3D transform;
+	AABB bounds;
+	PackedInt32Array surface_sides;
+	RSE::LightType light_type = RSE::LIGHT_DIRECTIONAL;
+	Color color;
+	float light_params[RSE::LIGHT_PARAM_MAX] = {};
+};
+
 } // namespace RenderingServerTypes

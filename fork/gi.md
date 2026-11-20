@@ -17,8 +17,7 @@
 
 - **Захват материалов** —
   [render_forward_clustered.cpp](../servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp),
-  [render_forward_clustered.h](../servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h),
-  [surface_cache_capture_inc.glsl](../servers/rendering/renderer_rd/shaders/surface_cache_capture_inc.glsl).
+  [render_forward_clustered.h](../servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h).
 
 - **Зависимости материалов, текстур и света** —
   [material_storage.cpp](../servers/rendering/renderer_rd/storage_rd/material_storage.cpp),
@@ -42,8 +41,6 @@
 
 - **Режимы и переменные GI в языке шейдеров** —
   [shader_types.cpp](../servers/rendering/shader_types.cpp),
-  [shader_compiler.cpp](../servers/rendering/shader_compiler.cpp),
-  [shader_compiler.h](../servers/rendering/shader_compiler.h),
   [scene_shader_forward_clustered.cpp](../servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.cpp),
   [scene_shader_forward_clustered.h](../servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.h).
 
@@ -57,6 +54,7 @@
   [rendering_server.cpp](../servers/rendering/rendering_server.cpp),
   [rendering_server.h](../servers/rendering/rendering_server.h),
   [rendering_server_default.h](../servers/rendering/rendering_server_default.h),
+  [rendering_server_types.h](../servers/rendering/rendering_server_types.h),
   [rendering_method.h](../servers/rendering/rendering_method.h).
 
 - **Подключение нативного модуля** —

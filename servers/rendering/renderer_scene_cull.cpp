@@ -467,7 +467,7 @@ void RendererSceneCull::scenario_queue_lights_for_surface_cache(RID p_scenario) 
 	ERR_FAIL_NULL(scenario);
 	for (SelfList<Instance> *E = scenario->instances.first(); E; E = E->next()) {
 		if (E->self()->base_type == RSE::INSTANCE_LIGHT) {
-			_surface_cache_queue(E->self(), 7);
+			_surface_cache_queue(E->self(), RenderingServerTypes::SURFACE_CACHE_DIRTY_BASE | RenderingServerTypes::SURFACE_CACHE_DIRTY_TRANSFORM | RenderingServerTypes::SURFACE_CACHE_DIRTY_MATERIAL);
 		}
 	}
 }
@@ -596,7 +596,7 @@ void RendererSceneCull::scenario_set_surface_cache_callback(RID p_scenario, cons
 	scenario->surface_cache_frame = UINT64_MAX;
 	if (p_callback.is_valid()) {
 		for (SelfList<Instance> *item = scenario->instances.first(); item; item = item->next()) {
-			_surface_cache_queue(item->self(), 15);
+			_surface_cache_queue(item->self(), RenderingServerTypes::SURFACE_CACHE_DIRTY_ALL);
 		}
 	}
 }
@@ -620,45 +620,44 @@ void RendererSceneCull::instance_set_surface_cache_ids(RID p_instance, const Vec
 	// Событие удаления может прийти после освобождения RID.
 	if (!instance && p_ids.is_empty()) return;
 	ERR_FAIL_NULL(instance);
-	instance->surface_cache_ids = p_ids;
+	instance->surface_cache_registered = !p_ids.is_empty();
 	if (instance->base_type == RSE::INSTANCE_MESH && instance->base_data) {
-		static_cast<InstanceGeometryData *>(instance->base_data)->geometry_instance->set_surface_cache_ids(p_ids);
+		static_cast<InstanceGeometryData *>(instance->base_data)->geometry_instance->set_surface_cache_registered(instance->surface_cache_registered);
 	}
 }
 
-Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
+Vector<RenderingServerTypes::SurfaceCacheChange> RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 	Scenario *scenario = scenario_owner.get_or_null(p_scenario);
-	ERR_FAIL_NULL_V(scenario, Array());
+	ERR_FAIL_NULL_V(scenario, Vector<RenderingServerTypes::SurfaceCacheChange>());
 	update_dirty_instances();
-	Array result;
+	Vector<RenderingServerTypes::SurfaceCacheChange> result;
+	result.reserve(scenario->surface_cache_dirty.size());
 	for (const KeyValue<RID, uint32_t> &entry : scenario->surface_cache_dirty) {
 		Instance *instance = instance_owner.get_or_null(entry.key);
-		Dictionary data;
-		data["instance"] = entry.key;
-		data["changes"] = entry.value;
+		RenderingServerTypes::SurfaceCacheChange data;
+		data.instance = entry.key;
+		data.changes = entry.value;
 		// Вырожденный transform исключает объект из растеризации; GI должен исключить его тоже.
-		bool active = instance && instance->scenario == scenario && instance->visible &&
+		data.active = instance && instance->scenario == scenario && instance->visible &&
 				instance->transform.basis.determinant() != 0 &&
 				((instance->base_type == RSE::INSTANCE_MESH && (instance->baked_light || instance->dynamic_gi) &&
 						RSG::mesh_storage->mesh_get_surface_count(instance->base) > 0) ||
 						(instance->base_type == RSE::INSTANCE_LIGHT && !_scenario_owns_local_light(scenario, instance))); // lestoroer#local-lights
-		data["active"] = active;
-		if (active) {
-			data["base"] = instance->base;
-			data["type"] = instance->base_type;
-			data["transform"] = instance->transform;
-			data["layers"] = instance->layer_mask;
-			data["bounds"] = instance->transformed_aabb;
+		if (data.active) {
+			data.base = instance->base;
+			data.type = instance->base_type;
+			data.transform = instance->transform;
+			data.layers = instance->layer_mask;
+			data.bounds = instance->transformed_aabb;
 			if (instance->base_type == RSE::INSTANCE_LIGHT) {
-				data["light_type"] = RSG::light_storage->light_get_type(instance->base);
-				data["color"] = RSG::light_storage->light_get_color(instance->base);
-				Vector<float> params;
-				params.resize(RSE::LIGHT_PARAM_MAX);
-				for (int i=0;i<RSE::LIGHT_PARAM_MAX;i++) params.write[i]=RSG::light_storage->light_get_param(instance->base,RSE::LightParam(i));
-				data["light_params"] = params;
+				data.light_type = RSG::light_storage->light_get_type(instance->base);
+				data.color = RSG::light_storage->light_get_color(instance->base);
+				for (int i = 0; i < RSE::LIGHT_PARAM_MAX; i++) {
+					data.light_params[i] = RSG::light_storage->light_get_param(instance->base, RSE::LightParam(i));
+				}
 			} else {
-				data["deformed"] = instance->mesh_instance.is_valid();
-				data["mesh_revision"] = RSG::mesh_storage->mesh_get_geometry_revision(instance->base);
+				data.deformed = instance->mesh_instance.is_valid();
+				data.mesh_revision = RSG::mesh_storage->mesh_get_geometry_revision(instance->base);
 				bool displacement = RSG::material_storage->material_has_shader_displacement(instance->material_overlay);
 				if (instance->material_override.is_valid()) {
 					displacement |= RSG::material_storage->material_has_shader_displacement(instance->material_override);
@@ -668,19 +667,17 @@ Array RendererSceneCull::scenario_surface_cache_poll(RID p_scenario) {
 						displacement |= RSG::material_storage->material_has_shader_displacement(material);
 					}
 				}
-				data["shader_displacement"] = displacement;
+				data.shader_displacement = displacement;
 				const bool overlay_two_sided = instance->material_overlay.is_valid() && RSG::material_storage->material_is_surface_cache_two_sided(instance->material_overlay);
-				PackedInt32Array surface_sides;
-				surface_sides.resize(RSG::mesh_storage->mesh_get_surface_count(instance->base));
-				for (int i = 0; i < surface_sides.size(); i++) {
+				data.surface_sides.resize(RSG::mesh_storage->mesh_get_surface_count(instance->base));
+				for (int i = 0; i < data.surface_sides.size(); i++) {
 					RID material = instance->material_override;
 					if (material.is_null()) {
 						material = i < instance->materials.size() && instance->materials[i].is_valid() ? instance->materials[i] : RSG::mesh_storage->mesh_surface_get_material(instance->base, i);
 					}
 					const bool two_sided = overlay_two_sided || material.is_null() || RSG::material_storage->material_is_surface_cache_two_sided(material);
-					surface_sides.write[i] = two_sided ? 2 : 1;
+					data.surface_sides.write[i] = two_sided ? 2 : 1;
 				}
-				data["surface_sides"] = surface_sides;
 			}
 		}
 		result.push_back(data);
@@ -703,7 +700,7 @@ void RendererSceneCull::_instance_queue_update(Instance *p_instance, bool p_upda
 		p_surface_cache = false;
 	}
 	if (p_surface_cache) {
-		_surface_cache_queue(p_instance, (p_update_aabb ? 2u : 4u) | (p_update_dependencies ? 1u : 0u));
+		_surface_cache_queue(p_instance, (p_update_aabb ? RenderingServerTypes::SURFACE_CACHE_DIRTY_TRANSFORM : RenderingServerTypes::SURFACE_CACHE_DIRTY_MATERIAL) | (p_update_dependencies ? RenderingServerTypes::SURFACE_CACHE_DIRTY_BASE : 0u));
 	}
 	if (p_update_aabb) {
 		p_instance->update_aabb = true;
@@ -915,7 +912,7 @@ void RendererSceneCull::instance_set_base(RID p_instance, RID p_base) {
 				geom->geometry_instance->set_transparency(instance->transparency);
 				geom->geometry_instance->set_highlighted(instance->highlighted); // Fork(Lestoroer)
 				geom->geometry_instance->set_use_baked_light(instance->baked_light);
-				geom->geometry_instance->set_surface_cache_ids(instance->surface_cache_ids); // lestoroer#gi
+				geom->geometry_instance->set_surface_cache_registered(instance->surface_cache_registered); // lestoroer#gi
 				geom->geometry_instance->set_use_dynamic_gi(instance->dynamic_gi);
 				geom->geometry_instance->set_use_lightmap(RID(), instance->lightmap_uv_scale, instance->lightmap_slice_index);
 				geom->geometry_instance->set_instance_shader_uniforms_offset(instance->instance_uniforms.location());
@@ -1007,7 +1004,7 @@ void RendererSceneCull::instance_set_scenario(RID p_instance, RID p_scenario) {
 	ERR_FAIL_NULL(instance);
 
 	if (instance->scenario) {
-		_surface_cache_queue(instance, 15); // lestoroer#gi
+		_surface_cache_queue(instance, RenderingServerTypes::SURFACE_CACHE_DIRTY_ALL); // lestoroer#gi
 		instance->scenario->instances.remove(&instance->scenario_item);
 
 		if (instance->indexer_id.is_valid()) {
@@ -1231,7 +1228,7 @@ void RendererSceneCull::instance_set_blend_shape_weight(RID p_instance, int p_sh
 
 	if (instance->mesh_instance.is_valid()) {
 		RSG::mesh_storage->mesh_instance_set_blend_shape_weight(instance->mesh_instance, p_shape, p_weight);
-		_surface_cache_queue(instance, 8); // lestoroer#gi
+		_surface_cache_queue(instance, RenderingServerTypes::SURFACE_CACHE_DIRTY_POSE); // lestoroer#gi
 		_sun_caster_changed(instance, SUN_CHANGE_BLEND_SHAPE); // lestoroer#sun
 	}
 
@@ -1263,7 +1260,7 @@ void RendererSceneCull::instance_set_visible(RID p_instance, bool p_visible) {
 	}
 
 	instance->visible = p_visible;
-	_surface_cache_queue(instance, 15); // lestoroer#gi
+	_surface_cache_queue(instance, RenderingServerTypes::SURFACE_CACHE_DIRTY_ALL); // lestoroer#gi
 
 	if (p_visible) {
 		if (instance->scenario != nullptr) {
@@ -1461,7 +1458,7 @@ void RendererSceneCull::instance_geometry_set_flag(RID p_instance, RSE::Instance
 	switch (p_flags) {
 		case RSE::INSTANCE_FLAG_USE_BAKED_LIGHT: {
 			instance->baked_light = p_enabled;
-			_surface_cache_queue(instance, 15); // lestoroer#gi
+			_surface_cache_queue(instance, RenderingServerTypes::SURFACE_CACHE_DIRTY_ALL); // lestoroer#gi
 
 			if (instance->scenario && instance->array_index >= 0) {
 				InstanceData &idata = instance->scenario->instance_data[instance->array_index];
@@ -1492,7 +1489,7 @@ void RendererSceneCull::instance_geometry_set_flag(RID p_instance, RSE::Instance
 
 			//once out of octree, can be changed
 			instance->dynamic_gi = p_enabled;
-			_surface_cache_queue(instance, 15); // lestoroer#gi
+			_surface_cache_queue(instance, RenderingServerTypes::SURFACE_CACHE_DIRTY_ALL); // lestoroer#gi
 
 			if ((1 << instance->base_type) & RSE::INSTANCE_GEOMETRY_MASK && instance->base_data) {
 				InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(instance->base_data);
@@ -1786,7 +1783,7 @@ void RendererSceneCull::instance_geometry_set_shader_parameter(RID p_instance, c
 
 	instance->instance_uniforms.set(instance->self, p_parameter, p_value);
 	// lestoroer#gi
-	_surface_cache_queue(instance, 4);
+	_surface_cache_queue(instance, RenderingServerTypes::SURFACE_CACHE_DIRTY_MATERIAL);
 }
 
 void RendererSceneCull::instance_surface_cache_capture(RID p_instance, RID p_chart_instance, RID p_framebuffer, const Rect2i &p_region) {

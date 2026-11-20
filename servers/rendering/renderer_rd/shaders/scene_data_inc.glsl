@@ -14,7 +14,6 @@
 // lestoroer#gi
 #define SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE (1 << 8)
 #define SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED (1 << 10)
-#define SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE (1 << 11)
 
 struct SceneData {
 	mat4 projection_matrix;

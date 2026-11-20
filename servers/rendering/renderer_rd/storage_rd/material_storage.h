@@ -428,7 +428,7 @@ public:
 
 	/* Samplers */
 
-	Samplers samplers_rd_allocate(float p_mipmap_bias = 0.0f, RSE::ViewportAnisotropicFiltering anisotropic_filtering_level = RSE::ViewportAnisotropicFiltering::VIEWPORT_ANISOTROPY_4X) const;
+	Samplers samplers_rd_allocate(float p_mipmap_bias = 0.0f, RSE::ViewportAnisotropicFiltering anisotropic_filtering_level = RSE::ViewportAnisotropicFiltering::VIEWPORT_ANISOTROPY_4X, bool p_force_base_mip = false) const; // lestoroer#gi
 	void samplers_rd_free(Samplers &p_samplers) const;
 
 	_FORCE_INLINE_ RID sampler_rd_get_default(RSE::CanvasItemTextureFilter p_filter, RSE::CanvasItemTextureRepeat p_repeat) {

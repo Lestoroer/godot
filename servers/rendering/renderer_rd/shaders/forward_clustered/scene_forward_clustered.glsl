@@ -33,11 +33,6 @@ layout(location = 1) in vec4 axis_tangent_attrib;
 // Location 2 is unused.
 // lestoroer#gi: Буфер объявлен во всех вариантах ради общего layout дескрипторов.
 layout(set = 1, binding = 39, std430) readonly buffer SurfaceCacheCaptureCorners { vec2 data[]; } surface_cache_capture_corners;
-#ifdef MODE_RENDER_MATERIAL
-layout(location = 15) out flat vec4 surface_cache_ab_interp;
-layout(location = 16) out flat vec2 surface_cache_c_interp;
-layout(location = 17) out vec2 surface_cache_uv_interp;
-#endif
 
 #if defined(COLOR_USED)
 layout(location = 3) in vec4 color_attrib;
@@ -701,22 +696,8 @@ void vertex_shader(vec3 vertex_input,
 
 		// lestoroer#gi
 		if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)) {
-			uint first = (floatBitsToUint(instances.data[instance_index].compressed_aabb_size_pad.w) + uint(gl_VertexIndex) / 3u) * 3u;
-			vec2 corners[3] = vec2[](surface_cache_capture_corners.data[first], surface_cache_capture_corners.data[first + 1u], surface_cache_capture_corners.data[first + 2u]);
-			int corner = gl_VertexIndex % 3;
-			surface_cache_ab_interp = vec4(corners[0], corners[1]);
-			surface_cache_c_interp = corners[2];
-			surface_cache_uv_interp = corners[corner];
-			vec2 p = corners[corner];
-			vec2 previous = corners[(corner + 2) % 3];
-			vec2 next = corners[(corner + 1) % 3];
-			vec2 e0 = p - previous, e1 = next - p;
-			float winding = sign(e0.x * e1.y - e0.y * e1.x);
-			vec2 n0 = vec2(-e0.y, e0.x) * winding / max(length(e0), 1e-20);
-			vec2 n1 = vec2(-e1.y, e1.x) * winding / max(length(e1), 1e-20);
-			// Расширение на пиксель покрывает и субпиксельные пересечения; fragment-проход проверяет точное покрытие.
-			vec2 expansion = -(n0 + n1) / max(1.0 + dot(n0, n1), 1e-8);
-			uv_dest_attrib = (p + expansion) / scene_data.viewport_size;
+			uint corner_index = floatBitsToUint(instances.data[instance_index].compressed_aabb_size_pad.w) * 3u + uint(gl_VertexIndex);
+			uv_dest_attrib = surface_cache_capture_corners.data[corner_index] / scene_data.viewport_size;
 		}
 		vec2 uv_offset = unpackHalf2x16(draw_call.uv_offset);
 		gl_Position.xy = (uv_dest_attrib + uv_offset) * 2.0 - 1.0;
@@ -918,21 +899,15 @@ layout(location = 1) in vec3 normal_interp;
 #endif
 
 #if defined(COLOR_USED)
-// lestoroer#gi
-layout(location = 2) in vec4 color_interp_raw;
-vec4 color_interp;
+layout(location = 2) in vec4 color_interp;
 #endif
 
 #ifdef UV_USED
-// lestoroer#gi
-layout(location = 3) in vec2 uv_interp_raw;
-vec2 uv_interp;
+layout(location = 3) in vec2 uv_interp;
 #endif
 
 #if defined(UV2_USED) || defined(USE_LIGHTMAP)
-// lestoroer#gi
-layout(location = 4) in vec2 uv2_interp_raw;
-vec2 uv2_interp;
+layout(location = 4) in vec2 uv2_interp;
 #endif
 
 #ifdef TANGENT_USED
@@ -1067,14 +1042,6 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 /* clang-format on */
 #endif
 
-// lestoroer#gi
-#ifdef MODE_RENDER_MATERIAL
-layout(location = 15) in flat vec4 surface_cache_ab_interp;
-layout(location = 16) in flat vec2 surface_cache_c_interp;
-layout(location = 17) in vec2 surface_cache_uv_interp;
-#endif
-#include "../surface_cache_capture_inc.glsl"
-
 #GLOBALS
 
 #ifdef MODE_RENDER_DEPTH
@@ -1085,7 +1052,7 @@ layout(location = 0) out vec4 albedo_output_buffer;
 layout(location = 1) out vec4 normal_output_buffer;
 layout(location = 2) out vec4 orm_output_buffer;
 layout(location = 3) out vec4 emission_output_buffer;
-layout(location = 4) out vec4 depth_output_buffer; // lestoroer#gi
+layout(location = 4) out float depth_output_buffer;
 
 #endif // MODE_RENDER_MATERIAL
 
@@ -1248,58 +1215,13 @@ vec3 encode24(vec3 v) {
 #endif // MODE_RENDER_NORMAL_ROUGHNESS
 
 void fragment_shader(in SceneData scene_data) {
-// lestoroer#gi
-#ifdef MODE_RENDER_MATERIAL
-	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE)) {
-		vec2 cell_min = floor(gl_FragCoord.xy);
-		vec2 cell = cell_min + 0.5;
-		vec2 sample_point = vec2(0.0);
-		surface_cache_covered = surface_cache_triangle_cell_covered(
-				surface_cache_ab_interp.xy, surface_cache_ab_interp.zw,
-				surface_cache_c_interp, cell_min);
-		surface_cache_covered = surface_cache_covered && surface_cache_sample_point(
-				surface_cache_ab_interp.xy - cell,
-				surface_cache_ab_interp.zw - cell,
-				surface_cache_c_interp - cell, sample_point);
-		vec2 a = surface_cache_ab_interp.xy - cell;
-		vec2 b = surface_cache_ab_interp.zw - cell;
-		vec2 c = surface_cache_c_interp - cell;
-		float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-		if (surface_cache_covered && area == 0.0) surface_cache_covered = false;
-		if (surface_cache_covered) {
-			vec2 pa = a - sample_point, pb = b - sample_point, pc = c - sample_point;
-			vec3 bary = vec3(pb.x * pc.y - pb.y * pc.x,
-					pc.x * pa.y - pc.y * pa.x,
-					pa.x * pb.y - pa.y * pb.x) / area;
-			surface_cache_covered = all(greaterThan(bary, vec3(0)));
-			surface_cache_bary = bary / dot(bary, vec3(1.0));
-		}
-		vec2 delta = sample_point - (surface_cache_uv_interp - cell);
-		vec2 du = dFdx(surface_cache_uv_interp), dv = dFdy(surface_cache_uv_interp);
-		float determinant = du.x * dv.y - du.y * dv.x;
-		if (surface_cache_covered && abs(determinant) > 1e-30) {
-			surface_cache_offset = vec2(delta.x * dv.y - delta.y * dv.x, du.x * delta.y - du.y * delta.x) / determinant;
-		}
-	}
-#endif
-#ifdef UV_USED
-	uv_interp = surface_cache_sample(uv_interp_raw);
-#endif
-#if defined(UV2_USED) || defined(USE_LIGHTMAP)
-	uv2_interp = surface_cache_sample(uv2_interp_raw);
-#endif
-#ifdef COLOR_USED
-	color_interp = surface_cache_sample(color_interp_raw);
-#endif
-#CODE : SURFACE_CACHE_VARYINGS
-
 	uint instance_index = instance_index_interp;
 
 #ifdef PREMUL_ALPHA_USED
 	float premul_alpha = 1.0;
 #endif // PREMUL_ALPHA_USED
 	//lay out everything, whatever is unused is optimized away anyway
-	vec3 vertex = surface_cache_sample(vertex_interp); // lestoroer#gi
+	vec3 vertex = vertex_interp;
 #ifdef USE_MULTIVIEW
 	vec3 eye_offset = scene_data.eye_offset[ViewIndex].xyz;
 	vec3 view_highp = -normalize(vertex_interp - eye_offset);
@@ -1342,16 +1264,15 @@ void fragment_shader(in SceneData scene_data) {
 	float alpha_highp = float(instances.data[instance_index].flags >> INSTANCE_FLAGS_FADE_SHIFT) / float(255.0);
 
 #ifdef TANGENT_USED
-	// lestoroer#gi
-	vec3 binormal = surface_cache_sample(binormal_interp);
-	vec3 tangent = surface_cache_sample(tangent_interp);
+	vec3 binormal = binormal_interp;
+	vec3 tangent = tangent_interp;
 #else
 	vec3 binormal = vec3(0.0);
 	vec3 tangent = vec3(0.0);
 #endif
 
 #ifdef NORMAL_USED
-	vec3 normal_highp = surface_cache_sample(normal_interp); // lestoroer#gi
+	vec3 normal_highp = normal_interp;
 #if defined(DO_SIDE_CHECK)
 	if (!bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) && !gl_FrontFacing) { // lestoroer#gi: Лицевая сторона захвата не зависит от winding раскладки.
 		normal_highp = -normal_highp;
@@ -1444,18 +1365,13 @@ void fragment_shader(in SceneData scene_data) {
 	vec4 surface_cache_input = vec4(0.0);
 	bool surface_cache_gather_used = false;
 #ifndef MODE_RENDER_DEPTH
-	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
-		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
-		if (cache_surface > 0u) {
-			surface_cache_input.a = 1.0;
-			surface_cache_input.rgb = surface_cache_for_fragment((inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal_highp), inv_view_matrix[3].xyz, vec3(gl_FragCoord.xy, -vertex.z), surface_cache_gather_used);
-		}
+	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED) && instances.data[instance_index].compressed_aabb_position_pad.w > 0.0) {
+		surface_cache_input.a = 1.0;
+		surface_cache_input.rgb = surface_cache_for_fragment((inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal_highp), vec3(gl_FragCoord.xy, -vertex.z), surface_cache_gather_used);
 	}
 #endif
 #endif
-	if (!bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE)) { // Проход покрытия не должен выполнять пользовательский код материала.
 #CODE : FRAGMENT
-	}
 
 	float roughness = roughness_highp;
 	float metallic = metallic_highp;
@@ -1874,12 +1790,9 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 // lestoroer#gi
 #ifndef SURFACE_CACHE_INPUT_USED
-	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED)) {
-		uint cache_surface = uint(instances.data[instance_index].compressed_aabb_position_pad.w);
-		if (cache_surface > 0u) {
-			bool gather_used;
-			ambient_light = surface_cache_for_fragment((inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal), inv_view_matrix[3].xyz, vec3(gl_FragCoord.xy, -vertex.z), gather_used);
-		}
+	if (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED) && instances.data[instance_index].compressed_aabb_position_pad.w > 0.0) {
+		bool gather_used;
+		ambient_light = surface_cache_for_fragment((inv_view_matrix * vec4(vertex, 1.0)).xyz, normalize(mat3(inv_view_matrix) * normal), vec3(gl_FragCoord.xy, -vertex.z), gather_used);
 	}
 #endif
 
@@ -3171,15 +3084,13 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 
 #ifdef MODE_RENDER_MATERIAL
-	if (!surface_cache_covered) { discard; } // lestoroer#gi
-
 	albedo_output_buffer.rgb = albedo;
-	albedo_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE) ? 0.0 : alpha; // lestoroer#gi
+	albedo_output_buffer.a = alpha;
 
 	// lestoroer#gi
 	normal_output_buffer.rgb = (bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? normalize(normal) : encode24(normal)) * 0.5 + 0.5;
 	normal_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? surface_cache_transmission : 0.0;
-	depth_output_buffer = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? vec4(surface_cache_bary, float(gl_PrimitiveID + 1)) : vec4(-vertex.z, 0.0, 0.0, 0.0);
+	depth_output_buffer = -vertex.z;
 
 	orm_output_buffer.r = ao;
 	orm_output_buffer.g = roughness;
@@ -3187,7 +3098,7 @@ void fragment_shader(in SceneData scene_data) {
 	orm_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? specular : sss_strength; // lestoroer#gi
 
 	emission_output_buffer.rgb = emission;
-	emission_output_buffer.a = 0.0;
+	emission_output_buffer.a = bool(scene_data.flags & SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE) ? 1.0 : 0.0; // lestoroer#gi
 #endif
 
 #ifdef MODE_RENDER_NORMAL_ROUGHNESS

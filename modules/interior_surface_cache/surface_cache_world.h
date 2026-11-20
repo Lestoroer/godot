@@ -3,6 +3,7 @@
 #include "surface_cache_runtime.h"
 
 #include "scene/resources/mesh.h"
+#include "servers/rendering/rendering_server_types.h"
 
 class SurfaceCacheWorldRD : public RefCounted {
 	GDCLASS(SurfaceCacheWorldRD, RefCounted);
@@ -54,8 +55,6 @@ class SurfaceCacheWorldRD : public RefCounted {
 		RID blas;
 		int tlas_index = -1;
 	};
-	// Светящийся прямоугольник, который зарегистрировал владелец сцены: rect — в осях экземпляра, начало — центр,
-	// столбцы базиса — половины сторон и нормаль излучающей стороны.
 	struct Emitter {
 		RID instance;
 		int surface = 0;
@@ -82,30 +81,28 @@ class SurfaceCacheWorldRD : public RefCounted {
 	uint32_t capacities[BUFFER_COUNT] = {};
 	uint64_t buffer_memory_bytes = 0;
 	bool capacity_dirty = true;
-	Ref<RefCounted> capture, world_hash, gather;
+	Ref<RefCounted> world_hash, gather;
 	SurfaceCache::Kernel kernels[PASS_COUNT];
+	RID capture_textures[4];
+	RID capture_views[4];
+	RID capture_depth_color;
+	RID capture_depth;
+	RID capture_framebuffer;
+	Vector2i capture_size;
 	Vector2i capture_dimensions;
 	int64_t last_capture_frame = 0;
 	Array rooms;
 	bool rooms_dirty = false, lights_dirty = true, sun_changed = false, sky_changed = false;
 	TypedArray<PackedByteArray> light_changes;
-	// Изменение предмета: рамка его мест до и после и время по часам мира.
 	struct Change {
 		AABB bounds;
 		double seconds = 0;
 	};
-	// Изменения предметов. pending_changes — замеченные после прошлой записи кадра мира. awaiting_changes — рамки,
-	// которые мировой кеш ещё не свёл, у предмета одна: ждут его сведения сколько угодно. remembered_changes —
-	// недавние изменения для истории изображения, по порядку времени: мир помнит их change_seconds. Срок памяти и
-	// запас рамок задаёт мировой кеш игры (CHANGE_SECONDS, CHANGE_MARGIN).
 	LocalVector<Pair<RID, AABB>> pending_changes;
 	HashMap<RID, AABB> awaiting_changes;
 	HashMap<RID, LocalVector<Change>> remembered_changes;
 	double change_seconds = 0, change_margin = 0;
-	// Счётчик сведений мирового кеша (world_hash_cache: resolve_count) при последней записи изменений: сведение
-	// после неё получило рамки, которые его ждали.
 	int64_t changes_resolve_count = 0;
-	// Узлов деревьев рамок в записи изменений на GPU и её размер, байт.
 	uint32_t change_nodes = 0, change_bytes = 0;
 	RID tlas, dummy;
 	int tlas_capacity = 0;
@@ -113,14 +110,12 @@ class SurfaceCacheWorldRD : public RefCounted {
 	LocalVector<Instance *> tlas_owners;
 	LocalVector<RID> tlas_added;
 	HashMap<RID, bool> tlas_updates;
-	HashMap<RID, Dictionary> deferred_changes;
-	// Экземпляры, сдвинувшиеся за кадр мира: from и to — прежнее и новое место, bounds — рамка сейчас.
+	HashMap<RID, RenderingServerTypes::SurfaceCacheChange> deferred_changes;
 	TypedArray<Dictionary> frame_moves;
 	Array opacity_states;
 	bool initialized = false, disposed = false, opacity_pending = false, opacity_requested = false;
 	uint64_t capture_serial = 0, next_generation = 0;
 	int64_t frame = 0;
-	// Часы мира, с: идут с его кадрами. По ним считается возраст событий мира; от видов и их кадров они не зависят.
 	double world_seconds = 0;
 	Vector3 view_origin;
 	bool has_view = false;
@@ -134,11 +129,13 @@ class SurfaceCacheWorldRD : public RefCounted {
 	void render_frame();
 	void update_world();
 	String render_view(RenderData *p_data);
-	Array take_changes();
+	Vector<RenderingServerTypes::SurfaceCacheChange> take_changes();
 	int triangle_count(RID p_base) const;
-	ChangeKind change_kind(const Dictionary &p_change) const;
+	ChangeKind change_kind(const RenderingServerTypes::SurfaceCacheChange &p_change) const;
 	bool initialize_gpu();
-	bool add_instance(const Dictionary &p_change, const HashMap<RID, Vector<RenderingServerTypes::SurfaceData>> &p_sources);
+	bool allocate_capture(const Vector2i &p_size);
+	void free_capture();
+	bool add_instance(const RenderingServerTypes::SurfaceCacheChange &p_change, const HashMap<RID, Vector<RenderingServerTypes::SurfaceData>> &p_sources);
 	void remove_instance(RID p_source);
 	void release_geometry(Geometry *p_geometry);
 	LocalVector<RID> vertex_buffers(const TypedArray<PackedByteArray> &p_vertex_data);
@@ -154,7 +151,7 @@ class SurfaceCacheWorldRD : public RefCounted {
 	void rebuild_tlas();
 	void write_tlas_instance(Instance &r_state);
 	void remove_tlas_instance(Instance &r_state);
-	PackedByteArray encode_light(const Dictionary &p_light);
+	PackedByteArray encode_light(const RenderingServerTypes::SurfaceCacheChange &p_light);
 	PackedByteArray encode_emitters(int &r_count) const;
 	void note_light_change(const PackedByteArray &p_previous, const PackedByteArray &p_current);
 	void note_dirty(RID p_source, const AABB &p_bounds);
@@ -167,8 +164,7 @@ class SurfaceCacheWorldRD : public RefCounted {
 	void read_gpu_time();
 
 public:
-	static constexpr int CAPTURE_TEXEL_BYTES = 52;
-	// Ограничивает перебор прямоугольников в каждом зонде: веса выбора лежат в общей памяти группы.
+	static constexpr int CAPTURE_TEXEL_BYTES = 40;
 	static constexpr int MAX_EMITTERS = 64;
 	void attach(RID p_world, const Ref<Resource> &p_settings);
 	void update_profile(const Ref<Resource> &p_settings);

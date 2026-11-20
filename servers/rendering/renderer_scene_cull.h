@@ -484,7 +484,7 @@ public:
 	void _surface_cache_queue(Instance *p_instance, uint32_t p_flags) const;
 	virtual void scenario_set_surface_cache_callback(RID p_scenario, const Callable &p_callback) override;
 	virtual void scenario_set_surface_cache_view_callback(RID p_scenario, const Callable &p_callback) override;
-	virtual Array scenario_surface_cache_poll(RID p_scenario) override;
+	virtual Vector<RenderingServerTypes::SurfaceCacheChange> scenario_surface_cache_poll(RID p_scenario) override;
 	// lestoroer#sun
 	virtual void sun_map_debug_set_option(const StringName &p_option, const Variant &p_value) override;
 	virtual Dictionary sun_map_debug_get_state(RID p_scenario) override;
@@ -607,7 +607,7 @@ public:
 		uint64_t version; // changes to this, and changes to base increase version
 
 		InstanceBaseData *base_data = nullptr;
-		Vector<int32_t> surface_cache_ids; // lestoroer#gi
+		bool surface_cache_registered = false; // lestoroer#gi
 
 		SelfList<InstancePair>::List pairs;
 		uint64_t pair_check;
@@ -618,12 +618,12 @@ public:
 			Instance *instance = (Instance *)tracker->userdata;
 			// lestoroer#gi
 			if (p_notification == Dependency::DEPENDENCY_CHANGED_SKELETON_DATA || p_notification == Dependency::DEPENDENCY_CHANGED_SKELETON_BONES) {
-				singleton->_surface_cache_queue(instance, 8);
+				singleton->_surface_cache_queue(instance, RenderingServerTypes::SURFACE_CACHE_DIRTY_POSE);
 			}
 			switch (p_notification) {
 				// lestoroer#gi
 				case Dependency::DEPENDENCY_CHANGED_SURFACE_CONTENT: {
-					singleton->_surface_cache_queue(instance, 4);
+					singleton->_surface_cache_queue(instance, RenderingServerTypes::SURFACE_CACHE_DIRTY_MATERIAL);
 				} break;
 				// lestoroer#sun
 				case Dependency::DEPENDENCY_CHANGED_SUN_CASTER: {

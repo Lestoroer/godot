@@ -75,7 +75,6 @@ public:
 	bool material_uv2_mode = false;
 	// lestoroer#gi
 	bool surface_cache_enabled = false;
-	bool surface_cache_coverage = false;
 	bool surface_cache_capture = false;
 	float emissive_exposure_normalization = 0.0;
 	bool shadow_pass = false;
@@ -118,7 +117,6 @@ private:
 		// lestoroer#gi
 		SCENE_DATA_FLAGS_SURFACE_CACHE_CAPTURE = 1 << 8,
 		SCENE_DATA_FLAGS_SURFACE_CACHE_ENABLED = 1 << 10,
-		SCENE_DATA_FLAGS_SURFACE_CACHE_COVERAGE = 1 << 11,
 		SCENE_DATA_FLAGS_MAX
 	};
 
